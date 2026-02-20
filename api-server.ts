@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 
 const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
-let buildStatus = { isBuilding: false, type: '', output: [] as string[] };
+let buildStatus = { isBuilding: false, type: '', output: [] as string[], exitCode: null as number | null };
 
 // 포트 데이터 파일 - 앱과 동일한 위치 사용
 const APP_DATA_DIR = join(homedir(), "Library/Application Support/com.portmanager.portmanager");
@@ -546,7 +546,7 @@ const server = Bun.serve({
           );
         }
 
-        buildStatus = { isBuilding: true, type, output: [] };
+        buildStatus = { isBuilding: true, type, output: [], exitCode: null };
 
         const buildCommand = type === 'dmg' ? 'tauri:build:dmg' : 'tauri:build';
 
@@ -559,29 +559,29 @@ const server = Bun.serve({
           stderr: "pipe",
         });
 
-        // 출력 스트림 읽기
-        (async () => {
+        // 출력 스트림 읽기 (스트림이 완전히 드레인된 후 상태 업데이트)
+        const readStream = async (stream: any, isStderr = false) => {
           const decoder = new TextDecoder();
-          for await (const chunk of buildProcess.stdout) {
+          for await (const chunk of stream) {
             const text = decoder.decode(chunk);
             buildStatus.output.push(text);
-            console.log(`[Build] ${text}`);
+            if (isStderr) {
+              console.error(`[Build] ${text}`);
+            } else {
+              console.log(`[Build] ${text}`);
+            }
           }
-        })();
+        };
 
-        (async () => {
-          const decoder = new TextDecoder();
-          for await (const chunk of buildProcess.stderr) {
-            const text = decoder.decode(chunk);
-            buildStatus.output.push(text);
-            console.error(`[Build] ${text}`);
-          }
-        })();
+        const stdoutDone = readStream(buildProcess.stdout, false);
+        const stderrDone = readStream(buildProcess.stderr, true);
 
-        // 프로세스 종료 대기
-        buildProcess.exited.then((code: number) => {
-          console.log(`[Build] Process exited with code: ${code}`);
+        // 프로세스 종료 대기 - 스트림이 모두 닫힌 후에 상태 업데이트
+        buildProcess.exited.then(async (code: number) => {
+          await Promise.all([stdoutDone, stderrDone]); // 스트림 완전 드레인 후
+          buildStatus.exitCode = code;
           buildStatus.isBuilding = false;
+          console.log(`[Build] Process exited with code: ${code}`);
         });
 
         return new Response(
@@ -603,6 +603,14 @@ const server = Bun.serve({
         JSON.stringify(buildStatus),
         { headers }
       );
+    }
+
+    if (url.pathname === "/api/build-reset" && req.method === "POST") {
+      if (buildProcess) {
+        try { buildProcess.kill(); } catch {}
+      }
+      buildStatus = { isBuilding: false, type: '', output: ['⚠️ 빌드가 강제 초기화되었습니다.'], exitCode: null };
+      return new Response(JSON.stringify({ success: true }), { headers });
     }
 
     if (url.pathname === "/api/open-build-folder" && req.method === "POST") {

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "포트관리기_2026.02.20",
-  "version": "2026.02.20",
+  "productName": "포트관리기",
+  "version": "2026.2.20",
   "identifier": "com.portmanager.portmanager",
   "build": {
     "frontendDist": "../dist",

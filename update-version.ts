@@ -12,14 +12,22 @@ const TAURI_CONF_PATH = join(import.meta.dir, "src-tauri/tauri.conf.json");
 
 async function updateVersion() {
   try {
-    // 현재 날짜 가져오기
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-
-    const newVersion = `${year}.${month}.${day}`;
-    const newProductName = `포트관리기_${newVersion}`;
+    // 마지막 git 커밋 날짜를 버전으로 사용 (fallback: 오늘 날짜)
+    let newVersion: string;
+    try {
+      const result = await Bun.$`git log -1 --format=%cd --date=format:%Y.%m.%d`.text();
+      // semver는 숫자 앞 0 불허 → "2026.02.20" → "2026.2.20"
+      newVersion = result.trim().split('.').map(Number).join('.');
+      console.log(`[UpdateVersion] 최종 커밋 날짜 사용: ${newVersion}`);
+    } catch {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = now.getMonth() + 1;
+      const d = now.getDate();
+      newVersion = `${y}.${m}.${d}`;
+      console.log(`[UpdateVersion] fallback - 오늘 날짜 사용: ${newVersion}`);
+    }
+    const newProductName = `포트관리기`;
 
     console.log(`[UpdateVersion] 새 버전: ${newVersion}`);
 
