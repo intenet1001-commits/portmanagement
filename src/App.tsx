@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -243,6 +243,7 @@ function App() {
   const [showBuildLog, setShowBuildLog] = useState(false);
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
   const [buildType, setBuildType] = useState<'app' | 'dmg'>('app');
+  const lastLogIndexRef = useRef<number>(0);
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -620,6 +621,7 @@ function App() {
 
     setBuildType('app');
     setBuildLogs(['App 빌드를 시작합니다...']);
+    lastLogIndexRef.current = 0;
     setShowBuildLog(true);
     setIsBuilding(true);
 
@@ -634,21 +636,22 @@ function App() {
           const status = await response.json();
 
           if (status.output && status.output.length > 0) {
-            setBuildLogs(prev => {
-              const newLogs = [...prev];
-              status.output.forEach((log: string) => {
-                if (!newLogs.includes(log)) {
-                  newLogs.push(log);
-                }
-              });
-              return newLogs;
-            });
+            const lastIdx = lastLogIndexRef.current;
+            const newEntries = status.output.slice(lastIdx);
+            if (newEntries.length > 0) {
+              lastLogIndexRef.current = status.output.length;
+              setBuildLogs(prev => [...prev, ...newEntries]);
+            }
           }
 
           if (!status.isBuilding) {
             clearInterval(pollInterval);
             setIsBuilding(false);
-            setBuildLogs(prev => [...prev, '✅ 빌드가 완료되었습니다!']);
+            if (status.exitCode === 0) {
+              setBuildLogs(prev => [...prev, '✅ 빌드가 완료되었습니다!']);
+            } else if (status.exitCode !== null) {
+              setBuildLogs(prev => [...prev, `❌ 빌드 실패 (exit code: ${status.exitCode})`]);
+            }
           }
         } catch (e) {
           console.error('Failed to poll build status:', e);
@@ -674,6 +677,7 @@ function App() {
 
     setBuildType('dmg');
     setBuildLogs(['DMG 빌드를 시작합니다...']);
+    lastLogIndexRef.current = 0;
     setShowBuildLog(true);
     setIsBuilding(true);
 
@@ -688,21 +692,22 @@ function App() {
           const status = await response.json();
 
           if (status.output && status.output.length > 0) {
-            setBuildLogs(prev => {
-              const newLogs = [...prev];
-              status.output.forEach((log: string) => {
-                if (!newLogs.includes(log)) {
-                  newLogs.push(log);
-                }
-              });
-              return newLogs;
-            });
+            const lastIdx = lastLogIndexRef.current;
+            const newEntries = status.output.slice(lastIdx);
+            if (newEntries.length > 0) {
+              lastLogIndexRef.current = status.output.length;
+              setBuildLogs(prev => [...prev, ...newEntries]);
+            }
           }
 
           if (!status.isBuilding) {
             clearInterval(pollInterval);
             setIsBuilding(false);
-            setBuildLogs(prev => [...prev, '✅ 빌드가 완료되었습니다!']);
+            if (status.exitCode === 0) {
+              setBuildLogs(prev => [...prev, '✅ 빌드가 완료되었습니다!']);
+            } else if (status.exitCode !== null) {
+              setBuildLogs(prev => [...prev, `❌ 빌드 실패 (exit code: ${status.exitCode})`]);
+            }
           }
         } catch (e) {
           console.error('Failed to poll build status:', e);
