@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
 // Tauri API 체크
@@ -198,13 +198,43 @@ const API = {
       // 웹 환경에서는 로그 기능 미지원
       alert('로그 보기는 Tauri 앱에서만 사용 가능합니다');
     }
+  },
+
+  async openTmuxClaude(sessionName: string, folderPath?: string): Promise<string> {
+    if (isTauri()) {
+      return invoke<string>('open_tmux_claude', { sessionName, folderPath: folderPath ?? null });
+    } else {
+      const response = await fetch('/api/open-tmux-claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionName, folderPath: folderPath ?? null })
+      });
+      const result = await response.json();
+      if (!result.success) throw new Error(result.error);
+      return result.message;
+    }
+  },
+
+  async openTerminalClaude(folderPath?: string, name?: string): Promise<string> {
+    if (isTauri()) {
+      return invoke<string>('open_terminal_claude', { folderPath: folderPath ?? null, name: name ?? null });
+    } else {
+      const response = await fetch('/api/open-terminal-claude', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath: folderPath ?? null, name: name ?? null })
+      });
+      const result = await response.json();
+      if (!result.success) throw new Error(result.error);
+      return result.message;
+    }
   }
 };
 
 interface PortInfo {
   id: string;
   name: string;
-  port: number;
+  port?: number;
   commandPath?: string;
   folderPath?: string;
   deployUrl?: string;
@@ -219,6 +249,14 @@ interface Toast {
   message: string;
   type: 'success' | 'error';
 }
+
+const getSessionName = (item: PortInfo): string => {
+  if (item.folderPath) {
+    const parts = item.folderPath.replace(/\/$/, '').split('/');
+    return parts[parts.length - 1] || item.name;
+  }
+  return item.name.replace(/\s+/g, '-');
+};
 
 function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
@@ -254,6 +292,25 @@ function App() {
     setTimeout(() => {
       setToasts(prev => prev.filter(toast => toast.id !== id));
     }, 3000);
+  };
+
+  const openTmuxClaude = async (item: PortInfo) => {
+    const sessionName = getSessionName(item);
+    try {
+      await API.openTmuxClaude(sessionName, item.folderPath);
+      showToast(`tmux + Claude 실행 중 (세션: ${sessionName})`, 'success');
+    } catch (e) {
+      showToast(`tmux 실행 실패: ${e}`, 'error');
+    }
+  };
+
+  const openTerminalClaude = async (item: PortInfo) => {
+    try {
+      await API.openTerminalClaude(item.folderPath, item.name);
+      showToast(`Terminal에서 Claude 실행 중`, 'success');
+    } catch (e) {
+      showToast(`Claude 실행 실패: ${e}`, 'error');
+    }
   };
 
   // 초기 데이터 로드
@@ -321,7 +378,7 @@ function App() {
   }, []);
 
   const addPort = () => {
-    if (name && port) {
+    if (name) {
       // commandPath가 있으면 자동으로 폴더 경로 추출
       let autoFolderPath = folderPath;
       if (commandPath && !folderPath) {
@@ -335,7 +392,7 @@ function App() {
       const newPort: PortInfo = {
         id: Date.now().toString(),
         name,
-        port: parseInt(port),
+        port: port ? parseInt(port) : undefined,
         commandPath: commandPath || undefined,
         folderPath: autoFolderPath || undefined,
         deployUrl: deployUrl || undefined,
@@ -359,7 +416,7 @@ function App() {
   const startEdit = (item: PortInfo) => {
     setEditingId(item.id);
     setEditName(item.name);
-    setEditPort(item.port.toString());
+    setEditPort(item.port?.toString() ?? '');
     setEditCommandPath(item.commandPath || '');
     setEditFolderPath(item.folderPath || '');
     setEditDeployUrl(item.deployUrl || '');
@@ -416,7 +473,7 @@ function App() {
 
   const stopCommand = async (item: PortInfo) => {
     try {
-      await API.stopCommand(item.id, item.port);
+      await API.stopCommand(item.id, item.port ?? 0);
 
       setPorts(ports.map(p =>
         p.id === item.id ? { ...p, isRunning: false } : p
@@ -434,7 +491,7 @@ function App() {
     }
 
     try {
-      await API.forceRestartCommand(item.id, item.port, item.commandPath);
+      await API.forceRestartCommand(item.id, item.port ?? 0, item.commandPath);
 
       setPorts(ports.map(p =>
         p.id === item.id ? { ...p, isRunning: true } : p
@@ -594,12 +651,14 @@ function App() {
           }
         }
 
-        // 포트 상태 확인
-        try {
-          const isRunning = await API.checkPortStatus(port.port);
-          updated.isRunning = isRunning;
-        } catch (e) {
-          console.error(`Failed to check port status for ${port.port}:`, e);
+        // 포트 상태 확인 (포트 번호가 있는 경우만)
+        if (port.port) {
+          try {
+            const isRunning = await API.checkPortStatus(port.port);
+            updated.isRunning = isRunning;
+          } catch (e) {
+            console.error(`Failed to check port status for ${port.port}:`, e);
+          }
         }
 
         return updated;
@@ -1194,9 +1253,13 @@ function App() {
                             <div className="w-5 h-5 rounded-md bg-zinc-900 flex items-center justify-center border border-zinc-700">
                               <Server className="w-3 h-3 text-zinc-400" />
                             </div>
-                            <span className="font-mono text-xs text-zinc-400">
-                              Port: <span className="text-zinc-200 font-semibold">{item.port}</span>
-                            </span>
+                            {item.port ? (
+                              <span className="font-mono text-xs text-zinc-400">
+                                Port: <span className="text-zinc-200 font-semibold">{item.port}</span>
+                              </span>
+                            ) : (
+                              <span className="font-mono text-xs text-zinc-600">No port</span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1256,6 +1319,33 @@ function App() {
                             <span>로그</span>
                           </button>
                         )}
+                        <button
+                          onClick={() => openTmuxClaude(item)}
+                          title={`tmux 세션에서 Claude 실행 (세션: ${getSessionName(item)})`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 text-xs font-medium rounded-lg border border-violet-500/30 hover:border-violet-500/50 transition-all duration-200"
+                        >
+                          <SquareTerminal className="w-3 h-3" />
+                          <span>tmux</span>
+                        </button>
+                        <button
+                          onClick={() => openTerminalClaude(item)}
+                          title="일반 Terminal에서 Claude 실행"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 text-xs font-medium rounded-lg border border-indigo-500/30 hover:border-indigo-500/50 transition-all duration-200"
+                        >
+                          <Terminal className="w-3 h-3" />
+                          <span>Claude</span>
+                        </button>
+                        <div className="relative group/info inline-flex items-center">
+                          <Info className="w-3 h-3 text-zinc-500 hover:text-zinc-300 cursor-help transition-colors" />
+                          <div className="absolute bottom-full right-0 mb-2 w-56 p-2.5 bg-zinc-900 border border-zinc-700 rounded-lg text-xs text-zinc-300 shadow-xl opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-50">
+                            <p className="font-semibold text-zinc-100 mb-1.5">설치 필요</p>
+                            <ul className="space-y-1 text-zinc-400">
+                              <li>· <span className="text-violet-400">tmux</span>: tmux + Claude CLI + iTerm</li>
+                              <li>· <span className="text-indigo-400">Claude</span>: Claude CLI + iTerm</li>
+                            </ul>
+                            <p className="mt-1.5 text-zinc-500 text-[10px]">claude.ai/code 에서 설치</p>
+                          </div>
+                        </div>
                         {item.folderPath && (
                           <button
                             onClick={() => API.openFolder(item.folderPath!)}
@@ -1321,7 +1411,7 @@ function App() {
                             </a>
                           )
                         )}
-                        {item.commandPath && (
+                        {item.commandPath && item.port && (
                           isTauri() ? (
                             <button
                               onClick={async () => {
