@@ -9,8 +9,10 @@ import { join } from "node:path";
 import { existsSync, readdirSync, copyFileSync } from "node:fs";
 
 const PROJECT_DIR = import.meta.dir;
-const MACOS_DIR = join(PROJECT_DIR, "src-tauri/target/release/bundle/macos");
-const DMG_DIR = join(PROJECT_DIR, "src-tauri/target/release/bundle/dmg");
+// .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
+const CARGO_TARGET_DIR = join(process.env.HOME || "", "cargo-targets/portmanager");
+const MACOS_DIR = join(CARGO_TARGET_DIR, "release/bundle/macos");
+const DMG_DIR = join(CARGO_TARGET_DIR, "release/bundle/dmg");
 
 async function fixDmg() {
   try {

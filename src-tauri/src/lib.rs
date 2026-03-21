@@ -9,7 +9,8 @@ use tauri::{State, Manager};
 struct PortInfo {
     id: String,
     name: String,
-    port: u16,
+    #[serde(default)]
+    port: Option<u16>,
     #[serde(rename = "commandPath")]
     command_path: Option<String>,
     #[serde(rename = "folderPath")]
@@ -139,7 +140,7 @@ fn execute_command(
     }
 
     // 환경변수 설정 (GUI 앱에서 터미널 환경변수 상속)
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/gwanli".to_string());
+    let home = std::env::var("HOME").unwrap_or_default();
 
     // PATH 환경변수에 일반적인 경로들 추가
     let path_additions = vec![
@@ -428,7 +429,7 @@ fn force_restart_command(
     }
 
     // 환경변수 설정 (GUI 앱에서 터미널 환경변수 상속)
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/gwanli".to_string());
+    let home = std::env::var("HOME").unwrap_or_default();
 
     // PATH 환경변수에 일반적인 경로들 추가
     let path_additions = vec![
@@ -547,10 +548,12 @@ fn detect_port(file_path: String) -> Result<Option<u16>, String> {
 
 #[tauri::command]
 fn open_build_folder() -> Result<String, String> {
-    let dmg_folder = "/Users/gwanli/Documents/GitHub/myproduct_v4/포트관리기/src-tauri/target/release/bundle/dmg";
+    let home = std::env::var("HOME").unwrap_or_default();
+    // .cargo/config.toml의 target-dir 설정과 동일한 경로
+    let dmg_folder = format!("{}/cargo-targets/portmanager/release/bundle/dmg", home);
 
     Command::new("open")
-        .arg(dmg_folder)
+        .arg(&dmg_folder)
         .spawn()
         .map_err(|e| e.to_string())?;
 
@@ -561,8 +564,9 @@ fn open_build_folder() -> Result<String, String> {
 fn export_dmg() -> Result<String, String> {
     use std::path::Path;
 
-    let project_dir = "/Users/gwanli/Documents/GitHub/myproduct_v4/포트관리기";
-    let bundle_dir = format!("{}/src-tauri/target/release/bundle", project_dir);
+    let home = std::env::var("HOME").unwrap_or_default();
+    // .cargo/config.toml의 target-dir 설정과 동일한 경로
+    let bundle_dir = format!("{}/cargo-targets/portmanager/release/bundle", home);
 
     // DMG 파일 찾기
     let dmg_paths = vec![
@@ -592,7 +596,7 @@ fn export_dmg() -> Result<String, String> {
 
     match dmg_file {
         Some(dmg_path) => {
-            let home = std::env::var("HOME").unwrap_or_else(|_| "/Users/gwanli".to_string());
+            let home = std::env::var("HOME").unwrap_or_default();
             let desktop = format!("{}/Desktop", home);
 
             // 원본 파일명 추출 (버전 정보 포함)
@@ -692,6 +696,146 @@ fn open_log(port_id: String, app_handle: tauri::AppHandle) -> Result<String, Str
 }
 
 #[tauri::command]
+fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // 명령어 생성
+        let escaped_title = format!("[tmux] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
+        let claude_cmd = if let Some(ref wt) = worktree_path {
+            let flags: String = wt.split(',')
+                .map(|p| p.trim())
+                .filter(|p| !p.is_empty())
+                .map(|p| format!("-w '{}'", p))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("claude {}", flags)
+        } else {
+            "claude".to_string()
+        };
+        let cmd = if let Some(ref fp) = folder_path {
+            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -A -s '{}' '{}'", fp, escaped_title, session_name, claude_cmd)
+        } else {
+            format!("printf '\\033]0;{}\\007'; tmux new-session -A -s '{}' '{}'", escaped_title, session_name, claude_cmd)
+        };
+
+        // iTerm에서 명령어 자동 실행
+        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+            escaped, escaped_title
+        );
+        Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn()
+            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+    }
+
+    Ok(format!("tmux + Claude 실행 중 (세션: {})", session_name))
+}
+
+#[tauri::command]
+fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let escaped_title = format!("[tmux-bypass] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
+        let claude_cmd = if let Some(ref wt) = worktree_path {
+            let flags: String = wt.split(',')
+                .map(|p| p.trim())
+                .filter(|p| !p.is_empty())
+                .map(|p| format!("-w '{}'", p))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("claude --dangerously-skip-permissions {}", flags)
+        } else {
+            "claude --dangerously-skip-permissions".to_string()
+        };
+        let cmd = if let Some(ref fp) = folder_path {
+            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -A -s '{}-bypass' '{}'", fp, escaped_title, session_name, claude_cmd)
+        } else {
+            format!("printf '\\033]0;{}\\007'; tmux new-session -A -s '{}-bypass' '{}'", escaped_title, session_name, claude_cmd)
+        };
+        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+            escaped, escaped_title
+        );
+        Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn()
+            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+    }
+    Ok(format!("tmux + Claude (bypass) 실행 중 (세션: {}-bypass)", session_name))
+}
+
+#[tauri::command]
+fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
+    let escaped_name = format!("[bypass] {}", name.as_deref().unwrap_or("Claude"))
+        .replace('\\', "\\\\").replace('"', "\\\"");
+    let claude_cmd = if let Some(ref wt) = worktree_path {
+        let flags: String = wt.split(',')
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .map(|p| format!("-w '{}'", p))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("claude --dangerously-skip-permissions {}", flags)
+    } else {
+        "claude --dangerously-skip-permissions".to_string()
+    };
+    let cmd = if let Some(ref fp) = folder_path {
+        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", fp, escaped_name, claude_cmd)
+    } else {
+        format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
+    };
+    let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+        escaped, escaped_name
+    );
+    Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .spawn()
+        .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+    Ok("iTerm에서 Claude (bypass) 실행".to_string())
+}
+
+#[tauri::command]
+fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
+    let escaped_name = name.as_deref().unwrap_or("Claude")
+        .replace('\\', "\\\\").replace('"', "\\\"");
+    let claude_cmd = if let Some(ref wt) = worktree_path {
+        let flags: String = wt.split(',')
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .map(|p| format!("-w '{}'", p))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("claude {}", flags)
+    } else {
+        "claude".to_string()
+    };
+    let cmd = if let Some(ref fp) = folder_path {
+        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", fp, escaped_name, claude_cmd)
+    } else {
+        format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
+    };
+    let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+    let script = format!(
+        "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+        escaped, escaped_name
+    );
+    Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .spawn()
+        .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+    Ok("iTerm에서 Claude 실행".to_string())
+}
+
+#[tauri::command]
 fn open_in_chrome(url: String) -> Result<String, String> {
     if url.is_empty() {
         return Err("URL이 비어 있습니다".to_string());
@@ -739,7 +883,9 @@ fn import_ports_from_file(file_path: String) -> Result<Vec<PortInfo>, String> {
 
 #[tauri::command]
 fn install_app_to_applications() -> Result<String, String> {
-    let app_path = "/Users/gwanli/Documents/GitHub/myproduct_v4/포트관리기/src-tauri/target/release/bundle/macos/포트관리기.app";
+    let home = std::env::var("HOME").unwrap_or_default();
+    // .cargo/config.toml의 target-dir 설정과 동일한 경로
+    let app_path = format!("{}/cargo-targets/portmanager/release/bundle/macos/포트관리기.app", home);
     let dest_path = "/Applications/포트관리기.app";
 
     // 기존 앱이 있으면 삭제
@@ -792,6 +938,54 @@ async fn build_app(build_type: String, app_handle: tauri::AppHandle) -> Result<S
     Ok(format!("{} 빌드가 백그라운드에서 시작되었습니다", build_type))
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct WorktreeInfo {
+    path: String,
+    branch: Option<String>,
+    is_main: bool,
+}
+
+#[tauri::command]
+fn list_git_worktrees(folder_path: String) -> Result<Vec<WorktreeInfo>, String> {
+    let output = std::process::Command::new("git")
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&folder_path)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut worktrees = Vec::new();
+    let mut current_path: Option<String> = None;
+    let mut current_branch: Option<String> = None;
+    let mut is_first = true;
+
+    for line in stdout.lines() {
+        if line.starts_with("worktree ") {
+            if let Some(path) = current_path.take() {
+                let is_main = is_first;
+                if is_first { is_first = false; }
+                worktrees.push(WorktreeInfo {
+                    path,
+                    branch: current_branch.take(),
+                    is_main,
+                });
+            }
+            current_path = Some(line["worktree ".len()..].to_string());
+        } else if line.starts_with("branch refs/heads/") {
+            current_branch = Some(line["branch refs/heads/".len()..].to_string());
+        }
+    }
+    // flush last entry
+    if let Some(path) = current_path {
+        worktrees.push(WorktreeInfo {
+            path,
+            branch: current_branch,
+            is_main: is_first,
+        });
+    }
+    Ok(worktrees)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -813,7 +1007,12 @@ pub fn run() {
         import_ports_from_file,
         open_in_chrome,
         open_log,
+        open_tmux_claude,
+        open_tmux_claude_bypass,
+        open_terminal_claude,
+        open_terminal_claude_bypass,
         export_dmg,
+        list_git_worktrees,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())

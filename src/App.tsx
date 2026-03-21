@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
 // Tauri API 체크
@@ -176,6 +176,20 @@ const API = {
     }
   },
 
+  async listGitWorktrees(folderPath: string): Promise<WorktreeInfo[]> {
+    if (isTauri()) {
+      return invoke<WorktreeInfo[]>('list_git_worktrees', { folderPath });
+    } else {
+      const res = await fetch('/api/list-git-worktrees', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath }),
+      });
+      const data = await res.json();
+      return data.worktrees ?? [];
+    }
+  },
+
   async checkPortStatus(port: number): Promise<boolean> {
     if (isTauri()) {
       return invoke<boolean>('check_port_status', { port });
@@ -200,14 +214,14 @@ const API = {
     }
   },
 
-  async openTmuxClaude(sessionName: string, folderPath?: string): Promise<string> {
+  async openTmuxClaude(sessionName: string, folderPath?: string, worktreePath?: string): Promise<string> {
     if (isTauri()) {
-      return invoke<string>('open_tmux_claude', { sessionName, folderPath: folderPath ?? null });
+      return invoke<string>('open_tmux_claude', { sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null });
     } else {
       const response = await fetch('/api/open-tmux-claude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionName, folderPath: folderPath ?? null })
+        body: JSON.stringify({ sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null })
       });
       const result = await response.json();
       if (!result.success) throw new Error(result.error);
@@ -215,14 +229,44 @@ const API = {
     }
   },
 
-  async openTerminalClaude(folderPath?: string, name?: string): Promise<string> {
+  async openTmuxClaudeBypass(sessionName: string, folderPath?: string, worktreePath?: string): Promise<string> {
     if (isTauri()) {
-      return invoke<string>('open_terminal_claude', { folderPath: folderPath ?? null, name: name ?? null });
+      return invoke<string>('open_tmux_claude_bypass', { sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null });
+    } else {
+      const response = await fetch('/api/open-tmux-claude-bypass', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null })
+      });
+      const result = await response.json();
+      if (!result.success) throw new Error(result.error);
+      return result.message;
+    }
+  },
+
+  async openTerminalClaudeBypass(folderPath?: string, name?: string, worktreePath?: string): Promise<string> {
+    if (isTauri()) {
+      return invoke<string>('open_terminal_claude_bypass', { folderPath: folderPath ?? null, name: name ?? null, worktreePath: worktreePath ?? null });
+    } else {
+      const response = await fetch('/api/open-terminal-claude-bypass', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath: folderPath ?? null, name: name ?? null, worktreePath: worktreePath ?? null })
+      });
+      const result = await response.json();
+      if (!result.success) throw new Error(result.error);
+      return result.message;
+    }
+  },
+
+  async openTerminalClaude(folderPath?: string, name?: string, worktreePath?: string): Promise<string> {
+    if (isTauri()) {
+      return invoke<string>('open_terminal_claude', { folderPath: folderPath ?? null, name: name ?? null, worktreePath: worktreePath ?? null });
     } else {
       const response = await fetch('/api/open-terminal-claude', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderPath: folderPath ?? null, name: name ?? null })
+        body: JSON.stringify({ folderPath: folderPath ?? null, name: name ?? null, worktreePath: worktreePath ?? null })
       });
       const result = await response.json();
       if (!result.success) throw new Error(result.error);
@@ -239,7 +283,14 @@ interface PortInfo {
   folderPath?: string;
   deployUrl?: string;
   githubUrl?: string;
+  worktreePath?: string;
   isRunning?: boolean;
+}
+
+interface WorktreeInfo {
+  path: string;
+  branch?: string;
+  is_main: boolean;
 }
 
 type SortType = 'name' | 'port' | 'recent';
@@ -267,7 +318,10 @@ function App() {
   const [folderPath, setFolderPath] = useState('');
   const [deployUrl, setDeployUrl] = useState('');
   const [githubUrl, setGithubUrl] = useState('');
+  const [worktreePath, setWorktreePath] = useState('');
   const [sortBy, setSortBy] = useState<SortType>('recent');
+  const [filterType, setFilterType] = useState<'all' | 'with-port' | 'without-port'>('all');
+  const [bypassPermissions, setBypassPermissions] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editPort, setEditPort] = useState('');
@@ -275,12 +329,16 @@ function App() {
   const [editFolderPath, setEditFolderPath] = useState('');
   const [editDeployUrl, setEditDeployUrl] = useState('');
   const [editGithubUrl, setEditGithubUrl] = useState('');
+  const [editWorktreePath, setEditWorktreePath] = useState('');
+  const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
+  const [worktreePickerValue, setWorktreePickerValue] = useState('');
+  const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
   const [showBuildLog, setShowBuildLog] = useState(false);
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
-  const [buildType, setBuildType] = useState<'app' | 'dmg'>('app');
+  const [buildType, setBuildType] = useState<'app' | 'dmg' | 'windows'>('app');
   const lastLogIndexRef = useRef<number>(0);
 
   // 토스트 배너 표시 함수
@@ -294,22 +352,74 @@ function App() {
     }, 3000);
   };
 
-  const openTmuxClaude = async (item: PortInfo) => {
+  const openTmuxClaude = (item: PortInfo) => {
+    setWorktreePickerState({ item, mode: 'tmux' });
+    setWorktreePickerValue(item.worktreePath ?? '');
+    setDetectedWorktrees([]);
+    if (item.folderPath) {
+      API.listGitWorktrees(item.folderPath)
+        .then(list => setDetectedWorktrees(list))
+        .catch(() => {});
+    }
+  };
+
+  const _executeTmuxClaude = async (item: PortInfo, worktreePath: string | undefined) => {
     const sessionName = getSessionName(item);
     try {
-      await API.openTmuxClaude(sessionName, item.folderPath);
-      showToast(`tmux + Claude 실행 중 (세션: ${sessionName})`, 'success');
+      if (bypassPermissions) {
+        await API.openTmuxClaudeBypass(sessionName, item.folderPath, worktreePath);
+        showToast(`tmux + Claude (bypass) 실행 중 (세션: ${sessionName}-bypass)`, 'success');
+      } else {
+        await API.openTmuxClaude(sessionName, item.folderPath, worktreePath);
+        showToast(`tmux + Claude 실행 중 (세션: ${sessionName})`, 'success');
+      }
     } catch (e) {
       showToast(`tmux 실행 실패: ${e}`, 'error');
     }
   };
 
-  const openTerminalClaude = async (item: PortInfo) => {
+  const openTerminalClaude = (item: PortInfo) => {
+    setWorktreePickerState({ item, mode: 'claude' });
+    setWorktreePickerValue(item.worktreePath ?? '');
+    setDetectedWorktrees([]);
+    if (item.folderPath) {
+      API.listGitWorktrees(item.folderPath)
+        .then(list => setDetectedWorktrees(list))
+        .catch(() => {});
+    }
+  };
+
+  const _executeTerminalClaude = async (item: PortInfo, worktreePath: string | undefined) => {
     try {
-      await API.openTerminalClaude(item.folderPath, item.name);
-      showToast(`Terminal에서 Claude 실행 중`, 'success');
+      if (bypassPermissions) {
+        await API.openTerminalClaudeBypass(item.folderPath, item.name, worktreePath);
+        showToast(`Terminal에서 Claude (bypass) 실행 중`, 'success');
+      } else {
+        await API.openTerminalClaude(item.folderPath, item.name, worktreePath);
+        showToast(`Terminal에서 Claude 실행 중`, 'success');
+      }
     } catch (e) {
       showToast(`Claude 실행 실패: ${e}`, 'error');
+    }
+  };
+
+  const executeWithWorktree = async (worktreePath: string | undefined) => {
+    if (!worktreePickerState) return;
+    const { item, mode } = worktreePickerState;
+
+    // save the entered path back to the item (for pre-fill next time)
+    if (worktreePath !== undefined) {
+      setPorts(prev => prev.map(p => p.id === item.id ? { ...p, worktreePath: worktreePath || undefined } : p));
+    }
+
+    setWorktreePickerState(null);
+    setDetectedWorktrees([]);
+
+    const updatedItem = { ...item, worktreePath };
+    if (mode === 'tmux') {
+      await _executeTmuxClaude(updatedItem, worktreePath);
+    } else {
+      await _executeTerminalClaude(updatedItem, worktreePath);
     }
   };
 
@@ -397,6 +507,7 @@ function App() {
         folderPath: autoFolderPath || undefined,
         deployUrl: deployUrl || undefined,
         githubUrl: githubUrl || undefined,
+        worktreePath: worktreePath || undefined,
         isRunning: false,
       };
       setPorts([...ports, newPort]);
@@ -406,6 +517,7 @@ function App() {
       setFolderPath('');
       setDeployUrl('');
       setGithubUrl('');
+      setWorktreePath('');
     }
   };
 
@@ -421,6 +533,7 @@ function App() {
     setEditFolderPath(item.folderPath || '');
     setEditDeployUrl(item.deployUrl || '');
     setEditGithubUrl(item.githubUrl || '');
+    setEditWorktreePath(item.worktreePath || '');
   };
 
   const cancelEdit = () => {
@@ -431,10 +544,11 @@ function App() {
     setEditFolderPath('');
     setEditDeployUrl('');
     setEditGithubUrl('');
+    setEditWorktreePath('');
   };
 
   const saveEdit = () => {
-    if (editingId && editName && editPort) {
+    if (editingId && editName) {
       // commandPath가 있으면 자동으로 폴더 경로 추출
       let autoFolderPath = editFolderPath;
       if (editCommandPath && !editFolderPath) {
@@ -446,7 +560,7 @@ function App() {
 
       setPorts(ports.map(p =>
         p.id === editingId
-          ? { ...p, name: editName, port: parseInt(editPort), commandPath: editCommandPath || undefined, folderPath: autoFolderPath || undefined, deployUrl: editDeployUrl || undefined, githubUrl: editGithubUrl || undefined }
+          ? { ...p, name: editName, port: editPort ? parseInt(editPort) : undefined, commandPath: editCommandPath || undefined, folderPath: autoFolderPath || undefined, deployUrl: editDeployUrl || undefined, githubUrl: editGithubUrl || undefined, worktreePath: editWorktreePath || undefined }
           : p
       ));
       cancelEdit();
@@ -787,6 +901,86 @@ function App() {
     }
   };
 
+  const handleBuildWindows = async () => {
+    if (isBuilding) return;
+
+    setBuildType('windows');
+    setBuildLogs(['⏳ GitHub Actions Windows 빌드를 시작합니다...']);
+    lastLogIndexRef.current = 0;
+    setShowBuildLog(true);
+    setIsBuilding(true);
+
+    try {
+      const response = await fetch('/api/build-windows', { method: 'POST' });
+      const result = await response.json();
+
+      if (!response.ok || result.error) {
+        setBuildLogs(prev => [...prev, `❌ ${result.error}`]);
+        setIsBuilding(false);
+        return;
+      }
+
+      setBuildLogs(prev => [
+        ...prev,
+        '✅ GitHub Actions 워크플로우가 트리거되었습니다.',
+        '🔄 Windows runner 시작 대기 중... (약 1~3분 소요)',
+      ]);
+
+      // GitHub Actions 상태 폴링 (5초 간격)
+      let lastStatus = '';
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await fetch('/api/windows-build-status');
+          const status = await statusResponse.json();
+
+          const currentKey = `${status.status}-${status.conclusion}`;
+          if (currentKey !== lastStatus) {
+            lastStatus = currentKey;
+
+            if (status.status === 'in_progress') {
+              setBuildLogs(prev => [
+                ...prev,
+                '🔄 Windows runner에서 빌드 중...',
+                `📎 진행상황: ${status.runUrl}`,
+              ]);
+            } else if (status.status === 'completed') {
+              clearInterval(pollInterval);
+              setIsBuilding(false);
+              if (status.conclusion === 'success') {
+                setBuildLogs(prev => [
+                  ...prev,
+                  '✅ Windows 빌드 완료!',
+                  `📥 다운로드: ${status.artifactsUrl}`,
+                  '💡 위 링크 → Artifacts → windows-installer 에서 .exe 다운로드',
+                ]);
+              } else {
+                setBuildLogs(prev => [
+                  ...prev,
+                  `❌ 빌드 실패 (${status.conclusion})`,
+                  `🔍 로그 확인: ${status.runUrl}`,
+                ]);
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Failed to poll windows build status:', e);
+        }
+      }, 5000);
+
+      // 30분 타임아웃
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (isBuilding) {
+          setIsBuilding(false);
+          setBuildLogs(prev => [...prev, '⚠️ 타임아웃 (30분 초과)']);
+        }
+      }, 1800000);
+    } catch (error) {
+      setBuildLogs(prev => [...prev, '❌ Windows 빌드 요청 실패: ' + error]);
+      setIsBuilding(false);
+    }
+  };
+
   const handleExportDmg = async () => {
     try {
       const message = await API.exportDmg();
@@ -876,20 +1070,92 @@ function App() {
   };
 
   const getSortedPorts = () => {
-    const sorted = [...ports];
+    let filtered = [...ports];
+
+    // Apply filter
+    if (filterType === 'with-port') {
+      filtered = filtered.filter(p => p.port != null && p.port > 0);
+    } else if (filterType === 'without-port') {
+      filtered = filtered.filter(p => p.port == null || p.port === 0);
+    }
+
+    // Apply sort
     switch (sortBy) {
       case 'name':
-        return sorted.sort((a, b) => a.name.localeCompare(b.name));
+        return filtered.sort((a, b) => a.name.localeCompare(b.name));
       case 'port':
-        return sorted.sort((a, b) => a.port - b.port);
+        return filtered.sort((a, b) => (a.port ?? 0) - (b.port ?? 0));
       case 'recent':
       default:
-        return sorted.reverse();
+        return filtered.reverse();
     }
   };
 
   return (
     <div className="min-h-screen bg-[#0a0a0b] p-8">
+      {/* 워크트리 경로 피커 모달 */}
+      {worktreePickerState && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 p-5 w-[420px] shadow-2xl">
+            <h3 className="text-sm font-semibold text-zinc-200 mb-3">워크트리 선택</h3>
+
+            {/* 감지된 워크트리 목록 */}
+            {detectedWorktrees.length > 0 && (
+              <div className="mb-3 border border-zinc-700 rounded-lg overflow-hidden">
+                {detectedWorktrees.map((wt) => (
+                  <button
+                    key={wt.path}
+                    onClick={() => setWorktreePickerValue(wt.path)}
+                    className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-zinc-700/50 transition-colors border-b border-zinc-700/50 last:border-0 ${
+                      worktreePickerValue === wt.path ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-300'
+                    }`}
+                  >
+                    <span className="font-mono truncate">{wt.path}</span>
+                    {wt.branch && (
+                      <span className="text-zinc-500 ml-2 shrink-0">({wt.branch})</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* 직접 입력 */}
+            <input
+              autoFocus
+              type="text"
+              value={worktreePickerValue}
+              onChange={(e) => setWorktreePickerValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && worktreePickerValue.trim()) executeWithWorktree(worktreePickerValue.trim());
+                if (e.key === 'Escape') { setWorktreePickerState(null); setDetectedWorktrees([]); }
+              }}
+              placeholder="직접 경로 입력..."
+              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 mb-4"
+            />
+
+            <div className="flex gap-2 justify-end items-center">
+              <button
+                onClick={() => { setWorktreePickerState(null); setDetectedWorktrees([]); }}
+                className="px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              >취소</button>
+              <button
+                onClick={() => { executeWithWorktree(undefined); }}
+                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 rounded-lg transition-colors"
+              >워크트리 없이 실행</button>
+              <button
+                disabled={!worktreePickerValue.trim()}
+                onClick={() => { executeWithWorktree(worktreePickerValue.trim()); }}
+                className={`px-3 py-1.5 text-xs rounded-lg transition-colors text-white ${
+                  worktreePickerValue.trim()
+                    ? 'bg-violet-600 hover:bg-violet-500'
+                    : 'bg-violet-600/30 opacity-40 cursor-not-allowed'
+                }`}
+              >실행 →</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 빌드 로그 모달 */}
       {showBuildLog && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -897,13 +1163,18 @@ function App() {
             {/* 헤더 */}
             <div className="flex items-center justify-between p-6 border-b border-zinc-800">
               <div className="flex items-center gap-3">
-                <Package className={`w-5 h-5 ${isBuilding ? 'animate-spin text-blue-400' : 'text-green-400'}`} />
+                {buildType === 'windows'
+                  ? <Monitor className={`w-5 h-5 ${isBuilding ? 'animate-spin text-blue-400' : 'text-green-400'}`} />
+                  : <Package className={`w-5 h-5 ${isBuilding ? 'animate-spin text-blue-400' : 'text-green-400'}`} />
+                }
                 <div>
                   <h2 className="text-lg font-semibold text-white">
-                    {buildType === 'dmg' ? 'DMG' : 'App'} 빌드 진행 상황
+                    {buildType === 'dmg' ? 'DMG' : buildType === 'windows' ? 'Windows' : 'App'} 빌드 진행 상황
                   </h2>
                   <p className="text-xs text-zinc-400 mt-0.5">
-                    {isBuilding ? '빌드 진행 중...' : '빌드 완료'}
+                    {isBuilding
+                      ? buildType === 'windows' ? 'GitHub Actions 진행 중...' : '빌드 진행 중...'
+                      : '빌드 완료'}
                   </p>
                 </div>
               </div>
@@ -1003,9 +1274,9 @@ function App() {
               </div>
               <div>
                 <h1 className="text-xl font-semibold text-white">
-                  포트 관리 프로그램
+                  프로젝트 관리 프로그램
                 </h1>
-                <p className="text-xs text-zinc-400 mt-0.5">로컬 개발 서버 포트를 관리하세요</p>
+                <p className="text-xs text-zinc-400 mt-0.5">로컬 개발 프로젝트를 관리하세요</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -1030,6 +1301,15 @@ function App() {
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                 <span className="font-medium">새로고침</span>
+              </button>
+              <button
+                onClick={() => isTauri()
+                  ? API.openInChrome('https://vibe2-navy.vercel.app/')
+                  : window.open('https://vibe2-navy.vercel.app/', '_blank')}
+                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span className="font-medium">가이드</span>
               </button>
               {!isTauri() && (
                 <button
@@ -1064,6 +1344,14 @@ function App() {
                   >
                     <Rocket className="w-3.5 h-3.5" />
                     <span className="font-medium">DMG 출시하기</span>
+                  </button>
+                  <button
+                    onClick={handleBuildWindows}
+                    disabled={isBuilding}
+                    className="px-3 py-1.5 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 text-sm rounded-lg border border-indigo-500/40 hover:border-indigo-500/60 transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Monitor className={`w-3.5 h-3.5 ${isBuilding && buildType === 'windows' ? 'animate-spin' : ''}`} />
+                    <span className="font-medium">{isBuilding && buildType === 'windows' ? 'Windows 빌드 중...' : 'Windows 빌드'}</span>
                   </button>
                 </>
               )}
@@ -1146,29 +1434,67 @@ function App() {
         {ports.length > 0 ? (
           <div className="bg-[#18181b] rounded-xl border border-zinc-800 overflow-hidden">
             <div className="bg-zinc-900/50 px-6 py-4 border-b border-zinc-800">
+              {/* Row 1: Filter tabs */}
+              <div className="flex gap-1 mb-3">
+                {(['all', 'with-port', 'without-port'] as const).map(f => {
+                  const count = f === 'all' ? ports.length
+                    : f === 'with-port' ? ports.filter(p => p.port != null && p.port > 0).length
+                    : ports.filter(p => p.port == null || p.port === 0).length;
+                  const label = f === 'all' ? '전체' : f === 'with-port' ? '포트 있음' : '포트 없음';
+                  return (
+                    <button key={f} onClick={() => setFilterType(f)}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                        filterType === f ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                      }`}>
+                      {label} <span className="opacity-70">({count})</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {/* Row 2: Title + Sort + Bypass Toggle */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <Terminal className="w-4 h-4 text-zinc-400" />
-                  <h2 className="text-sm font-semibold text-zinc-200">등록된 포트</h2>
+                  <h2 className="text-sm font-semibold text-zinc-200">등록된 프로젝트</h2>
                   <span className="bg-zinc-800 px-2 py-0.5 rounded-md text-xs text-zinc-300 font-medium border border-zinc-700">
                     {ports.length}
                   </span>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500" />
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as SortType)}
-                    className="bg-black/30 border border-zinc-700 text-zinc-200 text-xs rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all cursor-pointer"
+                <div className="flex items-center gap-3">
+                  {/* Bypass permissions toggle */}
+                  <button
+                    onClick={() => setBypassPermissions(v => !v)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all duration-200 ${
+                      bypassPermissions
+                        ? 'bg-orange-500/20 text-orange-400 border-orange-500/50'
+                        : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:text-zinc-300'
+                    }`}
+                    title="claude --dangerously-skip-permissions 활성화 여부"
                   >
-                    <option value="recent">최근 등록순</option>
-                    <option value="name">이름순</option>
-                    <option value="port">포트순</option>
-                  </select>
+                    <span className={`w-2 h-2 rounded-full ${bypassPermissions ? 'bg-orange-400' : 'bg-zinc-600'}`} />
+                    bypass permissions
+                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500" />
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as SortType)}
+                      className="bg-black/30 border border-zinc-700 text-zinc-200 text-xs rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all cursor-pointer"
+                    >
+                      <option value="recent">최근 등록순</option>
+                      <option value="name">이름순</option>
+                      <option value="port">포트순</option>
+                    </select>
+                  </div>
                 </div>
               </div>
             </div>
             <div className="divide-y divide-zinc-800">
+              {getSortedPorts().length === 0 ? (
+                <div className="p-8 text-center text-sm text-zinc-500">
+                  이 필터에 해당하는 프로젝트가 없습니다
+                </div>
+              ) : null}
               {getSortedPorts().map((item) => (
                 <div
                   key={item.id}
@@ -1321,19 +1647,29 @@ function App() {
                         )}
                         <button
                           onClick={() => openTmuxClaude(item)}
-                          title={`tmux 세션에서 Claude 실행 (세션: ${getSessionName(item)})`}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 text-xs font-medium rounded-lg border border-violet-500/30 hover:border-violet-500/50 transition-all duration-200"
+                          title={bypassPermissions
+                            ? `tmux + Claude --dangerously-skip-permissions (세션: ${getSessionName(item)}-bypass)`
+                            : `tmux 세션에서 Claude 실행 (세션: ${getSessionName(item)})`}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all duration-200 ${
+                            bypassPermissions
+                              ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border-orange-500/30 hover:border-orange-500/50'
+                              : 'bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border-violet-500/30 hover:border-violet-500/50'
+                          }`}
                         >
                           <SquareTerminal className="w-3 h-3" />
-                          <span>tmux</span>
+                          <span>tmux{bypassPermissions ? ' ⚡' : ''}</span>
                         </button>
                         <button
                           onClick={() => openTerminalClaude(item)}
-                          title="일반 Terminal에서 Claude 실행"
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 text-xs font-medium rounded-lg border border-indigo-500/30 hover:border-indigo-500/50 transition-all duration-200"
+                          title={bypassPermissions ? 'Terminal에서 Claude --dangerously-skip-permissions 실행' : '일반 Terminal에서 Claude 실행'}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all duration-200 ${
+                            bypassPermissions
+                              ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border-orange-500/30 hover:border-orange-500/50'
+                              : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border-indigo-500/30 hover:border-indigo-500/50'
+                          }`}
                         >
                           <Terminal className="w-3 h-3" />
-                          <span>Claude</span>
+                          <span>Claude{bypassPermissions ? ' ⚡' : ''}</span>
                         </button>
                         <div className="relative group/info inline-flex items-center">
                           <Info className="w-3 h-3 text-zinc-500 hover:text-zinc-300 cursor-help transition-colors" />
@@ -1466,7 +1802,7 @@ function App() {
               </div>
             </div>
             <h3 className="text-base font-medium text-zinc-200 mb-2">
-              등록된 포트가 없습니다
+              등록된 프로젝트가 없습니다
             </h3>
             <p className="text-sm text-zinc-400 leading-relaxed">
               위의 입력 폼에서 <span className="font-medium text-zinc-300">프로젝트 이름</span>과{' '}

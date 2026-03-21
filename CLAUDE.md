@@ -365,6 +365,49 @@ struct PortInfo {
 4. 완료 후 모달 닫기 또는 로그 복사
 5. 에러 발생 시 빨간색 메시지로 즉시 확인 가능
 
+## Tauri ACL 권한 시스템
+
+Tauri 2는 세분화된 ACL(Access Control List) 권한 시스템을 사용합니다.
+권한 설정 파일: `src-tauri/capabilities/default.json`
+
+### 현재 적용된 권한 목록
+
+```json
+{
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "fs:default",
+    "fs:allow-read-text-file",
+    "fs:allow-read-file",
+    "fs:allow-exists",
+    "fs:allow-write-text-file"
+  ]
+}
+```
+
+### 핵심 주의사항
+
+- **`fs:default`만으로는 파일 쓰기(write) 불가** — `fs:allow-write-text-file` 반드시 별도 추가 필요
+- **`dialog:allow-save`는 경로 선택만** — 실제 파일 쓰기는 `fs:allow-write-text-file` 별개로 필요
+- ACL 에러 패턴: `fs|write_text_file not allowed by ACL` → 추가할 권한: `fs:allow-write-text-file`
+- 에러 변환 공식: `{plugin}|{operation} not allowed` → 권한 문자열: `{plugin}:allow-{operation}`
+
+### 권한 참조표
+
+| 작업 | 필요 권한 |
+|------|-----------|
+| 텍스트 파일 읽기 | `fs:allow-read-text-file` |
+| 바이너리 파일 읽기 | `fs:allow-read-file` |
+| 파일 존재 확인 | `fs:allow-exists` |
+| 텍스트 파일 쓰기/저장 | `fs:allow-write-text-file` |
+| 파일 열기 다이얼로그 | `dialog:allow-open` |
+| 파일 저장 다이얼로그 | `dialog:allow-save` |
+
+> 권한 변경 후 반드시 재빌드 필요 (`bun run tauri:dev`로 빠른 검증 가능)
+
 ## 저작권
 
 © 2025 CS & Company. All rights reserved.
