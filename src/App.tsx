@@ -1624,7 +1624,7 @@ function App() {
               <div className="min-w-0">
                 <p className="text-sm font-medium text-zinc-300">작업 루트</p>
                 <button
-                  onClick={() => API.openAppDataDir()}
+                  onClick={() => API.openAppDataDir().catch(e => showToast('폴더 열기 실패: ' + e, 'error'))}
                   className="text-xs text-zinc-600 font-mono truncate hover:text-zinc-400 transition-colors text-left"
                   title="저장 폴더 열기"
                 >
