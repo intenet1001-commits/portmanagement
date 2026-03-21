@@ -272,6 +272,15 @@ const API = {
       if (!result.success) throw new Error(result.error);
       return result.message;
     }
+  },
+
+  async createFolder(folderPath: string): Promise<{ success: boolean; path: string }> {
+    const response = await fetch('/api/create-folder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath })
+    });
+    return response.json();
   }
 };
 
@@ -340,6 +349,9 @@ function App() {
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
   const [buildType, setBuildType] = useState<'app' | 'dmg' | 'windows'>('app');
   const lastLogIndexRef = useRef<number>(0);
+  const [workspaceRoot, setWorkspaceRoot] = useState<string>(() => localStorage.getItem('workspaceRoot') || '');
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -901,6 +913,48 @@ function App() {
     }
   };
 
+  const handleSetWorkspaceRoot = async () => {
+    if (isTauri()) {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({ directory: true, multiple: false });
+      if (selected && typeof selected === 'string') {
+        setWorkspaceRoot(selected);
+        localStorage.setItem('workspaceRoot', selected);
+      }
+    } else {
+      const input = prompt('작업 공간 폴더 경로를 입력하세요:', workspaceRoot);
+      if (input) {
+        setWorkspaceRoot(input);
+        localStorage.setItem('workspaceRoot', input);
+      }
+    }
+  };
+
+  const handleCreateProjectFolder = async () => {
+    if (!workspaceRoot) {
+      showToast('먼저 작업 공간 폴더를 설정하세요', 'error');
+      return;
+    }
+    const trimmed = newProjectName.trim();
+    if (!trimmed) {
+      showToast('프로젝트 이름을 입력하세요', 'error');
+      return;
+    }
+    const fullPath = `${workspaceRoot}/${trimmed}`;
+    try {
+      const result = await API.createFolder(fullPath);
+      if (result.success) {
+        showToast(`폴더 생성 완료: ${trimmed}`, 'success');
+        setNewProjectName('');
+        setShowNewProjectModal(false);
+      } else {
+        showToast(result.error || '폴더 생성 실패', 'error');
+      }
+    } catch (e: any) {
+      showToast('폴더 생성 실패: ' + e.message, 'error');
+    }
+  };
+
   const handleBuildWindows = async () => {
     if (isBuilding) return;
 
@@ -1430,6 +1484,84 @@ function App() {
             </div>
           </div>
         </div>
+
+        {/* 작업 공간 */}
+        <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="bg-zinc-900 p-1.5 rounded-lg border border-zinc-700 shrink-0">
+                <Folder className="w-4 h-4 text-zinc-500" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs text-zinc-500 mb-0.5">작업 공간</p>
+                {workspaceRoot ? (
+                  <p className="text-sm text-zinc-300 font-mono truncate max-w-xs">{workspaceRoot}</p>
+                ) : (
+                  <p className="text-sm text-zinc-600 italic">폴더를 설정하세요</p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={handleSetWorkspaceRoot}
+                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                <span className="font-medium">폴더 설정</span>
+              </button>
+              {workspaceRoot && (
+                <button
+                  onClick={() => { setNewProjectName(''); setShowNewProjectModal(true); }}
+                  className="px-3 py-1.5 bg-green-500/15 hover:bg-green-500/25 text-green-300 text-sm rounded-lg border border-green-500/40 hover:border-green-500/60 transition-all duration-200 flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span className="font-medium">새 프로젝트 폴더</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* 새 프로젝트 폴더 생성 모달 */}
+        {showNewProjectModal && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-[#18181b] rounded-xl border border-zinc-800 w-full max-w-md p-6">
+              <div className="flex items-center gap-3 mb-5">
+                <div className="bg-green-500/15 p-2 rounded-lg border border-green-500/30">
+                  <FilePlus className="w-5 h-5 text-green-400" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-white">새 프로젝트 폴더</h2>
+                  <p className="text-xs text-zinc-500 mt-0.5 font-mono truncate max-w-xs">{workspaceRoot}/</p>
+                </div>
+              </div>
+              <input
+                type="text"
+                placeholder="프로젝트 이름 (예: my-app)"
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateProjectFolder(); if (e.key === 'Escape') setShowNewProjectModal(false); }}
+                autoFocus
+                className="w-full px-3 py-2.5 text-sm bg-black/40 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500 transition-all mb-4 font-mono"
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setShowNewProjectModal(false)}
+                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={handleCreateProjectFolder}
+                  disabled={!newProjectName.trim()}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+                >
+                  생성
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 포트 목록 */}
         {ports.length > 0 ? (
