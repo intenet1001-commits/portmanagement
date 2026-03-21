@@ -1287,7 +1287,7 @@ function App() {
                 className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/35 text-blue-400 text-sm rounded-lg border border-blue-500/50 hover:border-blue-400/70 transition-all duration-200 flex items-center gap-1.5"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
-                <span className="font-medium">Claude 가이드</span>
+                <span className="font-medium">AI 오케스트레이터</span>
               </button>
               <button
                 onClick={handleExportPorts}
