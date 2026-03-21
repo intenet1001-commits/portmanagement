@@ -9,6 +9,10 @@ const isTauri = () => {
   return '__TAURI__' in window || '__TAURI_INTERNALS__' in window;
 };
 
+// OS 감지
+const isWindows = () => typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('win');
+const execFileExt = () => isWindows() ? '.bat / .cmd' : '.command';
+
 // API 호출 래퍼 (브라우저와 Tauri 모두 지원)
 const API = {
   async loadPorts(): Promise<PortInfo[]> {
@@ -281,6 +285,33 @@ const API = {
       body: JSON.stringify({ folderPath })
     });
     return response.json();
+  },
+
+  async detectPort(filePath: string): Promise<{ port?: number; folderPath?: string }> {
+    if (isTauri()) {
+      return invoke<{ port?: number; folderPath?: string }>('detect_port', { filePath });
+    } else {
+      const res = await fetch('/api/detect-port', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filePath }),
+      });
+      return res.json();
+    }
+  },
+
+  async scanCommandFiles(folderPath: string): Promise<string[]> {
+    if (isTauri()) {
+      return invoke<string[]>('scan_command_files', { folderPath });
+    } else {
+      const res = await fetch('/api/scan-command-files', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath }),
+      });
+      const data = await res.json();
+      return data.files || [];
+    }
   },
 
   async openAppDataDir(): Promise<void> {
@@ -667,7 +698,7 @@ function App() {
 
   const executeCommand = async (item: PortInfo) => {
     if (!item.commandPath) {
-      showToast('실행할 .command 파일이 등록되지 않았습니다.', 'error');
+      showToast('실행할 실행 파일(.command/.bat)이 등록되지 않았습니다.', 'error');
       return;
     }
 
@@ -698,7 +729,7 @@ function App() {
 
   const forceRestartCommand = async (item: PortInfo) => {
     if (!item.commandPath) {
-      showToast('실행할 .command 파일이 등록되지 않았습니다.', 'error');
+      showToast('실행할 실행 파일(.command/.bat)이 등록되지 않았습니다.', 'error');
       return;
     }
 
@@ -861,6 +892,23 @@ function App() {
           if (lastSlashIndex !== -1) {
             updated.folderPath = port.commandPath.substring(0, lastSlashIndex);
           }
+        }
+
+        // folderPath 있고 commandPath 없으면 실행 파일 자동 스캔
+        if (updated.folderPath && !updated.commandPath) {
+          try {
+            const found = await API.scanCommandFiles(updated.folderPath);
+            if (found.length > 0) {
+              updated.commandPath = found[0];
+              // 포트 번호도 자동 감지
+              if (!updated.port) {
+                try {
+                  const detected = await API.detectPort(found[0]);
+                  if (detected.port) updated.port = detected.port;
+                } catch {}
+              }
+            }
+          } catch {}
         }
 
         // 포트 상태 확인 (포트 번호가 있는 경우만)
@@ -1572,7 +1620,7 @@ function App() {
             <div className="space-y-2">
               <input
                 type="text"
-                placeholder=".command 파일 경로 (선택사항)"
+                placeholder={`${execFileExt()} 파일 경로 (선택사항)`}
                 value={commandPath}
                 onChange={(e) => setCommandPath(e.target.value)}
                 onKeyPress={handleKeyPress}
@@ -1607,7 +1655,7 @@ function App() {
                 <p className="text-[11px] text-zinc-500 leading-relaxed">
                   <span className="font-medium text-zinc-400">쉬운 추가 방법:</span> Finder에서
                   <span className="font-mono text-zinc-400"> 포트에추가.command </span>
-                  파일 위로 .command 파일을 드래그하세요
+                  파일 위로 {execFileExt()} 파일을 드래그하세요
                 </p>
               </div>
             </div>
@@ -1840,7 +1888,7 @@ function App() {
                         onChange={(e) => setEditCommandPath(e.target.value)}
                         onKeyDown={handleEditKeyPress}
                         className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                        placeholder=".command 파일 경로 (선택사항)"
+                        placeholder={`${execFileExt()} 파일 경로 (선택사항)`}
                       />
                       <input
                         type="text"

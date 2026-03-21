@@ -934,6 +934,22 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/scan-command-files" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json();
+        if (!folderPath) return new Response(JSON.stringify({ files: [] }), { headers });
+        const { readdirSync, existsSync } = await import("node:fs");
+        if (!existsSync(folderPath)) return new Response(JSON.stringify({ files: [] }), { headers });
+        const EXEC_EXTS = ['.command', '.bat', '.cmd', '.sh'];
+        const files = readdirSync(folderPath)
+          .filter((f: string) => EXEC_EXTS.some(ext => f.endsWith(ext)))
+          .map((f: string) => `${folderPath}/${f}`);
+        return new Response(JSON.stringify({ files }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ files: [], error: e.message }), { headers });
+      }
+    }
+
     if (url.pathname === "/api/open-app-data-dir" && req.method === "POST") {
       try {
         Bun.spawnSync(["open", APP_DATA_DIR]);

@@ -78,6 +78,26 @@ fn save_ports(app_handle: tauri::AppHandle, ports: Vec<PortInfo>) -> Result<(), 
 }
 
 #[tauri::command]
+fn scan_command_files(folder_path: String) -> Result<Vec<String>, String> {
+    let path = std::path::Path::new(&folder_path);
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let exec_exts = [".command", ".bat", ".cmd", ".sh"];
+    let entries = fs::read_dir(path).map_err(|e| e.to_string())?;
+    let files: Vec<String> = entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let name_str = name.to_string_lossy();
+            exec_exts.iter().any(|ext| name_str.ends_with(ext))
+        })
+        .map(|e| e.path().to_string_lossy().to_string())
+        .collect();
+    Ok(files)
+}
+
+#[tauri::command]
 fn open_app_data_dir(app_handle: tauri::AppHandle) -> Result<(), String> {
     let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
     if !app_data_dir.exists() {
@@ -1035,6 +1055,7 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
         load_ports,
         save_ports,
+        scan_command_files,
         open_app_data_dir,
         load_workspace_roots,
         save_workspace_roots,
