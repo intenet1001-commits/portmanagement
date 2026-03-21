@@ -1280,15 +1280,15 @@ function App() {
               </div>
             </div>
             <div className="flex items-center gap-2 flex-wrap justify-end">
-              <a
-                href="https://vibe2-navy.vercel.app/"
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                onClick={() => isTauri()
+                  ? API.openInChrome('https://vibe2-navy.vercel.app/')
+                  : window.open('https://vibe2-navy.vercel.app/', '_blank')}
                 className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/35 text-blue-400 text-sm rounded-lg border border-blue-500/50 hover:border-blue-400/70 transition-all duration-200 flex items-center gap-1.5"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
                 <span className="font-medium">Claude 가이드</span>
-              </a>
+              </button>
               <button
                 onClick={handleExportPorts}
                 className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
