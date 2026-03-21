@@ -15,6 +15,7 @@ const GITHUB_WORKFLOW = 'build-windows.yml';
 // 포트 데이터 파일 - 앱과 동일한 위치 사용
 const APP_DATA_DIR = join(homedir(), "Library/Application Support/com.portmanager.portmanager");
 const PORTS_DATA_FILE = join(APP_DATA_DIR, "ports.json");
+const WORKSPACE_ROOTS_FILE = join(APP_DATA_DIR, "workspace-roots.json");
 
 // 포트 데이터 로드
 async function loadPortsData() {
@@ -46,6 +47,27 @@ async function savePortsData(data: any) {
     console.error("[Data] Error saving ports data:", error);
     return false;
   }
+}
+
+// 작업 루트 데이터 로드
+async function loadWorkspaceRootsData() {
+  try {
+    const file = Bun.file(WORKSPACE_ROOTS_FILE);
+    if (await file.exists()) return await file.json();
+  } catch (e) { console.error("[Data] Error loading workspace roots:", e); }
+  return [];
+}
+
+// 작업 루트 데이터 저장
+async function saveWorkspaceRootsData(data: any) {
+  try {
+    if (!existsSync(APP_DATA_DIR)) {
+      const { mkdirSync } = await import("node:fs");
+      mkdirSync(APP_DATA_DIR, { recursive: true });
+    }
+    await Bun.write(WORKSPACE_ROOTS_FILE, JSON.stringify(data, null, 2));
+    return true;
+  } catch (e) { console.error("[Data] Error saving workspace roots:", e); return false; }
 }
 
 const server = Bun.serve({
@@ -909,6 +931,30 @@ const server = Bun.serve({
           }),
           { status: 500, headers }
         );
+      }
+    }
+
+    if (url.pathname === "/api/open-app-data-dir" && req.method === "POST") {
+      try {
+        Bun.spawnSync(["open", APP_DATA_DIR]);
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/workspace-roots" && req.method === "GET") {
+      const data = await loadWorkspaceRootsData();
+      return new Response(JSON.stringify(data), { headers });
+    }
+
+    if (url.pathname === "/api/workspace-roots" && req.method === "POST") {
+      try {
+        const data = await req.json();
+        await saveWorkspaceRootsData(data);
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers });
       }
     }
 
