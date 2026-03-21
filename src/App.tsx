@@ -310,6 +310,44 @@ interface Toast {
   type: 'success' | 'error';
 }
 
+interface WorkspaceRoot {
+  id: string;
+  name: string;
+  path: string; // absolute path (Tauri) or directory name (Web)
+}
+
+// IndexedDB helpers for FileSystemDirectoryHandle persistence (web only)
+const openIDB = (): Promise<IDBDatabase> => new Promise((resolve, reject) => {
+  const req = indexedDB.open('portmanager-workspace', 1);
+  req.onupgradeneeded = () => req.result.createObjectStore('handles');
+  req.onsuccess = () => resolve(req.result);
+  req.onerror = () => reject(req.error);
+});
+
+const idbSaveHandle = async (id: string, handle: FileSystemDirectoryHandle) => {
+  const db = await openIDB();
+  const tx = db.transaction('handles', 'readwrite');
+  (tx.objectStore('handles') as IDBObjectStore).put(handle, id);
+  return new Promise<void>(r => { tx.oncomplete = () => { db.close(); r(); }; });
+};
+
+const idbLoadHandle = async (id: string): Promise<FileSystemDirectoryHandle | null> => {
+  const db = await openIDB();
+  const tx = db.transaction('handles', 'readonly');
+  const req = (tx.objectStore('handles') as IDBObjectStore).get(id);
+  return new Promise(r => {
+    req.onsuccess = () => { db.close(); r((req.result as FileSystemDirectoryHandle) ?? null); };
+    req.onerror = () => { db.close(); r(null); };
+  });
+};
+
+const idbDeleteHandle = async (id: string) => {
+  const db = await openIDB();
+  const tx = db.transaction('handles', 'readwrite');
+  (tx.objectStore('handles') as IDBObjectStore).delete(id);
+  return new Promise<void>(r => { tx.oncomplete = () => { db.close(); r(); }; });
+};
+
 const getSessionName = (item: PortInfo): string => {
   if (item.folderPath) {
     const parts = item.folderPath.replace(/\/$/, '').split('/');
@@ -349,9 +387,13 @@ function App() {
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
   const [buildType, setBuildType] = useState<'app' | 'dmg' | 'windows'>('app');
   const lastLogIndexRef = useRef<number>(0);
-  const [workspaceRoot, setWorkspaceRoot] = useState<string>(() => localStorage.getItem('workspaceRoot') || '');
+  const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>(() => {
+    try { return JSON.parse(localStorage.getItem('workspaceRoots') || '[]'); } catch { return []; }
+  });
+  const dirHandlesRef = useRef<Map<string, FileSystemDirectoryHandle>>(new Map());
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
+  const [activeRootId, setActiveRootId] = useState<string | null>(null);
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -913,45 +955,78 @@ function App() {
     }
   };
 
-  const handleSetWorkspaceRoot = async () => {
+  const handleAddWorkspaceRoot = async () => {
     if (isTauri()) {
       const { open } = await import('@tauri-apps/plugin-dialog');
       const selected = await open({ directory: true, multiple: false });
       if (selected && typeof selected === 'string') {
-        setWorkspaceRoot(selected);
-        localStorage.setItem('workspaceRoot', selected);
+        const name = selected.split('/').pop() || selected;
+        const id = crypto.randomUUID();
+        const updated = [...workspaceRoots, { id, name, path: selected }];
+        setWorkspaceRoots(updated);
+        localStorage.setItem('workspaceRoots', JSON.stringify(updated));
       }
     } else {
-      const input = prompt('작업 공간 폴더 경로를 입력하세요:', workspaceRoot);
-      if (input) {
-        setWorkspaceRoot(input);
-        localStorage.setItem('workspaceRoot', input);
+      try {
+        const handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+        const id = crypto.randomUUID();
+        dirHandlesRef.current.set(id, handle);
+        await idbSaveHandle(id, handle);
+        const updated = [...workspaceRoots, { id, name: handle.name, path: handle.name }];
+        setWorkspaceRoots(updated);
+        localStorage.setItem('workspaceRoots', JSON.stringify(updated));
+      } catch (e: any) {
+        if (e.name !== 'AbortError') showToast('폴더 선택 실패: ' + e.message, 'error');
       }
     }
   };
 
+  const handleRemoveWorkspaceRoot = (id: string) => {
+    dirHandlesRef.current.delete(id);
+    idbDeleteHandle(id);
+    const updated = workspaceRoots.filter(r => r.id !== id);
+    setWorkspaceRoots(updated);
+    localStorage.setItem('workspaceRoots', JSON.stringify(updated));
+  };
+
   const handleCreateProjectFolder = async () => {
-    if (!workspaceRoot) {
-      showToast('먼저 작업 공간 폴더를 설정하세요', 'error');
-      return;
-    }
+    const root = workspaceRoots.find(r => r.id === activeRootId);
+    if (!root) { showToast('작업 루트를 찾을 수 없습니다', 'error'); return; }
     const trimmed = newProjectName.trim();
-    if (!trimmed) {
-      showToast('프로젝트 이름을 입력하세요', 'error');
-      return;
-    }
-    const fullPath = `${workspaceRoot}/${trimmed}`;
-    try {
-      const result = await API.createFolder(fullPath);
-      if (result.success) {
+    if (!trimmed) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
+
+    if (isTauri()) {
+      const fullPath = `${root.path}/${trimmed}`;
+      try {
+        const result = await API.createFolder(fullPath);
+        if (result.success) {
+          showToast(`폴더 생성 완료: ${trimmed}`, 'success');
+          setNewProjectName('');
+          setShowNewProjectModal(false);
+        } else {
+          showToast((result as any).error || '폴더 생성 실패', 'error');
+        }
+      } catch (e: any) {
+        showToast('폴더 생성 실패: ' + e.message, 'error');
+      }
+    } else {
+      let handle = dirHandlesRef.current.get(root.id);
+      if (!handle) {
+        handle = await idbLoadHandle(root.id) ?? undefined;
+        if (handle) dirHandlesRef.current.set(root.id, handle);
+      }
+      if (!handle) {
+        showToast('폴더 핸들 없음. 루트를 다시 추가해주세요', 'error');
+        return;
+      }
+      try {
+        await handle.getDirectoryHandle(trimmed, { create: true });
         showToast(`폴더 생성 완료: ${trimmed}`, 'success');
         setNewProjectName('');
         setShowNewProjectModal(false);
-      } else {
-        showToast(result.error || '폴더 생성 실패', 'error');
+      } catch (e: any) {
+        showToast('폴더 생성 실패: ' + e.message, 'error');
       }
-    } catch (e: any) {
-      showToast('폴더 생성 실패: ' + e.message, 'error');
     }
   };
 
@@ -1485,41 +1560,57 @@ function App() {
           </div>
         </div>
 
-        {/* 작업 공간 */}
+        {/* 작업 루트 */}
         <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-4 mb-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="bg-zinc-900 p-1.5 rounded-lg border border-zinc-700 shrink-0">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="bg-zinc-900 p-1.5 rounded-lg border border-zinc-700">
                 <Folder className="w-4 h-4 text-zinc-500" />
               </div>
-              <div className="min-w-0">
-                <p className="text-xs text-zinc-500 mb-0.5">작업 공간</p>
-                {workspaceRoot ? (
-                  <p className="text-sm text-zinc-300 font-mono truncate max-w-xs">{workspaceRoot}</p>
-                ) : (
-                  <p className="text-sm text-zinc-600 italic">폴더를 설정하세요</p>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={handleSetWorkspaceRoot}
-                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
-              >
-                <FolderOpen className="w-3.5 h-3.5" />
-                <span className="font-medium">폴더 설정</span>
-              </button>
-              {workspaceRoot && (
-                <button
-                  onClick={() => { setNewProjectName(''); setShowNewProjectModal(true); }}
-                  className="px-3 py-1.5 bg-green-500/15 hover:bg-green-500/25 text-green-300 text-sm rounded-lg border border-green-500/40 hover:border-green-500/60 transition-all duration-200 flex items-center gap-1.5"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span className="font-medium">새 프로젝트 폴더</span>
-                </button>
+              <p className="text-sm font-medium text-zinc-300">작업 루트</p>
+              {workspaceRoots.length > 0 && (
+                <span className="text-xs text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded-md">{workspaceRoots.length}</span>
               )}
             </div>
+            <button
+              onClick={handleAddWorkspaceRoot}
+              className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="font-medium">루트 추가</span>
+            </button>
           </div>
+
+          {workspaceRoots.length === 0 ? (
+            <p className="text-sm text-zinc-600 italic text-center py-2">루트 폴더를 추가하세요</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {workspaceRoots.map(root => (
+                <div key={root.id} className="flex items-center justify-between gap-2 bg-zinc-900/60 rounded-lg px-3 py-2 border border-zinc-800">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-zinc-200 font-medium truncate">{root.name}</p>
+                    <p className="text-xs text-zinc-500 font-mono truncate">{root.path}</p>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => { setActiveRootId(root.id); setNewProjectName(''); setShowNewProjectModal(true); }}
+                      className="px-2.5 py-1 bg-green-500/15 hover:bg-green-500/25 text-green-300 text-xs rounded-md border border-green-500/40 hover:border-green-500/60 transition-all flex items-center gap-1"
+                    >
+                      <FilePlus className="w-3 h-3" />
+                      <span>새 폴더</span>
+                    </button>
+                    <button
+                      onClick={() => handleRemoveWorkspaceRoot(root.id)}
+                      className="p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-all"
+                      title="루트 제거"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* 새 프로젝트 폴더 생성 모달 */}
@@ -1532,7 +1623,9 @@ function App() {
                 </div>
                 <div>
                   <h2 className="text-base font-semibold text-white">새 프로젝트 폴더</h2>
-                  <p className="text-xs text-zinc-500 mt-0.5 font-mono truncate max-w-xs">{workspaceRoot}/</p>
+                  <p className="text-xs text-zinc-500 mt-0.5 font-mono truncate max-w-xs">
+                    {workspaceRoots.find(r => r.id === activeRootId)?.path}/
+                  </p>
                 </div>
               </div>
               <input
