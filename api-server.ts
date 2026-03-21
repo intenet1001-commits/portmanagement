@@ -7,6 +7,11 @@ const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
 let buildStatus = { isBuilding: false, type: '', output: [] as string[], exitCode: null as number | null };
 
+// GitHub Actions 설정
+const GITHUB_OWNER = 'intenet1001-commits';
+const GITHUB_REPO = 'portmanagement';
+const GITHUB_WORKFLOW = 'build-windows.yml';
+
 // 포트 데이터 파일 - 앱과 동일한 위치 사용
 const APP_DATA_DIR = join(homedir(), "Library/Application Support/com.portmanager.portmanager");
 const PORTS_DATA_FILE = join(APP_DATA_DIR, "ports.json");
@@ -615,7 +620,8 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/open-build-folder" && req.method === "POST") {
       try {
-        const dmgFolder = join(import.meta.dir, "src-tauri/target/release/bundle/dmg");
+        // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
+        const dmgFolder = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle/dmg");
 
         console.log(`[OpenBuildFolder] Attempting to open: ${dmgFolder}`);
 
@@ -684,9 +690,96 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/open-tmux-claude" && req.method === "POST") {
+      try {
+        const { sessionName, folderPath, worktreePath } = await req.json();
+
+        const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const title = `[tmux] ${escapedSessionName}`;
+        const claudeCmd = worktreePath ? `claude -w '${worktreePath}'` : 'claude';
+        const cmd = folderPath
+          ? `cd '${folderPath}' && printf '\\033]0;${title}\\007'; tmux new-session -A -s '${sessionName}' '${claudeCmd}'`
+          : `printf '\\033]0;${title}\\007'; tmux new-session -A -s '${sessionName}' '${claudeCmd}'`;
+
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+
+        return new Response(
+          JSON.stringify({ success: true, message: `tmux + Claude 실행 중 (세션: ${sessionName})` }),
+          { headers }
+        );
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-tmux-claude-bypass" && req.method === "POST") {
+      try {
+        const { sessionName, folderPath, worktreePath } = await req.json();
+
+        const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const title = `[tmux-bypass] ${escapedSessionName}`;
+        const claudeCmd = worktreePath
+          ? `claude --dangerously-skip-permissions -w '${worktreePath}'`
+          : 'claude --dangerously-skip-permissions';
+        const cmd = folderPath
+          ? `cd '${folderPath}' && printf '\\033]0;${title}\\007'; tmux new-session -A -s '${sessionName}-bypass' '${claudeCmd}'`
+          : `printf '\\033]0;${title}\\007'; tmux new-session -A -s '${sessionName}-bypass' '${claudeCmd}'`;
+
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+
+        return new Response(
+          JSON.stringify({ success: true, message: `tmux + Claude (bypass) 실행 중 (세션: ${sessionName}-bypass)` }),
+          { headers }
+        );
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-terminal-claude" && req.method === "POST") {
+      try {
+        const { folderPath, name, worktreePath } = await req.json();
+        const escapedName = (name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const claudeCmd = worktreePath ? `claude -w '${worktreePath}'` : 'claude';
+        const cmd = folderPath
+          ? `cd '${folderPath}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
+          : `printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escapedName}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true, message: "Terminal에서 Claude 실행" }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-terminal-claude-bypass" && req.method === "POST") {
+      try {
+        const { folderPath, name, worktreePath } = await req.json();
+        const escapedName = `[bypass] ${(name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}`;
+        const claudeCmd = worktreePath
+          ? `claude --dangerously-skip-permissions -w '${worktreePath}'`
+          : 'claude --dangerously-skip-permissions';
+        const cmd = folderPath
+          ? `cd '${folderPath}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
+          : `printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escapedName}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true, message: "Terminal에서 Claude (bypass) 실행" }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
     if (url.pathname === "/api/install-app" && req.method === "POST") {
       try {
-        const appPath = join(import.meta.dir, "src-tauri/target/release/bundle/macos/포트관리기.app");
+        // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
+        const appPath = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle/macos/포트관리기.app");
         const destPath = "/Applications/포트관리기.app";
 
         console.log(`[InstallApp] Installing from: ${appPath} to: ${destPath}`);
@@ -730,7 +823,8 @@ const server = Bun.serve({
     if (url.pathname === "/api/export-dmg" && req.method === "POST") {
       try {
         console.log(`[ExportDMG] Starting...`);
-        const bundleDir = join(import.meta.dir, "src-tauri/target/release/bundle");
+        // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
+        const bundleDir = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle");
 
         // DMG 파일 찾기
         const dmgPaths = [
@@ -815,6 +909,151 @@ const server = Bun.serve({
           }),
           { status: 500, headers }
         );
+      }
+    }
+
+    if (url.pathname === "/api/build-windows" && req.method === "POST") {
+      try {
+        const token = process.env.GITHUB_TOKEN;
+        if (!token) {
+          return new Response(
+            JSON.stringify({ error: "GITHUB_TOKEN 환경변수가 설정되지 않았습니다.\n실행 방법: GITHUB_TOKEN=ghp_xxx bun api-server.ts" }),
+            { status: 400, headers }
+          );
+        }
+
+        const ghResponse = await fetch(
+          `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/vnd.github+json',
+              'Content-Type': 'application/json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+            body: JSON.stringify({ ref: 'main' }),
+          }
+        );
+
+        if (!ghResponse.ok) {
+          const errorText = await ghResponse.text();
+          return new Response(
+            JSON.stringify({ error: `GitHub API 오류: ${ghResponse.status} ${errorText}` }),
+            { status: 500, headers }
+          );
+        }
+
+        console.log('[BuildWindows] GitHub Actions workflow triggered');
+        return new Response(
+          JSON.stringify({ triggered: true, message: 'GitHub Actions Windows 빌드가 시작되었습니다' }),
+          { headers }
+        );
+      } catch (error: any) {
+        console.error('[BuildWindows] Error:', error);
+        return new Response(
+          JSON.stringify({ error: error.message }),
+          { status: 500, headers }
+        );
+      }
+    }
+
+    if (url.pathname === "/api/windows-build-status" && req.method === "GET") {
+      try {
+        const token = process.env.GITHUB_TOKEN;
+        if (!token) {
+          return new Response(
+            JSON.stringify({ status: 'error', message: 'GITHUB_TOKEN not set' }),
+            { headers }
+          );
+        }
+
+        const ghResponse = await fetch(
+          `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs?workflow_id=${GITHUB_WORKFLOW}&per_page=1&branch=main`,
+          {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            },
+          }
+        );
+
+        if (!ghResponse.ok) {
+          return new Response(
+            JSON.stringify({ status: 'error', message: `GitHub API error: ${ghResponse.status}` }),
+            { headers }
+          );
+        }
+
+        const data = await ghResponse.json();
+        const runs = data.workflow_runs;
+
+        if (!runs || runs.length === 0) {
+          return new Response(
+            JSON.stringify({ status: 'queued', runId: null, runUrl: null, conclusion: null, artifactsUrl: null }),
+            { headers }
+          );
+        }
+
+        const run = runs[0];
+        return new Response(
+          JSON.stringify({
+            status: run.status,         // queued | in_progress | completed
+            conclusion: run.conclusion, // success | failure | cancelled | null
+            runId: run.id,
+            runUrl: run.html_url,
+            artifactsUrl: run.status === 'completed' && run.conclusion === 'success'
+              ? `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${run.id}`
+              : null,
+          }),
+          { headers }
+        );
+      } catch (error: any) {
+        console.error('[WindowsBuildStatus] Error:', error);
+        return new Response(
+          JSON.stringify({ status: 'error', message: error.message }),
+          { headers }
+        );
+      }
+    }
+
+    if (url.pathname === "/api/list-git-worktrees" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json();
+        const proc = Bun.spawn(["git", "worktree", "list", "--porcelain"], {
+          cwd: folderPath,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await proc.exited;
+        const text = await new Response(proc.stdout).text();
+
+        // parse --porcelain output
+        const worktrees: { path: string; branch?: string; is_main: boolean }[] = [];
+        let currentPath: string | null = null;
+        let currentBranch: string | null = null;
+        let isFirst = true;
+
+        for (const line of text.split('\n')) {
+          if (line.startsWith('worktree ')) {
+            if (currentPath !== null) {
+              worktrees.push({ path: currentPath, branch: currentBranch ?? undefined, is_main: isFirst });
+              if (isFirst) isFirst = false;
+              currentBranch = null;
+            }
+            currentPath = line.slice('worktree '.length);
+          } else if (line.startsWith('branch refs/heads/')) {
+            currentBranch = line.slice('branch refs/heads/'.length);
+          }
+        }
+        if (currentPath !== null) {
+          worktrees.push({ path: currentPath, branch: currentBranch ?? undefined, is_main: isFirst });
+        }
+
+        return new Response(JSON.stringify({ success: true, worktrees }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ success: true, worktrees: [] }), { headers });
       }
     }
 
