@@ -281,7 +281,38 @@ const API = {
       body: JSON.stringify({ folderPath })
     });
     return response.json();
-  }
+  },
+
+  async openAppDataDir(): Promise<void> {
+    if (isTauri()) {
+      await invoke('open_app_data_dir');
+    } else {
+      await fetch('/api/open-app-data-dir', { method: 'POST' });
+    }
+  },
+
+  async loadWorkspaceRoots(): Promise<WorkspaceRoot[]> {
+    if (isTauri()) {
+      const val = await invoke<WorkspaceRoot[]>('load_workspace_roots');
+      return Array.isArray(val) ? val : [];
+    } else {
+      const res = await fetch('/api/workspace-roots');
+      if (!res.ok) return [];
+      return res.json();
+    }
+  },
+
+  async saveWorkspaceRoots(roots: WorkspaceRoot[]): Promise<void> {
+    if (isTauri()) {
+      await invoke('save_workspace_roots', { roots });
+    } else {
+      await fetch('/api/workspace-roots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(roots),
+      });
+    }
+  },
 };
 
 interface PortInfo {
@@ -387,13 +418,12 @@ function App() {
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
   const [buildType, setBuildType] = useState<'app' | 'dmg' | 'windows'>('app');
   const lastLogIndexRef = useRef<number>(0);
-  const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>(() => {
-    try { return JSON.parse(localStorage.getItem('workspaceRoots') || '[]'); } catch { return []; }
-  });
+  const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>([]);
   const dirHandlesRef = useRef<Map<string, FileSystemDirectoryHandle>>(new Map());
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [activeRootId, setActiveRootId] = useState<string | null>(null);
+  const [registerAsProject, setRegisterAsProject] = useState(true);
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -506,6 +536,20 @@ function App() {
     };
     loadPortsData();
   }, []);
+
+  // 작업 루트 초기 로드
+  useEffect(() => {
+    API.loadWorkspaceRoots().then(data => {
+      if (data.length > 0) setWorkspaceRoots(data);
+    }).catch(e => console.error('[App] Failed to load workspace roots:', e));
+  }, []);
+
+  // 작업 루트 변경 시 저장
+  useEffect(() => {
+    API.saveWorkspaceRoots(workspaceRoots).catch(e =>
+      console.error('[App] Failed to save workspace roots:', e)
+    );
+  }, [workspaceRoots]);
 
   // 포트 목록이 변경될 때마다 파일에 저장
   useEffect(() => {
@@ -964,7 +1008,6 @@ function App() {
         const id = crypto.randomUUID();
         const updated = [...workspaceRoots, { id, name, path: selected }];
         setWorkspaceRoots(updated);
-        localStorage.setItem('workspaceRoots', JSON.stringify(updated));
       }
     } else {
       try {
@@ -974,7 +1017,6 @@ function App() {
         await idbSaveHandle(id, handle);
         const updated = [...workspaceRoots, { id, name: handle.name, path: handle.name }];
         setWorkspaceRoots(updated);
-        localStorage.setItem('workspaceRoots', JSON.stringify(updated));
       } catch (e: any) {
         if (e.name !== 'AbortError') showToast('폴더 선택 실패: ' + e.message, 'error');
       }
@@ -986,7 +1028,6 @@ function App() {
     idbDeleteHandle(id);
     const updated = workspaceRoots.filter(r => r.id !== id);
     setWorkspaceRoots(updated);
-    localStorage.setItem('workspaceRoots', JSON.stringify(updated));
   };
 
   const handleCreateProjectFolder = async () => {
@@ -995,12 +1036,24 @@ function App() {
     const trimmed = newProjectName.trim();
     if (!trimmed) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
 
+    const addProject = (fullPath: string) => {
+      if (registerAsProject) {
+        const newPort: PortInfo = {
+          id: crypto.randomUUID(),
+          name: trimmed,
+          folderPath: fullPath,
+        };
+        setPorts(prev => [newPort, ...prev]);
+      }
+    };
+
     if (isTauri()) {
       const fullPath = `${root.path}/${trimmed}`;
       try {
         const result = await API.createFolder(fullPath);
         if (result.success) {
-          showToast(`폴더 생성 완료: ${trimmed}`, 'success');
+          addProject(fullPath);
+          showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
           setNewProjectName('');
           setShowNewProjectModal(false);
         } else {
@@ -1021,7 +1074,8 @@ function App() {
       }
       try {
         await handle.getDirectoryHandle(trimmed, { create: true });
-        showToast(`폴더 생성 완료: ${trimmed}`, 'success');
+        addProject(`${root.path}/${trimmed}`);
+        showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
         setNewProjectName('');
         setShowNewProjectModal(false);
       } catch (e: any) {
@@ -1563,13 +1617,24 @@ function App() {
         {/* 작업 루트 */}
         <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-4 mb-6">
           <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <div className="bg-zinc-900 p-1.5 rounded-lg border border-zinc-700">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="bg-zinc-900 p-1.5 rounded-lg border border-zinc-700 shrink-0">
                 <Folder className="w-4 h-4 text-zinc-500" />
               </div>
-              <p className="text-sm font-medium text-zinc-300">작업 루트</p>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-zinc-300">작업 루트</p>
+                <button
+                  onClick={() => API.openAppDataDir()}
+                  className="text-xs text-zinc-600 font-mono truncate hover:text-zinc-400 transition-colors text-left"
+                  title="저장 폴더 열기"
+                >
+                  {isTauri()
+                    ? '~/Library/Application Support/com.portmanager.portmanager/ ↗'
+                    : 'workspace-roots.json ↗'}
+                </button>
+              </div>
               {workspaceRoots.length > 0 && (
-                <span className="text-xs text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded-md">{workspaceRoots.length}</span>
+                <span className="text-xs text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded-md shrink-0">{workspaceRoots.length}</span>
               )}
             </div>
             <button
@@ -1635,8 +1700,17 @@ function App() {
                 onChange={(e) => setNewProjectName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleCreateProjectFolder(); if (e.key === 'Escape') setShowNewProjectModal(false); }}
                 autoFocus
-                className="w-full px-3 py-2.5 text-sm bg-black/40 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500 transition-all mb-4 font-mono"
+                className="w-full px-3 py-2.5 text-sm bg-black/40 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500 transition-all mb-3 font-mono"
               />
+              <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={registerAsProject}
+                  onChange={(e) => setRegisterAsProject(e.target.checked)}
+                  className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 accent-green-500"
+                />
+                <span className="text-sm text-zinc-400">포트 목록에 프로젝트 등록</span>
+              </label>
               <div className="flex gap-2 justify-end">
                 <button
                   onClick={() => setShowNewProjectModal(false)}

@@ -78,6 +78,43 @@ fn save_ports(app_handle: tauri::AppHandle, ports: Vec<PortInfo>) -> Result<(), 
 }
 
 #[tauri::command]
+fn open_app_data_dir(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::process::Command::new("open")
+        .arg(&app_data_dir)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn load_workspace_roots(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !app_data_dir.exists() {
+        fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    }
+    let file = app_data_dir.join("workspace-roots.json");
+    if file.exists() {
+        let content = fs::read_to_string(&file).map_err(|e| e.to_string())?;
+        let val: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        return Ok(val);
+    }
+    Ok(serde_json::Value::Array(vec![]))
+}
+
+#[tauri::command]
+fn save_workspace_roots(app_handle: tauri::AppHandle, roots: serde_json::Value) -> Result<(), String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !app_data_dir.exists() {
+        fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    }
+    let file = app_data_dir.join("workspace-roots.json");
+    let content = serde_json::to_string_pretty(&roots).map_err(|e| e.to_string())?;
+    fs::write(&file, content).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn execute_command(
     port_id: String,
     command_path: String,
@@ -995,6 +1032,9 @@ pub fn run() {
     .invoke_handler(tauri::generate_handler![
         load_ports,
         save_ports,
+        open_app_data_dir,
+        load_workspace_roots,
+        save_workspace_roots,
         execute_command,
         stop_command,
         force_restart_command,
