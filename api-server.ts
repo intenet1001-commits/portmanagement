@@ -912,6 +912,25 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/create-folder" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json();
+        if (!folderPath) {
+          return new Response(JSON.stringify({ success: false, error: "Missing folderPath" }), { status: 400, headers });
+        }
+        const { mkdirSync, existsSync } = await import("node:fs");
+        if (existsSync(folderPath)) {
+          return new Response(JSON.stringify({ success: false, error: "이미 존재하는 폴더입니다" }), { status: 400, headers });
+        }
+        mkdirSync(folderPath, { recursive: true });
+        console.log(`[CreateFolder] Created: ${folderPath}`);
+        spawn({ cmd: ["open", folderPath], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true, path: folderPath }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
     if (url.pathname === "/api/build-windows" && req.method === "POST") {
       try {
         const token = process.env.GITHUB_TOKEN;
