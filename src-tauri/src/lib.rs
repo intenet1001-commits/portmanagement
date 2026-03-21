@@ -80,6 +80,9 @@ fn save_ports(app_handle: tauri::AppHandle, ports: Vec<PortInfo>) -> Result<(), 
 #[tauri::command]
 fn open_app_data_dir(app_handle: tauri::AppHandle) -> Result<(), String> {
     let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !app_data_dir.exists() {
+        fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    }
     std::process::Command::new("open")
         .arg(&app_data_dir)
         .spawn()
