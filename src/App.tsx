@@ -1279,7 +1279,16 @@ function App() {
                 <p className="text-xs text-zinc-400 mt-0.5">로컬 개발 프로젝트를 관리하세요</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <a
+                href="https://vibe2-navy.vercel.app/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/35 text-blue-400 text-sm rounded-lg border border-blue-500/50 hover:border-blue-400/70 transition-all duration-200 flex items-center gap-1.5"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span className="font-medium">Claude 가이드</span>
+              </a>
               <button
                 onClick={handleExportPorts}
                 className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
@@ -1302,15 +1311,7 @@ function App() {
                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                 <span className="font-medium">새로고침</span>
               </button>
-              <button
-                onClick={() => isTauri()
-                  ? API.openInChrome('https://vibe2-navy.vercel.app/')
-                  : window.open('https://vibe2-navy.vercel.app/', '_blank')}
-                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span className="font-medium">가이드</span>
-              </button>
+
               {!isTauri() && (
                 <button
                   onClick={() => API.openBuildFolder()}
