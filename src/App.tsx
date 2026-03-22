@@ -1807,6 +1807,14 @@ function App() {
                   <span className="bg-zinc-800 px-2 py-0.5 rounded-md text-xs text-zinc-300 font-medium border border-zinc-700">
                     {ports.length}
                   </span>
+                  <button
+                    onClick={handleRefresh}
+                    disabled={isRefreshing}
+                    className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-all disabled:opacity-40"
+                    title="새로고침 (실행파일 자동 감지)"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                  </button>
                 </div>
                 <div className="flex items-center gap-3">
                   {/* Bypass permissions toggle */}
