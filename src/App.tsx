@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import PortalManager from './PortalManager';
 
 // Tauri API 체크
 const isTauri = () => {
@@ -421,6 +422,7 @@ const getSessionName = (item: PortInfo): string => {
 function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const hasInitiallyLoaded = useRef(false);
   const [name, setName] = useState('');
   const [port, setPort] = useState('');
   const [commandPath, setCommandPath] = useState('');
@@ -428,6 +430,7 @@ function App() {
   const [deployUrl, setDeployUrl] = useState('');
   const [githubUrl, setGithubUrl] = useState('');
   const [worktreePath, setWorktreePath] = useState('');
+  const [activeTab, setActiveTab] = useState<'ports' | 'portal'>('ports');
   const [sortBy, setSortBy] = useState<SortType>('recent');
   const [filterType, setFilterType] = useState<'all' | 'with-port' | 'without-port'>('all');
   const [bypassPermissions, setBypassPermissions] = useState(false);
@@ -559,6 +562,7 @@ function App() {
         });
 
         setPorts(updatedData);
+        hasInitiallyLoaded.current = true;
       } catch (error) {
         console.error('Failed to load ports:', error);
       } finally {
@@ -582,9 +586,9 @@ function App() {
     );
   }, [workspaceRoots]);
 
-  // 포트 목록이 변경될 때마다 파일에 저장
+  // 포트 목록이 변경될 때마다 파일에 저장 (초기 로드 완료 후에만)
   useEffect(() => {
-    if (!isLoading) {
+    if (!isLoading && hasInitiallyLoaded.current) {
       console.log('[App] Saving ports, count:', ports.length);
       const savePortsData = async () => {
         try {
@@ -882,19 +886,45 @@ function App() {
     try {
       const data = await API.loadPorts();
 
-      // commandPath가 있는데 folderPath가 없는 경우 자동으로 추출하고, 포트 상태도 확인
+      // 경로 검증 및 자동 업데이트
       const updatedDataPromises = data.map(async (port: PortInfo) => {
         let updated = { ...port };
 
-        // 폴더 경로 자동 추출
-        if (port.commandPath && !port.folderPath) {
-          const lastSlashIndex = port.commandPath.lastIndexOf('/');
+        // [1] commandPath 존재 확인 → 없으면 무효화 (아래에서 재스캔)
+        if (updated.commandPath) {
+          try {
+            const exists = await invoke<boolean>('check_file_exists', { path: updated.commandPath });
+            if (!exists) {
+              console.log(`[Refresh] commandPath not found, will re-scan: ${updated.commandPath}`);
+              updated.commandPath = undefined;
+            }
+          } catch {}
+        }
+
+        // [2] folderPath 존재 확인 → 없으면 commandPath에서 재추출 시도
+        if (updated.folderPath) {
+          try {
+            const exists = await invoke<boolean>('check_file_exists', { path: updated.folderPath });
+            if (!exists) {
+              if (updated.commandPath) {
+                const idx = updated.commandPath.lastIndexOf('/');
+                updated.folderPath = idx !== -1 ? updated.commandPath.substring(0, idx) : undefined;
+              } else {
+                updated.folderPath = undefined;
+              }
+            }
+          } catch {}
+        }
+
+        // [3] commandPath 있고 folderPath 없으면 재추출
+        if (updated.commandPath && !updated.folderPath) {
+          const lastSlashIndex = updated.commandPath.lastIndexOf('/');
           if (lastSlashIndex !== -1) {
-            updated.folderPath = port.commandPath.substring(0, lastSlashIndex);
+            updated.folderPath = updated.commandPath.substring(0, lastSlashIndex);
           }
         }
 
-        // folderPath 있고 commandPath 없으면 실행 파일 자동 스캔
+        // [4] folderPath 있고 commandPath 없으면 실행 파일 자동 스캔
         if (updated.folderPath && !updated.commandPath) {
           try {
             const found = await API.scanCommandFiles(updated.folderPath);
@@ -1496,6 +1526,40 @@ function App() {
       </div>
 
       <div className="max-w-4xl mx-auto">
+        {/* 탭 네비게이션 */}
+        <div className="flex gap-1 mb-4 bg-[#18181b] border border-zinc-800 rounded-xl p-1 w-fit">
+          <button
+            onClick={() => setActiveTab('ports')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+              activeTab === 'ports'
+                ? 'bg-zinc-700 text-white shadow-sm'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5" />
+            프로젝트 관리
+          </button>
+          <button
+            onClick={() => setActiveTab('portal')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+              activeTab === 'portal'
+                ? 'bg-zinc-700 text-white shadow-sm'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+            }`}
+          >
+            <BookMarked className="w-3.5 h-3.5" />
+            포털
+          </button>
+        </div>
+
+        {/* 포털 탭 */}
+        {activeTab === 'portal' && (
+          <PortalManager showToast={showToast} />
+        )}
+
+        {/* 포트 관리 탭 */}
+        {activeTab === 'ports' && <>
+
         {/* 헤더 */}
         <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-6 mb-6">
           <div className="flex items-center justify-between mb-5">
@@ -2173,6 +2237,7 @@ function App() {
             © {new Date().getFullYear()} CS & Company. All rights reserved.
           </p>
         </div>
+        </>}
       </div>
     </div>
   );
