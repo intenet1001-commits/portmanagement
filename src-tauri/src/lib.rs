@@ -607,6 +607,11 @@ fn detect_port(file_path: String) -> Result<Option<u16>, String> {
 }
 
 #[tauri::command]
+fn check_file_exists(path: String) -> bool {
+    std::path::Path::new(&path).exists()
+}
+
+#[tauri::command]
 fn open_build_folder() -> Result<String, String> {
     let home = std::env::var("HOME").unwrap_or_default();
     // .cargo/config.toml의 target-dir 설정과 동일한 경로
@@ -1077,6 +1082,7 @@ pub fn run() {
         open_terminal_claude_bypass,
         export_dmg,
         list_git_worktrees,
+        check_file_exists,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())

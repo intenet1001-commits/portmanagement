@@ -16,6 +16,7 @@ const GITHUB_WORKFLOW = 'build-windows.yml';
 const APP_DATA_DIR = join(homedir(), "Library/Application Support/com.portmanager.portmanager");
 const PORTS_DATA_FILE = join(APP_DATA_DIR, "ports.json");
 const WORKSPACE_ROOTS_FILE = join(APP_DATA_DIR, "workspace-roots.json");
+const PORTAL_DATA_FILE = join(APP_DATA_DIR, "portal.json");
 
 // 포트 데이터 로드
 async function loadPortsData() {
@@ -673,6 +674,24 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/pick-folder" && req.method === "GET") {
+      try {
+        const proc = Bun.spawn({
+          cmd: ["osascript", "-e", 'POSIX path of (choose folder)'],
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const picked = (await new Response(proc.stdout).text()).trim();
+        await proc.exited;
+        if (proc.exitCode !== 0 || !picked) {
+          return new Response(JSON.stringify({ error: "cancelled" }), { status: 400, headers });
+        }
+        return new Response(JSON.stringify({ path: picked }), { headers });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers });
+      }
+    }
+
     if (url.pathname === "/api/open-folder" && req.method === "POST") {
       try {
         const { folderPath } = await req.json();
@@ -683,6 +702,22 @@ const server = Bun.serve({
           return new Response(
             JSON.stringify({ error: "Missing folderPath" }),
             { status: 400, headers }
+          );
+        }
+
+        // 절대 경로 확인
+        if (!folderPath.startsWith("/")) {
+          return new Response(
+            JSON.stringify({ error: `절대 경로가 필요합니다: "${folderPath}"` }),
+            { status: 400, headers }
+          );
+        }
+
+        // 경로 존재 여부 확인 (파일/디렉토리 모두 지원)
+        if (!existsSync(folderPath)) {
+          return new Response(
+            JSON.stringify({ error: `폴더를 찾을 수 없습니다: "${folderPath}"` }),
+            { status: 404, headers }
           );
         }
 
@@ -1135,6 +1170,35 @@ const server = Bun.serve({
         return new Response(JSON.stringify({ success: true, worktrees }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ success: true, worktrees: [] }), { headers });
+      }
+    }
+
+    // Portal 데이터 로드
+    if (url.pathname === "/api/portal" && req.method === "GET") {
+      try {
+        const file = Bun.file(PORTAL_DATA_FILE);
+        if (await file.exists()) {
+          const data = await file.json();
+          return new Response(JSON.stringify(data), { headers });
+        }
+        return new Response(JSON.stringify({ items: [], categories: [] }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // Portal 데이터 저장
+    if (url.pathname === "/api/portal" && req.method === "POST") {
+      try {
+        const data = await req.json();
+        if (!existsSync(APP_DATA_DIR)) {
+          const { mkdirSync } = await import("node:fs");
+          mkdirSync(APP_DATA_DIR, { recursive: true });
+        }
+        await Bun.write(PORTAL_DATA_FILE, JSON.stringify(data, null, 2));
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
       }
     }
 
