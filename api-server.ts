@@ -221,6 +221,16 @@ const server = Bun.serve({
           }
         }
 
+        // .html 파일은 브라우저로 열기
+        if (commandPath.toLowerCase().endsWith('.html')) {
+          try {
+            Bun.spawnSync(['open', '-a', 'Google Chrome', commandPath]);
+          } catch {
+            Bun.spawnSync(['open', commandPath]); // fallback to default browser
+          }
+          return new Response(JSON.stringify({ success: true, message: 'Opened HTML in browser' }), { headers });
+        }
+
         // .command 파일 실행 (백그라운드에서 detached 모드로)
         console.log(`[Execute] Starting process: bash ${commandPath}`);
 
@@ -975,7 +985,7 @@ const server = Bun.serve({
         if (!folderPath) return new Response(JSON.stringify({ files: [] }), { headers });
         const { readdirSync, existsSync } = await import("node:fs");
         if (!existsSync(folderPath)) return new Response(JSON.stringify({ files: [] }), { headers });
-        const EXEC_EXTS = ['.command', '.bat', '.cmd', '.sh'];
+        const EXEC_EXTS = ['.command', '.bat', '.cmd', '.sh', '.html'];
         const files = readdirSync(folderPath)
           .filter((f: string) => EXEC_EXTS.some(ext => f.endsWith(ext)))
           .map((f: string) => `${folderPath}/${f}`);

@@ -282,6 +282,7 @@ struct PortInfo {
 - `open_in_chrome(url)` - Chrome 브라우저에서 URL 열기
 - `import_ports_from_file(file_path)` - JSON 파일에서 포트 불러오기
 - `install_app_to_applications()` - .app을 Applications 폴더에 설치
+- `create_folder(folder_path)` - 폴더 생성 후 Finder에서 열기 (절대경로 필수)
 - `export_dmg()` - DMG 파일을 Desktop으로 복사
 - `build_app(build_type, app_handle)` - Tauri 앱 빌드 (백그라운드)
 
