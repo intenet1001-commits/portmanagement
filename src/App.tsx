@@ -1753,7 +1753,7 @@ function App() {
                 <p className="text-xs text-zinc-400 mt-0.5">로컬 개발 프로젝트를 관리하세요</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 flex-wrap justify-end">
+            <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
               <button
                 onClick={() => isTauri()
                   ? API.openInChrome('https://vibe2-navy.vercel.app/')
@@ -1765,44 +1765,46 @@ function App() {
               </button>
               <button
                 onClick={handleExportPorts}
-                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
+                title="내보내기"
+                className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center"
               >
                 <Download className="w-3.5 h-3.5" />
-                <span className="font-medium">내보내기</span>
               </button>
               <button
                 onClick={handleImportPorts}
-                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
+                title="불러오기"
+                className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center"
               >
                 <Upload className="w-3.5 h-3.5" />
-                <span className="font-medium">불러오기</span>
               </button>
               <button
                 onClick={handleRefresh}
                 disabled={isRefreshing}
-                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="새로고침"
+                className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                <span className="font-medium">새로고침</span>
               </button>
-              <button
-                onClick={handlePushToSupabase}
-                disabled={isPushingPorts}
-                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-indigo-500/50 transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="현재 포트 목록을 Supabase에 업로드"
-              >
-                <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
-                <span className="font-medium">Push</span>
-              </button>
-              <button
-                onClick={handleRestoreFromSupabase}
-                disabled={isRestoring}
-                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-indigo-500/50 transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Supabase에서 포트 목록 복원"
-              >
-                <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
-                <span className="font-medium">Pull</span>
-              </button>
+              <div className="flex items-center rounded-lg border border-zinc-700 overflow-hidden">
+                <button
+                  onClick={handlePushToSupabase}
+                  disabled={isPushingPorts}
+                  className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-700 transition-all duration-200 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Supabase Push — 현재 포트 목록 업로드"
+                >
+                  <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
+                  <span className="font-medium text-xs">Push</span>
+                </button>
+                <button
+                  onClick={handleRestoreFromSupabase}
+                  disabled={isRestoring}
+                  className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm transition-all duration-200 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Supabase Pull — 클라우드에서 복원"
+                >
+                  <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
+                  <span className="font-medium text-xs">Pull</span>
+                </button>
+              </div>
 
               {!isTauri() && (
                 <button
