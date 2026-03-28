@@ -1741,19 +1741,18 @@ function App() {
 
         {/* 헤더 */}
         <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-6 mb-6">
-          <div className="flex items-center justify-between mb-5">
-            <div className="flex items-center gap-3">
-              <div className="bg-zinc-900 p-2 rounded-lg border border-zinc-700">
+          {/* 헤더 1행: 타이틀 + 주요 버튼 */}
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="bg-zinc-900 p-2 rounded-lg border border-zinc-700 shrink-0">
                 <Server className="w-5 h-5 text-zinc-500" />
               </div>
-              <div>
-                <h1 className="text-xl font-semibold text-white">
-                  프로젝트 관리 프로그램
-                </h1>
-                <p className="text-xs text-zinc-400 mt-0.5">로컬 개발 프로젝트를 관리하세요</p>
+              <div className="min-w-0">
+                <h1 className="text-xl font-semibold text-white whitespace-nowrap">프로젝트 관리 프로그램</h1>
+                <p className="text-xs text-zinc-400 mt-0.5 whitespace-nowrap">로컬 개발 프로젝트를 관리하세요</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
+            <div className="flex items-center gap-2 shrink-0 ml-4">
               <button
                 onClick={() => isTauri()
                   ? API.openInChrome('https://vibe2-navy.vercel.app/')
@@ -1763,95 +1762,53 @@ function App() {
                 <ExternalLink className="w-3.5 h-3.5" />
                 <span className="font-medium">AI 오케스트레이터</span>
               </button>
-              <button
-                onClick={handleExportPorts}
-                title="내보내기"
-                className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center"
-              >
+              <button onClick={handleExportPorts} title="내보내기" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center">
                 <Download className="w-3.5 h-3.5" />
               </button>
-              <button
-                onClick={handleImportPorts}
-                title="불러오기"
-                className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center"
-              >
+              <button onClick={handleImportPorts} title="불러오기" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center">
                 <Upload className="w-3.5 h-3.5" />
               </button>
-              <button
-                onClick={handleRefresh}
-                disabled={isRefreshing}
-                title="새로고침"
-                className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
-              >
+              <button onClick={handleRefresh} disabled={isRefreshing} title="새로고침" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center disabled:opacity-50 disabled:cursor-not-allowed">
                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
               </button>
               <div className="flex items-center rounded-lg border border-zinc-700 overflow-hidden">
-                <button
-                  onClick={handlePushToSupabase}
-                  disabled={isPushingPorts}
-                  className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-700 transition-all duration-200 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Supabase Push — 현재 포트 목록 업로드"
-                >
+                <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-700 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
                   <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
-                  <span className="font-medium text-xs">Push</span>
+                  <span className="text-xs font-medium">Push</span>
                 </button>
-                <button
-                  onClick={handleRestoreFromSupabase}
-                  disabled={isRestoring}
-                  className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm transition-all duration-200 flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="Supabase Pull — 클라우드에서 복원"
-                >
+                <button onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
                   <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
-                  <span className="font-medium text-xs">Pull</span>
+                  <span className="text-xs font-medium">Pull</span>
                 </button>
               </div>
-
-              {!isTauri() && (
-                <button
-                  onClick={() => API.openBuildFolder()}
-                  className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
-                >
-                  <FolderOpen className="w-3.5 h-3.5" />
-                  <span className="font-medium">DMG 폴더</span>
-                </button>
-              )}
-              {!isTauri() && (
-                <>
-                  <button
-                    onClick={handleBuildApp}
-                    disabled={isBuilding}
-                    className="px-3 py-1.5 bg-green-500/15 hover:bg-green-500/25 text-green-300 text-sm rounded-lg border border-green-500/40 hover:border-green-500/60 transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Terminal className={`w-3.5 h-3.5 ${isBuilding && buildType === 'app' ? 'animate-spin' : ''}`} />
-                    <span className="font-medium">{isBuilding && buildType === 'app' ? '앱 빌드 중...' : '앱 빌드'}</span>
-                  </button>
-                  <button
-                    onClick={handleBuildDmg}
-                    disabled={isBuilding}
-                    className="px-3 py-1.5 bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 text-sm rounded-lg border border-purple-500/40 hover:border-purple-500/60 transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Package className={`w-3.5 h-3.5 ${isBuilding && buildType === 'dmg' ? 'animate-spin' : ''}`} />
-                    <span className="font-medium">{isBuilding && buildType === 'dmg' ? 'DMG 빌드 중...' : 'DMG 빌드'}</span>
-                  </button>
-                  <button
-                    onClick={handleExportDmg}
-                    className="px-3 py-1.5 bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 text-sm rounded-lg border border-blue-500/40 hover:border-blue-500/60 transition-all duration-200 flex items-center gap-1.5"
-                  >
-                    <Rocket className="w-3.5 h-3.5" />
-                    <span className="font-medium">DMG 출시하기</span>
-                  </button>
-                  <button
-                    onClick={handleBuildWindows}
-                    disabled={isBuilding}
-                    className="px-3 py-1.5 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 text-sm rounded-lg border border-indigo-500/40 hover:border-indigo-500/60 transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Monitor className={`w-3.5 h-3.5 ${isBuilding && buildType === 'windows' ? 'animate-spin' : ''}`} />
-                    <span className="font-medium">{isBuilding && buildType === 'windows' ? 'Windows 빌드 중...' : 'Windows 빌드'}</span>
-                  </button>
-                </>
-              )}
             </div>
           </div>
+
+          {/* 헤더 2행: 빌드 버튼 (웹 모드 전용) */}
+          {!isTauri() && (
+            <div className="flex items-center gap-2 justify-end mb-3">
+              <button onClick={() => API.openBuildFolder()} className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center gap-1.5">
+                <FolderOpen className="w-3.5 h-3.5" />
+                <span className="font-medium">DMG 폴더</span>
+              </button>
+              <button onClick={handleBuildApp} disabled={isBuilding} className="px-3 py-1.5 bg-green-500/15 hover:bg-green-500/25 text-green-300 text-sm rounded-lg border border-green-500/40 hover:border-green-500/60 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+                <Terminal className={`w-3.5 h-3.5 ${isBuilding && buildType === 'app' ? 'animate-spin' : ''}`} />
+                <span className="font-medium">{isBuilding && buildType === 'app' ? '앱 빌드 중...' : '앱 빌드'}</span>
+              </button>
+              <button onClick={handleBuildDmg} disabled={isBuilding} className="px-3 py-1.5 bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 text-sm rounded-lg border border-purple-500/40 hover:border-purple-500/60 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+                <Package className={`w-3.5 h-3.5 ${isBuilding && buildType === 'dmg' ? 'animate-spin' : ''}`} />
+                <span className="font-medium">{isBuilding && buildType === 'dmg' ? 'DMG 빌드 중...' : 'DMG 빌드'}</span>
+              </button>
+              <button onClick={handleExportDmg} className="px-3 py-1.5 bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 text-sm rounded-lg border border-blue-500/40 hover:border-blue-500/60 transition-all flex items-center gap-1.5">
+                <Rocket className="w-3.5 h-3.5" />
+                <span className="font-medium">DMG 출시하기</span>
+              </button>
+              <button onClick={handleBuildWindows} disabled={isBuilding} className="px-3 py-1.5 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 text-sm rounded-lg border border-indigo-500/40 hover:border-indigo-500/60 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
+                <Monitor className={`w-3.5 h-3.5 ${isBuilding && buildType === 'windows' ? 'animate-spin' : ''}`} />
+                <span className="font-medium">{isBuilding && buildType === 'windows' ? 'Windows 빌드 중...' : 'Windows 빌드'}</span>
+              </button>
+            </div>
+          )}
 
           {/* 입력 폼 */}
           <div className="space-y-2.5">
