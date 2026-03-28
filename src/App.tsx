@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { createClient } from '@supabase/supabase-js';
 import PortalManager from './PortalManager';
 
 // Tauri API 체크
@@ -12,7 +13,8 @@ const isTauri = () => {
 
 // OS 감지
 const isWindows = () => typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('win');
-const execFileExt = () => isWindows() ? '.bat / .cmd' : '.command';
+const execFileExt = () => isWindows() ? '.bat / .cmd / .html' : '.command / .html';
+const isHtmlFile = (path?: string) => !!path && path.toLowerCase().endsWith('.html');
 
 // API 호출 래퍼 (브라우저와 Tauri 모두 지원)
 const API = {
@@ -280,6 +282,14 @@ const API = {
   },
 
   async createFolder(folderPath: string): Promise<{ success: boolean; path: string }> {
+    if (isTauri()) {
+      try {
+        const path = await invoke<string>('create_folder', { folderPath });
+        return { success: true, path };
+      } catch (e: any) {
+        return { success: false, path: '', error: e.message || String(e) } as any;
+      }
+    }
     const response = await fetch('/api/create-folder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -423,6 +433,8 @@ function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const hasInitiallyLoaded = useRef(false);
+  const hasWorkspaceRootsLoaded = useRef(false);
+  const skipNextSave = useRef(false); // 서버 리로드(focus 등)로 인한 불필요한 덮어쓰기 방지
   const [name, setName] = useState('');
   const [port, setPort] = useState('');
   const [commandPath, setCommandPath] = useState('');
@@ -447,6 +459,8 @@ function App() {
   const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [isPushingPorts, setIsPushingPorts] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
   const [showBuildLog, setShowBuildLog] = useState(false);
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
@@ -545,7 +559,22 @@ function App() {
   useEffect(() => {
     const loadPortsData = async () => {
       try {
-        const data = await API.loadPorts();
+        // 재시도 로직: API 서버가 아직 준비되지 않은 경우 최대 3회 재시도
+        let data: PortInfo[] | null = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            if (attempt > 0) {
+              await new Promise(r => setTimeout(r, 800 * attempt));
+              console.log(`[App] Retrying port load (${attempt}/2)...`);
+            }
+            data = await API.loadPorts();
+            break;
+          } catch (err) {
+            console.warn(`[App] Load attempt ${attempt + 1} failed:`, err);
+            if (attempt === 2) throw err;
+          }
+        }
+        if (!data) throw new Error('No data after retries');
 
         // commandPath가 있는데 folderPath가 없는 경우 자동으로 추출
         const updatedData = data.map((port: PortInfo) => {
@@ -563,8 +592,28 @@ function App() {
 
         setPorts(updatedData);
         hasInitiallyLoaded.current = true;
+
+        // 앱 시작 시 포트 상태 자동 확인 (병렬)
+        const withPorts = updatedData.filter((p: PortInfo) => p.port);
+        if (withPorts.length > 0) {
+          const statusChecks = withPorts.map(async (port: PortInfo) => {
+            try {
+              const isRunning = await API.checkPortStatus(port.port!);
+              return { id: port.id, isRunning };
+            } catch {
+              return { id: port.id, isRunning: false };
+            }
+          });
+          const results = await Promise.all(statusChecks);
+          setPorts(prev =>
+            prev.map(p => {
+              const result = results.find(r => r.id === p.id);
+              return result ? { ...p, isRunning: result.isRunning } : p;
+            })
+          );
+        }
       } catch (error) {
-        console.error('Failed to load ports:', error);
+        console.error('[App] Failed to load ports after all retries:', error);
       } finally {
         setIsLoading(false);
       }
@@ -576,11 +625,16 @@ function App() {
   useEffect(() => {
     API.loadWorkspaceRoots().then(data => {
       if (data.length > 0) setWorkspaceRoots(data);
-    }).catch(e => console.error('[App] Failed to load workspace roots:', e));
+      hasWorkspaceRootsLoaded.current = true;
+    }).catch(e => {
+      console.error('[App] Failed to load workspace roots:', e);
+      hasWorkspaceRootsLoaded.current = true;
+    });
   }, []);
 
-  // 작업 루트 변경 시 저장
+  // 작업 루트 변경 시 저장 (초기 로드 완료 후에만)
   useEffect(() => {
+    if (!hasWorkspaceRootsLoaded.current) return;
     API.saveWorkspaceRoots(workspaceRoots).catch(e =>
       console.error('[App] Failed to save workspace roots:', e)
     );
@@ -589,6 +643,11 @@ function App() {
   // 포트 목록이 변경될 때마다 파일에 저장 (초기 로드 완료 후에만)
   useEffect(() => {
     if (!isLoading && hasInitiallyLoaded.current) {
+      // 서버에서 리로드된 데이터는 저장 안 함 (빈 데이터 덮어쓰기 방지)
+      if (skipNextSave.current) {
+        skipNextSave.current = false;
+        return;
+      }
       console.log('[App] Saving ports, count:', ports.length);
       const savePortsData = async () => {
         try {
@@ -610,7 +669,12 @@ function App() {
       console.log('[App] Window focused, reloading ports data...');
       try {
         const data = await API.loadPorts();
+        skipNextSave.current = true; // 서버에서 읽어온 데이터는 다시 저장하지 않음
         setPorts(data);
+        // 초기 로드가 실패했을 경우에도 포커스 복구 시 정상 처리
+        if (!hasInitiallyLoaded.current) {
+          hasInitiallyLoaded.current = true;
+        }
       } catch (error) {
         console.error('[App] Failed to reload ports on focus:', error);
       }
@@ -702,19 +766,28 @@ function App() {
 
   const executeCommand = async (item: PortInfo) => {
     if (!item.commandPath) {
-      showToast('실행할 실행 파일(.command/.bat)이 등록되지 않았습니다.', 'error');
+      showToast('실행할 파일이 등록되지 않았습니다.', 'error');
       return;
     }
 
+    const html = isHtmlFile(item.commandPath);
     try {
-      await API.executeCommand(item.id, item.commandPath);
-
-      setPorts(ports.map(p =>
-        p.id === item.id ? { ...p, isRunning: true } : p
-      ));
-      showToast(`${item.name} 서버가 시작되었습니다!`, 'success');
+      if (html) {
+        // HTML 파일은 open_folder 커맨드(open <path>) 재활용 — 기본 브라우저로 열림
+        await API.openFolder(item.commandPath);
+        showToast(`${item.name} 파일을 열었습니다!`, 'success');
+      } else {
+        await API.executeCommand(item.id, item.commandPath);
+        setPorts(ports.map(p =>
+          p.id === item.id ? { ...p, isRunning: true } : p
+        ));
+        showToast(`${item.name} 서버가 시작되었습니다!`, 'success');
+        if (item.port && isTauri()) {
+          try { await API.openInChrome(`http://localhost:${item.port}`); } catch {}
+        }
+      }
     } catch (error) {
-      showToast('서버 시작 실패: ' + error, 'error');
+      showToast('실행 실패: ' + error, 'error');
     }
   };
 
@@ -733,19 +806,24 @@ function App() {
 
   const forceRestartCommand = async (item: PortInfo) => {
     if (!item.commandPath) {
-      showToast('실행할 실행 파일(.command/.bat)이 등록되지 않았습니다.', 'error');
+      showToast('실행할 파일이 등록되지 않았습니다.', 'error');
       return;
     }
 
+    const html = isHtmlFile(item.commandPath);
     try {
-      await API.forceRestartCommand(item.id, item.port ?? 0, item.commandPath);
-
-      setPorts(ports.map(p =>
-        p.id === item.id ? { ...p, isRunning: true } : p
-      ));
-      showToast(`${item.name} 서버가 강제 재실행되었습니다!`, 'success');
+      if (html) {
+        await API.openFolder(item.commandPath);
+        showToast(`${item.name} 파일을 열었습니다!`, 'success');
+      } else {
+        await API.forceRestartCommand(item.id, item.port ?? 0, item.commandPath);
+        setPorts(ports.map(p =>
+          p.id === item.id ? { ...p, isRunning: true } : p
+        ));
+        showToast(`${item.name} 서버가 강제 재실행되었습니다!`, 'success');
+      }
     } catch (error) {
-      showToast('서버 강제 재실행 실패: ' + error, 'error');
+      showToast('강제 재실행 실패: ' + error, 'error');
     }
   };
 
@@ -879,6 +957,93 @@ function App() {
     }
   };
 
+  const handleRestoreFromSupabase = async () => {
+    if (isRestoring) return;
+    setIsRestoring(true);
+    try {
+      // portal.json에서 Supabase 자격 증명 로드
+      let portalData: any;
+      if (isTauri()) {
+        portalData = await invoke('load_portal');
+      } else {
+        const res = await fetch('/api/portal');
+        if (!res.ok) throw new Error('portal.json 로드 실패');
+        portalData = await res.json();
+      }
+
+      const { supabaseUrl, supabaseAnonKey } = portalData ?? {};
+      if (!supabaseUrl || !supabaseAnonKey) {
+        showToast('Supabase 설정이 없습니다. 포털 탭에서 먼저 설정하세요', 'error');
+        return;
+      }
+
+      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+      const { data, error } = await supabase.from('ports').select('*');
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) {
+        showToast('Supabase에 저장된 포트가 없습니다', 'error');
+        return;
+      }
+
+      // snake_case → camelCase 매핑
+      const restored: PortInfo[] = data.map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        port: row.port ?? undefined,
+        commandPath: row.command_path ?? undefined,
+        folderPath: row.folder_path ?? undefined,
+        deployUrl: row.deploy_url ?? undefined,
+        githubUrl: row.github_url ?? undefined,
+        isRunning: false,
+      }));
+
+      setPorts(restored);
+      await API.savePorts(restored);
+      showToast(`Supabase에서 ${restored.length}개 포트를 복원했습니다 ✓`, 'success');
+    } catch (e) {
+      showToast('Supabase 복원 실패: ' + e, 'error');
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  const handlePushToSupabase = async () => {
+    if (isPushingPorts) return;
+    setIsPushingPorts(true);
+    try {
+      let portalData: any;
+      if (isTauri()) {
+        portalData = await invoke('load_portal');
+      } else {
+        const res = await fetch('/api/portal');
+        if (!res.ok) throw new Error('portal.json 로드 실패');
+        portalData = await res.json();
+      }
+      const { supabaseUrl, supabaseAnonKey } = portalData ?? {};
+      if (!supabaseUrl || !supabaseAnonKey) {
+        showToast('Supabase 설정이 없습니다. 포털 탭에서 먼저 설정하세요', 'error');
+        return;
+      }
+      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+      const rows = ports.map(p => ({
+        id: p.id,
+        name: p.name,
+        port: p.port ?? null,
+        command_path: (p as any).commandPath ?? null,
+        folder_path: (p as any).folderPath ?? null,
+        deploy_url: (p as any).deployUrl ?? null,
+        github_url: (p as any).githubUrl ?? null,
+      }));
+      const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+      if (error) throw new Error(error.message);
+      showToast(`Supabase에 ${ports.length}개 포트를 업로드했습니다 ✓`, 'success');
+    } catch (e) {
+      showToast('Supabase 업로드 실패: ' + e, 'error');
+    } finally {
+      setIsPushingPorts(false);
+    }
+  };
+
   const handleRefresh = async () => {
     if (isRefreshing) return;
 
@@ -938,6 +1103,14 @@ function App() {
                 } catch {}
               }
             }
+          } catch {}
+        }
+
+        // [5] commandPath 있지만 port 없으면 파일에서 자동 감지
+        if (updated.commandPath && !updated.port) {
+          try {
+            const detected = await API.detectPort(updated.commandPath);
+            if (detected.port) updated.port = detected.port;
           } catch {}
         }
 
@@ -1089,11 +1262,13 @@ function App() {
       }
     } else {
       try {
-        const handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
+        const res = await fetch('/api/pick-folder');
+        const data = await res.json();
+        if (!data.path) return;
+        const selected: string = data.path;
+        const name = selected.split('/').pop() || selected;
         const id = crypto.randomUUID();
-        dirHandlesRef.current.set(id, handle);
-        await idbSaveHandle(id, handle);
-        const updated = [...workspaceRoots, { id, name: handle.name, path: handle.name }];
+        const updated = [...workspaceRoots, { id, name, path: selected }];
         setWorkspaceRoots(updated);
       } catch (e: any) {
         if (e.name !== 'AbortError') showToast('폴더 선택 실패: ' + e.message, 'error');
@@ -1126,6 +1301,10 @@ function App() {
     };
 
     if (isTauri()) {
+      if (!root.path.startsWith('/')) {
+        showToast('루트 폴더 경로가 절대경로가 아닙니다. 루트를 삭제 후 다시 추가해주세요.', 'error');
+        return;
+      }
       const fullPath = `${root.path}/${trimmed}`;
       try {
         const result = await API.createFolder(fullPath);
@@ -1141,21 +1320,21 @@ function App() {
         showToast('폴더 생성 실패: ' + e.message, 'error');
       }
     } else {
-      let handle = dirHandlesRef.current.get(root.id);
-      if (!handle) {
-        handle = await idbLoadHandle(root.id) ?? undefined;
-        if (handle) dirHandlesRef.current.set(root.id, handle);
-      }
-      if (!handle) {
-        showToast('폴더 핸들 없음. 루트를 다시 추가해주세요', 'error');
+      if (!root.path.startsWith('/')) {
+        showToast('루트 폴더 경로가 절대경로가 아닙니다. 루트를 삭제 후 다시 추가해주세요.', 'error');
         return;
       }
+      const fullPath = `${root.path}/${trimmed}`;
       try {
-        await handle.getDirectoryHandle(trimmed, { create: true });
-        addProject(`${root.path}/${trimmed}`);
-        showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
-        setNewProjectName('');
-        setShowNewProjectModal(false);
+        const result = await API.createFolder(fullPath);
+        if (result.success) {
+          addProject(fullPath);
+          showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
+          setNewProjectName('');
+          setShowNewProjectModal(false);
+        } else {
+          showToast((result as any).error || '폴더 생성 실패', 'error');
+        }
       } catch (e: any) {
         showToast('폴더 생성 실패: ' + e.message, 'error');
       }
@@ -1606,6 +1785,24 @@ function App() {
                 <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                 <span className="font-medium">새로고침</span>
               </button>
+              <button
+                onClick={handlePushToSupabase}
+                disabled={isPushingPorts}
+                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-indigo-500/50 transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="현재 포트 목록을 Supabase에 업로드"
+              >
+                <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
+                <span className="font-medium">Push</span>
+              </button>
+              <button
+                onClick={handleRestoreFromSupabase}
+                disabled={isRestoring}
+                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-indigo-500/50 transition-all duration-200 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Supabase에서 포트 목록 복원"
+              >
+                <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
+                <span className="font-medium">Pull</span>
+              </button>
 
               {!isTauri() && (
                 <button
@@ -2011,7 +2208,16 @@ function App() {
                       </div>
                       <div className="flex items-center gap-1.5">
                         {item.commandPath && (
-                          item.isRunning ? (
+                          isHtmlFile(item.commandPath) ? (
+                            <button
+                              onClick={() => executeCommand(item)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
+                              title="Chrome에서 HTML 파일 열기"
+                            >
+                              <ExternalLink className="w-3 h-3" />
+                              <span>열기</span>
+                            </button>
+                          ) : item.isRunning ? (
                             <>
                               <button
                                 onClick={() => stopCommand(item)}

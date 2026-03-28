@@ -19,7 +19,9 @@ struct PortInfo {
     deploy_url: Option<String>,
     #[serde(rename = "githubUrl")]
     github_url: Option<String>,
-    #[serde(rename = "isRunning")]
+    #[serde(rename = "worktreePath", default)]
+    worktree_path: Option<String>,
+    #[serde(rename = "isRunning", default)]
     is_running: bool,
 }
 
@@ -83,7 +85,7 @@ fn scan_command_files(folder_path: String) -> Result<Vec<String>, String> {
     if !path.exists() {
         return Ok(vec![]);
     }
-    let exec_exts = [".command", ".bat", ".cmd", ".sh"];
+    let exec_exts = [".command", ".bat", ".cmd", ".sh", ".html"];
     let entries = fs::read_dir(path).map_err(|e| e.to_string())?;
     let files: Vec<String> = entries
         .filter_map(|e| e.ok())
@@ -107,6 +109,33 @@ fn open_app_data_dir(app_handle: tauri::AppHandle) -> Result<(), String> {
         .arg(&app_data_dir)
         .spawn()
         .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn load_portal(app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !app_data_dir.exists() {
+        fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    }
+    let file = app_data_dir.join("portal.json");
+    if file.exists() {
+        let content = fs::read_to_string(&file).map_err(|e| e.to_string())?;
+        let val: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        return Ok(val);
+    }
+    Ok(serde_json::json!({ "items": [], "categories": [] }))
+}
+
+#[tauri::command]
+fn save_portal(app_handle: tauri::AppHandle, data: serde_json::Value) -> Result<(), String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !app_data_dir.exists() {
+        fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    }
+    let file = app_data_dir.join("portal.json");
+    let content = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+    fs::write(&file, content).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -138,6 +167,21 @@ fn save_workspace_roots(app_handle: tauri::AppHandle, roots: serde_json::Value) 
 }
 
 #[tauri::command]
+fn create_folder(folder_path: String) -> Result<String, String> {
+    let path = std::path::Path::new(&folder_path);
+    if path.exists() {
+        return Err("이미 존재하는 폴더입니다".to_string());
+    }
+    fs::create_dir_all(path).map_err(|e| e.to_string())?;
+    println!("[CreateFolder] Created: {}", folder_path);
+    std::process::Command::new("open")
+        .arg(&folder_path)
+        .spawn()
+        .ok();
+    Ok(folder_path)
+}
+
+#[tauri::command]
 fn execute_command(
     port_id: String,
     command_path: String,
@@ -151,6 +195,26 @@ fn execute_command(
         return Err(format!("Command file not found: {}", command_path));
     }
     println!("[ExecuteCommand] Command file exists: {}", command_path);
+
+    // .html 파일은 기본 브라우저로 열기 (open -a Chrome은 로컬 파일 경로에서 실패할 수 있음)
+    if command_path.to_lowercase().ends_with(".html") {
+        #[cfg(target_os = "macos")]
+        {
+            Command::new("open").arg(&command_path).spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Command::new("cmd").args(["/C", "start", "", &command_path]).spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            Command::new("xdg-open").arg(&command_path).spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok("Opened HTML file in browser".to_string());
+    }
 
     // 로그 파일 경로 생성
     let app_data_dir = app_handle.path().app_data_dir()
@@ -393,6 +457,26 @@ fn force_restart_command(
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     println!("[ForceRestart] Starting force restart for port_id: {}, port: {}", port_id, port);
+
+    // .html 파일은 기본 브라우저로 열기
+    if command_path.to_lowercase().ends_with(".html") {
+        #[cfg(target_os = "macos")]
+        {
+            Command::new("open").arg(&command_path).spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Command::new("cmd").args(["/C", "start", "", &command_path]).spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            Command::new("xdg-open").arg(&command_path).spawn()
+                .map_err(|e| e.to_string())?;
+        }
+        return Ok("Opened HTML file in browser".to_string());
+    }
 
     // 1단계: 포트로 실행 중인 모든 프로세스 강제 종료
     #[cfg(target_os = "macos")]
@@ -1062,6 +1146,8 @@ pub fn run() {
         save_ports,
         scan_command_files,
         open_app_data_dir,
+        load_portal,
+        save_portal,
         load_workspace_roots,
         save_workspace_roots,
         execute_command,
@@ -1083,6 +1169,7 @@ pub fn run() {
         export_dmg,
         list_git_worktrees,
         check_file_exists,
+        create_folder,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())

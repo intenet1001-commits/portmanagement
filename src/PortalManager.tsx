@@ -2,11 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Globe, Folder, Plus, Trash2, Pencil, X, Check, Search,
   ExternalLink, FolderOpen, Star, Download, Upload,
-  Cloud, CloudOff, Settings, RefreshCw, Link2, Pin,
+  Cloud, CloudOff, CloudUpload, CloudDownload, Settings, RefreshCw, Link2, Pin,
   BookMarked, ChevronDown, Database
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
-import { open as openDialog } from '@tauri-apps/plugin-dialog';
+import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { createClient } from '@supabase/supabase-js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -77,6 +78,10 @@ const isTauri = () => typeof window !== 'undefined' && ('__TAURI__' in window ||
 const PortalAPI = {
   async load(): Promise<PortalData> {
     try {
+      if (isTauri()) {
+        const val = await invoke<PortalData>('load_portal');
+        return val ?? { items: [], categories: DEFAULT_CATEGORIES };
+      }
       const res = await fetch('/api/portal');
       if (!res.ok) return { items: [], categories: DEFAULT_CATEGORIES };
       return await res.json();
@@ -86,6 +91,10 @@ const PortalAPI = {
   },
 
   async save(data: PortalData): Promise<void> {
+    if (isTauri()) {
+      await invoke('save_portal', { data });
+      return;
+    }
     await fetch('/api/portal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -147,6 +156,96 @@ interface Props {
   showToast: (msg: string, type: 'success' | 'error') => void;
 }
 
+const CLAUDE_PROMPT = `Supabase CLI로 아래 3개 테이블을 생성해줘.
+
+-- 1. 포트 관리 테이블
+create table if not exists ports (
+  id text primary key,
+  name text not null,
+  port integer,
+  command_path text,
+  folder_path text,
+  deploy_url text,
+  github_url text
+);
+
+-- 2. 포털 아이템 테이블
+create table if not exists portal_items (
+  id text primary key,
+  device_id text not null,
+  name text not null,
+  type text not null,
+  url text,
+  path text,
+  category text not null,
+  description text,
+  pinned boolean default false,
+  visit_count integer default 0,
+  last_visited text,
+  created_at text not null
+);
+
+-- 3. 포털 카테고리 테이블
+create table if not exists portal_categories (
+  id text primary key,
+  device_id text not null,
+  name text not null,
+  color text not null,
+  "order" integer default 0
+);
+
+RLS는 비활성화하거나 anon key로 읽기/쓰기 허용 정책으로 설정해줘.`;
+
+function SetupGuide() {
+  const [copied, setCopied] = React.useState(false);
+  const [open, setOpen] = React.useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(CLAUDE_PROMPT).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="mb-4">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-zinc-900/60 border border-zinc-700/50 rounded-lg text-xs text-zinc-400 hover:border-zinc-600 transition-all"
+      >
+        <span className="flex items-center gap-1.5">
+          <Database className="w-3.5 h-3.5 text-indigo-400" />
+          <span className="font-medium text-zinc-300">테이블 설정 가이드</span>
+          <span className="text-zinc-600">— 처음 사용 시</span>
+        </span>
+        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="mt-2 bg-zinc-900/40 border border-zinc-700/40 rounded-lg p-3 text-xs text-zinc-400 space-y-2">
+          <p className="text-zinc-300 font-medium">Claude Code에서 아래 프롬프트를 실행하세요:</p>
+          <ol className="list-decimal list-inside space-y-1 text-zinc-500">
+            <li>Claude Code 터미널 열기</li>
+            <li>Supabase MCP 연결 확인</li>
+            <li>아래 프롬프트 복사 후 붙여넣기</li>
+          </ol>
+          <pre className="bg-black/40 rounded p-2 text-zinc-500 whitespace-pre-wrap break-all text-[10px] max-h-32 overflow-y-auto">{CLAUDE_PROMPT}</pre>
+          <button
+            onClick={handleCopy}
+            className={`w-full py-1.5 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+              copied
+                ? 'bg-green-500/10 text-green-400 border-green-500/30'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-600'
+            }`}
+          >
+            {copied ? <Check className="w-3.5 h-3.5" /> : <Database className="w-3.5 h-3.5" />}
+            {copied ? '복사됨!' : 'Claude 프롬프트 복사'}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function PortalManager({ showToast }: Props) {
   const [data, setData] = useState<PortalData>({ items: [], categories: DEFAULT_CATEGORIES });
   const [selectedCat, setSelectedCat] = useState<string>('all');
@@ -154,6 +253,7 @@ export default function PortalManager({ showToast }: Props) {
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncOk, setSyncOk] = useState<boolean | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   // Modals
   const [showItemModal, setShowItemModal] = useState(false);
@@ -183,8 +283,12 @@ export default function PortalManager({ showToast }: Props) {
 
   const persist = useCallback(async (next: PortalData) => {
     setData(next);
-    await PortalAPI.save(next);
-  }, []);
+    try {
+      await PortalAPI.save(next);
+    } catch (e) {
+      showToast('저장 실패: ' + e, 'error');
+    }
+  }, [showToast]);
 
   // ── Item CRUD ─────────────────────────────────────────────────────────────
 
@@ -295,27 +399,36 @@ export default function PortalManager({ showToast }: Props) {
 
   // ── Export / Import ───────────────────────────────────────────────────────
 
-  function exportData() {
+  async function exportData() {
     const json = JSON.stringify(data, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `portal-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('내보내기 완료', 'success');
+    const defaultName = `portal-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    if (isTauri()) {
+      try {
+        const path = await saveDialog({ defaultPath: defaultName, filters: [{ name: 'JSON', extensions: ['json'] }] });
+        if (!path) return;
+        await writeTextFile(path, json);
+        showToast('내보내기 완료', 'success');
+      } catch (e) {
+        showToast('내보내기 실패: ' + e, 'error');
+      }
+    } else {
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = defaultName;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('내보내기 완료', 'success');
+    }
   }
 
-  function importData() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
+  async function importData() {
+    if (isTauri()) {
       try {
-        const text = await file.text();
+        const selected = await openDialog({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
+        if (!selected || typeof selected !== 'string') return;
+        const text = await readTextFile(selected);
         const imported = JSON.parse(text) as PortalData;
         if (!imported.items || !imported.categories) throw new Error('올바른 포맷이 아닙니다');
         await persist(imported);
@@ -323,8 +436,25 @@ export default function PortalManager({ showToast }: Props) {
       } catch (err) {
         showToast('파일 오류: ' + err, 'error');
       }
-    };
-    input.click();
+    } else {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.onchange = async (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (!file) return;
+        try {
+          const text = await file.text();
+          const imported = JSON.parse(text) as PortalData;
+          if (!imported.items || !imported.categories) throw new Error('올바른 포맷이 아닙니다');
+          await persist(imported);
+          showToast('불러오기 완료', 'success');
+        } catch (err) {
+          showToast('파일 오류: ' + err, 'error');
+        }
+      };
+      input.click();
+    }
   }
 
   // ── Supabase Sync ─────────────────────────────────────────────────────────
@@ -383,6 +513,64 @@ export default function PortalManager({ showToast }: Props) {
       showToast('동기화 실패: ' + err, 'error');
     } finally {
       setIsSyncing(false);
+    }
+  }
+
+  async function pullFromSupabase() {
+    if (!sbUrl || !sbKey) {
+      showToast('Supabase URL과 키를 먼저 설정하세요', 'error');
+      setShowSettings(true);
+      return;
+    }
+    setIsRestoring(true);
+    try {
+      const supabase = createClient(sbUrl, sbKey);
+      const deviceId = data.deviceId ?? getOrCreateDeviceId();
+      const [itemsRes, catsRes] = await Promise.all([
+        supabase.from('portal_items').select('*').eq('device_id', deviceId),
+        supabase.from('portal_categories').select('*').eq('device_id', deviceId),
+      ]);
+      if (itemsRes.error) throw new Error(itemsRes.error.message);
+      if (catsRes.error) throw new Error(catsRes.error.message);
+
+      const items: PortalItem[] = (itemsRes.data ?? []).map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        url: row.url ?? undefined,
+        path: row.path ?? undefined,
+        category: row.category,
+        description: row.description ?? undefined,
+        pinned: row.pinned,
+        visitCount: row.visit_count,
+        lastVisited: row.last_visited ?? undefined,
+        createdAt: row.created_at,
+      }));
+
+      const categories: PortalCategory[] = (catsRes.data ?? []).map((row: any) => ({
+        id: row.id,
+        name: row.name,
+        color: row.color as ColorKey,
+        order: row.order,
+      }));
+
+      if (items.length === 0 && categories.length === 0) {
+        showToast('Supabase에 저장된 포털 데이터가 없습니다', 'error');
+        return;
+      }
+
+      const nextData: PortalData = {
+        ...data,
+        items: items.length > 0 ? items : data.items,
+        categories: categories.length > 0 ? categories : data.categories,
+        lastSynced: new Date().toISOString(),
+      };
+      await persist(nextData);
+      showToast(`Supabase에서 ${items.length}개 항목을 복원했습니다 ✓`, 'success');
+    } catch (err) {
+      showToast('복원 실패: ' + err, 'error');
+    } finally {
+      setIsRestoring(false);
     }
   }
 
@@ -508,14 +696,22 @@ export default function PortalManager({ showToast }: Props) {
           <button
             onClick={syncSupabase}
             disabled={isSyncing}
-            title="Supabase 동기화"
-            className={`px-3 py-1.5 text-sm rounded-lg border transition-all flex items-center gap-1.5 ${
+            title="포털 데이터를 Supabase에 업로드 (Push)"
+            className={`px-2.5 py-1.5 text-sm rounded-lg border transition-all flex items-center gap-1 ${
               syncOk === true ? 'bg-green-500/10 text-green-400 border-green-500/30' :
               syncOk === false ? 'bg-red-500/10 text-red-400 border-red-500/30' :
-              'bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-zinc-600'
+              'bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-indigo-500/50'
             }`}
           >
-            <Cloud className={`w-3.5 h-3.5 ${isSyncing ? 'animate-pulse' : ''}`} />
+            <CloudUpload className={`w-3.5 h-3.5 ${isSyncing ? 'animate-pulse' : 'text-indigo-400'}`} />
+          </button>
+          <button
+            onClick={pullFromSupabase}
+            disabled={isRestoring}
+            title="Supabase에서 포털 데이터 복원 (Pull)"
+            className="px-2.5 py-1.5 text-sm rounded-lg border transition-all flex items-center gap-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-indigo-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
           </button>
           <button
             onClick={exportData}
@@ -738,11 +934,7 @@ export default function PortalManager({ showToast }: Props) {
       {/* ── Settings Modal ───────────────────────────────────────────────────── */}
       {showSettings && (
         <Modal title="Supabase 설정" onClose={() => setShowSettings(false)} onConfirm={saveSettings} confirmLabel="저장">
-          <div className="bg-zinc-900/60 border border-zinc-700/50 rounded-lg p-3 mb-4 text-xs text-zinc-400 leading-relaxed">
-            <p className="font-medium text-zinc-300 mb-1">Supabase 테이블 필요:</p>
-            <code className="text-zinc-500">portal_items</code>, <code className="text-zinc-500">portal_categories</code>
-            <p className="mt-1">각 테이블에 <code className="text-zinc-500">device_id</code> 컬럼 포함 필요</p>
-          </div>
+          <SetupGuide />
           <label className="block text-xs text-zinc-400 mb-1">Project URL</label>
           <input
             type="text"
