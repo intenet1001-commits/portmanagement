@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
 import PortalManager from './PortalManager';
 
@@ -99,8 +100,7 @@ const API = {
     if (isTauri()) {
       return invoke<PortInfo[]>('import_ports_from_file', { filePath });
     } else {
-      alert('파일 불러오기는 Tauri 앱에서만 사용 가능합니다');
-      return [];
+      throw new Error('파일 불러오기는 Tauri 앱에서만 사용 가능합니다');
     }
   },
 
@@ -216,8 +216,7 @@ const API = {
     if (isTauri()) {
       return invoke('open_log', { portId });
     } else {
-      // 웹 환경에서는 로그 기능 미지원
-      alert('로그 보기는 Tauri 앱에서만 사용 가능합니다');
+      throw new Error('로그 보기는 Tauri 앱에서만 사용 가능합니다');
     }
   },
 
@@ -829,7 +828,7 @@ function App() {
 
   const handleExportPorts = async () => {
     if (ports.length === 0) {
-      alert('내보낼 포트 정보가 없습니다.');
+      showToast('내보낼 포트 정보가 없습니다.', 'error');
       return;
     }
 
@@ -849,7 +848,7 @@ function App() {
           const content = JSON.stringify(ports, null, 2);
           const { writeTextFile } = await import('@tauri-apps/plugin-fs');
           await writeTextFile(filePath, content);
-          alert('포트 정보를 성공적으로 내보냈습니다.');
+          showToast('포트 정보를 성공적으로 내보냈습니다.', 'success');
         }
       } else {
         // 브라우저에서는 파일 다운로드
@@ -863,10 +862,10 @@ function App() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        alert('포트 정보를 성공적으로 내보냈습니다.');
+        showToast('포트 정보를 성공적으로 내보냈습니다.', 'success');
       }
     } catch (error) {
-      alert('파일 내보내기 실패: ' + error);
+      showToast('파일 내보내기 실패: ' + error, 'error');
     }
   };
 
@@ -901,12 +900,12 @@ function App() {
               await API.savePorts(updatedPorts);
               console.log('[Import] Ports saved successfully');
 
-              alert(`${newPorts.length}개의 포트 정보를 불러왔습니다.`);
+              showToast(`${newPorts.length}개의 포트 정보를 불러왔습니다.`, 'success');
             } else {
-              alert('새로운 포트 정보가 없습니다. (모두 이미 등록되어 있음)');
+              showToast('새로운 포트 정보가 없습니다. (모두 이미 등록되어 있음)', 'error');
             }
           } else {
-            alert('불러온 파일에 포트 정보가 없습니다.');
+            showToast('불러온 파일에 포트 정보가 없습니다.', 'error');
           }
         }
       } else {
@@ -931,20 +930,19 @@ function App() {
                     const updatedPorts = [...ports, ...newPorts];
                     setPorts(updatedPorts);
 
-                    // 명시적으로 저장
                     console.log('[Import] Explicitly saving ports after import');
                     await API.savePorts(updatedPorts);
                     console.log('[Import] Ports saved successfully');
 
-                    alert(`${newPorts.length}개의 포트 정보를 불러왔습니다.`);
+                    showToast(`${newPorts.length}개의 포트 정보를 불러왔습니다.`, 'success');
                   } else {
-                    alert('새로운 포트 정보가 없습니다. (모두 이미 등록되어 있음)');
+                    showToast('새로운 포트 정보가 없습니다. (모두 이미 등록되어 있음)', 'error');
                   }
                 } else {
-                  alert('불러온 파일에 포트 정보가 없습니다.');
+                  showToast('불러온 파일에 포트 정보가 없습니다.', 'error');
                 }
               } catch (error) {
-                alert('파일 읽기 실패: ' + error);
+                showToast('파일 읽기 실패: ' + error, 'error');
               }
             };
             reader.readAsText(file);
@@ -953,7 +951,7 @@ function App() {
         input.click();
       }
     } catch (error) {
-      alert('파일 불러오기 실패: ' + error);
+      showToast('파일 불러오기 실패: ' + error, 'error');
     }
   };
 
@@ -1432,66 +1430,76 @@ function App() {
 
   const handleAddCommandFile = async () => {
     try {
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.command,.sh';
-      input.onchange = async (e) => {
-        const file = (e.target as HTMLInputElement).files?.[0];
-        if (file) {
-          // 파일 내용을 읽기
+      if (isTauri()) {
+        // Tauri mode: native file picker → absolute path directly
+        const filePath = await openDialog({
+          multiple: false,
+          filters: [{ name: 'Command Files', extensions: ['command', 'sh'] }],
+        });
+        if (!filePath || typeof filePath !== 'string') return;
+
+        const fileName = filePath.split('/').pop() || '';
+        const projectName = fileName.replace('.command', '').replace('.sh', '');
+        const folderPath = filePath.substring(0, filePath.lastIndexOf('/'));
+
+        // Detect port via Rust command
+        let detectedPort: number | null = null;
+        try {
+          const detected = await invoke<number | null>('detect_port', { filePath });
+          if (detected) detectedPort = detected;
+        } catch {
+          // port detection optional
+        }
+
+        setName(projectName);
+        if (detectedPort) setPort(detectedPort.toString());
+        setCommandPath(filePath);
+        setFolderPath(folderPath);
+
+        showToast(
+          `파일 분석 완료! 프로젝트: ${projectName} | 포트: ${detectedPort || '감지 실패'} — 확인 후 추가 버튼을 누르세요.`,
+          'success'
+        );
+      } else {
+        // Web mode: FileReader for port detection only (no absolute path available)
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.command,.sh';
+        input.onchange = async (e) => {
+          const file = (e.target as HTMLInputElement).files?.[0];
+          if (!file) return;
           const reader = new FileReader();
           reader.onload = async (event) => {
             try {
               const content = event.target?.result as string;
 
-              // 포트 번호 감지
               let detectedPort: number | null = null;
               const localhostMatch = content.match(/localhost:(\d+)/);
               if (localhostMatch) {
                 detectedPort = parseInt(localhostMatch[1]);
               } else {
                 const portMatch = content.match(/(?:PORT|port)\s*=\s*(\d+)/);
-                if (portMatch) {
-                  detectedPort = parseInt(portMatch[1]);
-                }
+                if (portMatch) detectedPort = parseInt(portMatch[1]);
               }
 
-              // 프로젝트 이름 추출 (파일명에서)
-              const fileName = file.name;
-              const projectName = fileName.replace('.command', '').replace('.sh', '');
-
-              // 파일 경로 입력받기
-              const filePath = prompt('파일의 전체 경로를 입력하세요:\n(예: /Users/yourname/Projects/MyApp/실행.command)', '');
-
-              if (!filePath) {
-                alert('경로를 입력하지 않았습니다. 수동으로 입력해주세요.');
-                return;
-              }
-
-              // 폴더 경로 추출
-              let folderPath = '';
-              const lastSlashIndex = filePath.lastIndexOf('/');
-              if (lastSlashIndex !== -1) {
-                folderPath = filePath.substring(0, lastSlashIndex);
-              }
-
-              // 폼에 자동으로 채우기
+              const projectName = file.name.replace('.command', '').replace('.sh', '');
               setName(projectName);
               if (detectedPort) setPort(detectedPort.toString());
-              setCommandPath(filePath);
-              setFolderPath(folderPath);
 
-              alert(`파일 분석 완료!\n프로젝트: ${projectName}\n포트: ${detectedPort || '감지 실패'}\n경로: ${filePath}\n\n정보를 확인 후 '추가' 버튼을 눌러주세요.`);
+              showToast(
+                `포트 ${detectedPort || '감지 실패'} 감지됨. 파일 경로(commandPath)를 수동으로 입력해주세요.`,
+                detectedPort ? 'success' : 'error'
+              );
             } catch (error) {
-              alert('파일 분석 실패: ' + error);
+              showToast('파일 분석 실패: ' + error, 'error');
             }
           };
           reader.readAsText(file);
-        }
-      };
-      input.click();
+        };
+        input.click();
+      }
     } catch (error) {
-      alert('파일 선택 실패: ' + error);
+      showToast('파일 선택 실패: ' + error, 'error');
     }
   };
 
