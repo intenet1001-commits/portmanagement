@@ -141,6 +141,19 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 - 포트 정보 내보내기/불러오기 (JSON)
 - **실시간 로그 보기**: Terminal에서 `tail -f`로 프로세스 출력 확인
 
+### Supabase 동기화
+- **프로젝트 관리 탭**: `ports` 테이블에 Push(upsert) / Pull(복원)
+- **포털 탭**: `portal_items` + `portal_categories` 테이블에 Push / Pull
+- Supabase URL + anon key는 `portal.json`에 저장 — 두 탭이 공유
+- Push: `upsert(rows, { onConflict: 'id' })` — 멱등 동작
+- Pull: `device_id` 기준 필터링 (포털), 전체 select (프로젝트 관리)
+- 테이블 스키마 (DDL):
+  - `ports` (id, name, port, command_path, folder_path, deploy_url, github_url)
+  - `portal_items` (id, device_id, name, type, url, path, category, description, pinned, visit_count, last_visited, created_at)
+  - `portal_categories` (id, device_id, name, color, order)
+- RLS: anon key 읽기/쓰기 허용 또는 비활성화 필요
+- SetupGuide 컴포넌트: 설정 모달 내 접이식 Claude 프롬프트 복사 가이드 (`PortalManager.tsx`)
+
 ### 자동화
 - .command 파일에서 포트 번호 자동 감지 (`localhost:포트` 또는 `PORT=포트` 패턴)
 - .command 파일 경로에서 폴더 경로 자동 추출
@@ -158,6 +171,10 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
   - 성공/실패에 따른 색상 구분 (초록/빨강)
   - 3초 후 자동 제거 또는 수동 닫기 가능
   - Non-blocking UI로 사용자 작업 방해 없음
+- **SetupGuide 컴포넌트**: Supabase 초기 설정 안내 (포털 설정 모달 내 아코디언)
+  - 3개 테이블 DDL을 Claude Code 프롬프트 형태로 제공
+  - "Claude 프롬프트 복사" 버튼으로 클립보드 복사 (2초 후 초기화)
+  - 위치: `PortalManager.tsx` `SetupGuide` 컴포넌트
 - **최적화된 창 크기**: MacBook 14인치 기준 세로 최대화 (1000x1050)
 
 ### Tauri 빌드 & 배포
@@ -230,6 +247,10 @@ bun run tauri:build:dmg
 - `POST /api/open-build-folder` - 빌드 폴더 열기
 - `POST /api/open-folder` - 지정된 폴더 열기
 - `POST /api/export-dmg` - DMG 파일을 Desktop으로 복사
+- `GET /api/pick-folder` - macOS 폴더 선택 다이얼로그 (osascript `choose folder`) → 절대경로 반환 (웹 모드 전용)
+- `POST /api/create-folder` - 폴더 생성 (절대경로 필수)
+- `GET /api/portal` - portal.json 로드
+- `POST /api/portal` - portal.json 저장
 
 ## 데이터 구조
 
