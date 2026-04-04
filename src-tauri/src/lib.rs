@@ -188,13 +188,18 @@ fn execute_command(
     state: State<AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
-    // 먼저 command 파일이 존재하는지 확인
+    // 파일 경로인지 raw 커맨드인지 판별 (절대경로 = 파일, 아니면 shell 커맨드)
+    let is_file_path = command_path.starts_with('/') || command_path.starts_with('~');
     let command_path_buf = std::path::PathBuf::from(&command_path);
-    if !command_path_buf.exists() {
+    if is_file_path && !command_path_buf.exists() {
         println!("[ExecuteCommand] Command file not found: {}", command_path);
         return Err(format!("Command file not found: {}", command_path));
     }
-    println!("[ExecuteCommand] Command file exists: {}", command_path);
+    if is_file_path {
+        println!("[ExecuteCommand] Command file exists: {}", command_path);
+    } else {
+        println!("[ExecuteCommand] Raw shell command: {}", command_path);
+    }
 
     // .html 파일은 기본 브라우저로 열기 (open -a Chrome은 로컬 파일 경로에서 실패할 수 있음)
     if command_path.to_lowercase().ends_with(".html") {
@@ -244,22 +249,24 @@ fn execute_command(
         .open(&log_file)
         .map_err(|e| format!("Failed to open log file: {}", e))?;
 
-    // .command 파일에 실행 권한 부여
-    let chmod_result = Command::new("chmod")
-        .arg("+x")
-        .arg(&command_path)
-        .output();
+    // .command 파일에 실행 권한 부여 (파일 경로인 경우만)
+    if is_file_path {
+        let chmod_result = Command::new("chmod")
+            .arg("+x")
+            .arg(&command_path)
+            .output();
 
-    match chmod_result {
-        Ok(out) => {
-            if out.status.success() {
-                println!("[ExecuteCommand] Successfully set execute permission");
-            } else {
-                println!("[ExecuteCommand] Warning: chmod failed: {}", String::from_utf8_lossy(&out.stderr));
+        match chmod_result {
+            Ok(out) => {
+                if out.status.success() {
+                    println!("[ExecuteCommand] Successfully set execute permission");
+                } else {
+                    println!("[ExecuteCommand] Warning: chmod failed: {}", String::from_utf8_lossy(&out.stderr));
+                }
             }
-        }
-        Err(e) => {
-            println!("[ExecuteCommand] Warning: chmod error: {}", e);
+            Err(e) => {
+                println!("[ExecuteCommand] Warning: chmod error: {}", e);
+            }
         }
     }
 
@@ -289,13 +296,22 @@ fn execute_command(
 
     // 프로세스 실행 시 stdout, stderr를 로그 파일로 리다이렉트
     // setsid를 사용하여 새로운 세션으로 실행 (백그라운드 프로세스)
-    println!("[ExecuteCommand] Executing: bash {}", command_path);
+    if is_file_path {
+        println!("[ExecuteCommand] Executing: bash {}", command_path);
+    } else {
+        println!("[ExecuteCommand] Executing: bash -c {}", command_path);
+    }
     println!("[ExecuteCommand] PATH: {}", new_path);
 
     use std::os::unix::process::CommandExt;
 
     let mut cmd = Command::new("bash");
-    cmd.arg(&command_path)
+    if is_file_path {
+        cmd.arg(&command_path);
+    } else {
+        cmd.arg("-c").arg(&command_path);
+    }
+    cmd
         .stdout(log_out)
         .stderr(log_err)
         .env("PATH", &new_path)
@@ -519,12 +535,17 @@ fn force_restart_command(
     std::thread::sleep(std::time::Duration::from_millis(500));
 
     // 2단계: 새로운 프로세스 시작
-    // 먼저 command 파일이 존재하는지 확인
+    // 파일 경로인지 raw 커맨드인지 판별
+    let is_file_path = command_path.starts_with('/') || command_path.starts_with('~');
     let command_path_buf = std::path::PathBuf::from(&command_path);
-    if !command_path_buf.exists() {
+    if is_file_path && !command_path_buf.exists() {
         return Err(format!("Command file not found: {}", command_path));
     }
-    println!("[ForceRestart] Command file exists: {}", command_path);
+    if is_file_path {
+        println!("[ForceRestart] Command file exists: {}", command_path);
+    } else {
+        println!("[ForceRestart] Raw shell command: {}", command_path);
+    }
 
     let app_data_dir = app_handle.path().app_data_dir()
         .map_err(|e| e.to_string())?;
@@ -598,13 +619,22 @@ fn force_restart_command(
 
     // 프로세스 실행 시 stdout, stderr를 로그 파일로 리다이렉트
     // setsid를 사용하여 새로운 세션으로 실행 (백그라운드 프로세스)
-    println!("[ForceRestart] Executing: bash {}", command_path);
+    if is_file_path {
+        println!("[ForceRestart] Executing: bash {}", command_path);
+    } else {
+        println!("[ForceRestart] Executing: bash -c {}", command_path);
+    }
     println!("[ForceRestart] PATH: {}", new_path);
 
     use std::os::unix::process::CommandExt;
 
     let mut cmd = Command::new("bash");
-    cmd.arg(&command_path)
+    if is_file_path {
+        cmd.arg(&command_path);
+    } else {
+        cmd.arg("-c").arg(&command_path);
+    }
+    cmd
         .stdout(log_out)
         .stderr(log_err)
         .env("PATH", &new_path)
