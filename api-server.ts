@@ -231,11 +231,13 @@ const server = Bun.serve({
           return new Response(JSON.stringify({ success: true, message: 'Opened HTML in browser' }), { headers });
         }
 
-        // .command 파일 실행 (백그라운드에서 detached 모드로)
-        console.log(`[Execute] Starting process: bash ${commandPath}`);
+        // 파일 경로 vs raw 커맨드 판별
+        const isFilePath = commandPath.startsWith('/') || commandPath.startsWith('~');
+        const cmd = isFilePath ? ["bash", commandPath] : ["bash", "-c", commandPath];
+        console.log(`[Execute] Starting process: ${cmd.join(' ')}`);
 
         const proc = spawn({
-          cmd: ["bash", commandPath],
+          cmd,
           stdout: "inherit",
           stderr: "inherit",
           stdin: "ignore",
@@ -439,11 +441,13 @@ const server = Bun.serve({
           console.error(`[ForceRestart] Error finding/killing process by port:`, e);
         }
 
-        // 2단계: 새로운 프로세스 시작
-        console.log(`[ForceRestart] Starting new process: bash ${commandPath}`);
+        // 2단계: 새로운 프로세스 시작 (파일 경로 vs raw 커맨드 판별)
+        const isFilePath = commandPath.startsWith('/') || commandPath.startsWith('~');
+        const restartCmd = isFilePath ? ["bash", commandPath] : ["bash", "-c", commandPath];
+        console.log(`[ForceRestart] Starting new process: ${restartCmd.join(' ')}`);
 
         const newProc = spawn({
-          cmd: ["bash", commandPath],
+          cmd: restartCmd,
           stdout: "inherit",
           stderr: "inherit",
           stdin: "ignore",

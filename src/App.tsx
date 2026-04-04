@@ -361,6 +361,7 @@ interface PortInfo {
   name: string;
   port?: number;
   commandPath?: string;
+  terminalCommand?: string;
   folderPath?: string;
   deployUrl?: string;
   githubUrl?: string;
@@ -437,18 +438,21 @@ function App() {
   const [name, setName] = useState('');
   const [port, setPort] = useState('');
   const [commandPath, setCommandPath] = useState('');
+  const [terminalCommand, setTerminalCommand] = useState('');
   const [folderPath, setFolderPath] = useState('');
   const [deployUrl, setDeployUrl] = useState('');
   const [githubUrl, setGithubUrl] = useState('');
   const [worktreePath, setWorktreePath] = useState('');
   const [activeTab, setActiveTab] = useState<'ports' | 'portal'>('ports');
   const [sortBy, setSortBy] = useState<SortType>('recent');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [filterType, setFilterType] = useState<'all' | 'with-port' | 'without-port'>('all');
   const [bypassPermissions, setBypassPermissions] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editPort, setEditPort] = useState('');
   const [editCommandPath, setEditCommandPath] = useState('');
+  const [editTerminalCommand, setEditTerminalCommand] = useState('');
   const [editFolderPath, setEditFolderPath] = useState('');
   const [editDeployUrl, setEditDeployUrl] = useState('');
   const [editGithubUrl, setEditGithubUrl] = useState('');
@@ -700,6 +704,7 @@ function App() {
         name,
         port: port ? parseInt(port) : undefined,
         commandPath: commandPath || undefined,
+        terminalCommand: terminalCommand || undefined,
         folderPath: autoFolderPath || undefined,
         deployUrl: deployUrl || undefined,
         githubUrl: githubUrl || undefined,
@@ -710,6 +715,7 @@ function App() {
       setName('');
       setPort('');
       setCommandPath('');
+      setTerminalCommand('');
       setFolderPath('');
       setDeployUrl('');
       setGithubUrl('');
@@ -726,6 +732,7 @@ function App() {
     setEditName(item.name);
     setEditPort(item.port?.toString() ?? '');
     setEditCommandPath(item.commandPath || '');
+    setEditTerminalCommand(item.terminalCommand || '');
     setEditFolderPath(item.folderPath || '');
     setEditDeployUrl(item.deployUrl || '');
     setEditGithubUrl(item.githubUrl || '');
@@ -737,6 +744,7 @@ function App() {
     setEditName('');
     setEditPort('');
     setEditCommandPath('');
+    setEditTerminalCommand('');
     setEditFolderPath('');
     setEditDeployUrl('');
     setEditGithubUrl('');
@@ -756,7 +764,7 @@ function App() {
 
       setPorts(ports.map(p =>
         p.id === editingId
-          ? { ...p, name: editName, port: editPort ? parseInt(editPort) : undefined, commandPath: editCommandPath || undefined, folderPath: autoFolderPath || undefined, deployUrl: editDeployUrl || undefined, githubUrl: editGithubUrl || undefined, worktreePath: editWorktreePath || undefined }
+          ? { ...p, name: editName, port: editPort ? parseInt(editPort) : undefined, commandPath: editCommandPath || undefined, terminalCommand: editTerminalCommand || undefined, folderPath: autoFolderPath || undefined, deployUrl: editDeployUrl || undefined, githubUrl: editGithubUrl || undefined, worktreePath: editWorktreePath || undefined }
           : p
       ));
       cancelEdit();
@@ -764,19 +772,20 @@ function App() {
   };
 
   const executeCommand = async (item: PortInfo) => {
-    if (!item.commandPath) {
-      showToast('실행할 파일이 등록되지 않았습니다.', 'error');
+    const runTarget = item.terminalCommand || item.commandPath;
+    if (!runTarget) {
+      showToast('실행할 파일 또는 터미널 명령어가 등록되지 않았습니다.', 'error');
       return;
     }
 
-    const html = isHtmlFile(item.commandPath);
+    const html = !item.terminalCommand && isHtmlFile(item.commandPath);
     try {
       if (html) {
         // HTML 파일은 open_folder 커맨드(open <path>) 재활용 — 기본 브라우저로 열림
         await API.openFolder(item.commandPath);
         showToast(`${item.name} 파일을 열었습니다!`, 'success');
       } else {
-        await API.executeCommand(item.id, item.commandPath);
+        await API.executeCommand(item.id, runTarget);
         setPorts(ports.map(p =>
           p.id === item.id ? { ...p, isRunning: true } : p
         ));
@@ -804,18 +813,19 @@ function App() {
   };
 
   const forceRestartCommand = async (item: PortInfo) => {
-    if (!item.commandPath) {
-      showToast('실행할 파일이 등록되지 않았습니다.', 'error');
+    const runTarget = item.terminalCommand || item.commandPath;
+    if (!runTarget) {
+      showToast('실행할 파일 또는 터미널 명령어가 등록되지 않았습니다.', 'error');
       return;
     }
 
-    const html = isHtmlFile(item.commandPath);
+    const html = !item.terminalCommand && isHtmlFile(item.commandPath);
     try {
       if (html) {
         await API.openFolder(item.commandPath);
         showToast(`${item.name} 파일을 열었습니다!`, 'success');
       } else {
-        await API.forceRestartCommand(item.id, item.port ?? 0, item.commandPath);
+        await API.forceRestartCommand(item.id, item.port ?? 0, runTarget);
         setPorts(ports.map(p =>
           p.id === item.id ? { ...p, isRunning: true } : p
         ));
@@ -989,6 +999,7 @@ function App() {
         name: row.name,
         port: row.port ?? undefined,
         commandPath: row.command_path ?? undefined,
+        terminalCommand: row.terminal_command ?? undefined,
         folderPath: row.folder_path ?? undefined,
         deployUrl: row.deploy_url ?? undefined,
         githubUrl: row.github_url ?? undefined,
@@ -997,7 +1008,25 @@ function App() {
 
       setPorts(restored);
       await API.savePorts(restored);
-      showToast(`Supabase에서 ${restored.length}개 포트를 복원했습니다 ✓`, 'success');
+
+      // workspace_roots 복원
+      const deviceId = portalData.deviceId;
+      if (deviceId) {
+        const { data: rootData } = await supabase.from('workspace_roots').select('*').eq('device_id', deviceId);
+        if (rootData && rootData.length > 0) {
+          const restoredRoots: WorkspaceRoot[] = rootData.map((r: any) => ({
+            id: r.id,
+            name: r.name,
+            path: r.path,
+          }));
+          setWorkspaceRoots(restoredRoots);
+          showToast(`Supabase에서 ${restored.length}개 포트 + ${restoredRoots.length}개 작업루트를 복원했습니다 ✓`, 'success');
+        } else {
+          showToast(`Supabase에서 ${restored.length}개 포트를 복원했습니다 ✓`, 'success');
+        }
+      } else {
+        showToast(`Supabase에서 ${restored.length}개 포트를 복원했습니다 ✓`, 'success');
+      }
     } catch (e) {
       showToast('Supabase 복원 실패: ' + e, 'error');
     } finally {
@@ -1028,13 +1057,32 @@ function App() {
         name: p.name,
         port: p.port ?? null,
         command_path: (p as any).commandPath ?? null,
+        terminal_command: (p as any).terminalCommand ?? null,
         folder_path: (p as any).folderPath ?? null,
         deploy_url: (p as any).deployUrl ?? null,
         github_url: (p as any).githubUrl ?? null,
       }));
       const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error) throw new Error(error.message);
-      showToast(`Supabase에 ${ports.length}개 포트를 업로드했습니다 ✓`, 'success');
+
+      // workspace_roots 업로드
+      const deviceId = portalData.deviceId;
+      let rootsMsg = '';
+      if (deviceId && workspaceRoots.length > 0) {
+        const rootRows = workspaceRoots.map(r => ({
+          id: r.id,
+          device_id: deviceId,
+          name: r.name,
+          path: r.path,
+        }));
+        const { error: rootError } = await supabase.from('workspace_roots').upsert(rootRows, { onConflict: 'id' });
+        if (rootError) {
+          rootsMsg = ` (작업루트 업로드 실패: ${rootError.message})`;
+        } else {
+          rootsMsg = ` + ${workspaceRoots.length}개 작업루트`;
+        }
+      }
+      showToast(`Supabase에 ${ports.length}개 포트${rootsMsg}를 업로드했습니다 ✓`, 'success');
     } catch (e) {
       showToast('Supabase 업로드 실패: ' + e, 'error');
     } finally {
@@ -1053,8 +1101,8 @@ function App() {
       const updatedDataPromises = data.map(async (port: PortInfo) => {
         let updated = { ...port };
 
-        // [1] commandPath 존재 확인 → 없으면 무효화 (아래에서 재스캔)
-        if (updated.commandPath) {
+        // [1] commandPath 존재 확인 → 없으면 무효화 (아래에서 재스캔) - Tauri 모드만
+        if (updated.commandPath && isTauri()) {
           try {
             const exists = await invoke<boolean>('check_file_exists', { path: updated.commandPath });
             if (!exists) {
@@ -1064,8 +1112,8 @@ function App() {
           } catch {}
         }
 
-        // [2] folderPath 존재 확인 → 없으면 commandPath에서 재추출 시도
-        if (updated.folderPath) {
+        // [2] folderPath 존재 확인 → 없으면 commandPath에서 재추출 시도 - Tauri 모드만
+        if (updated.folderPath && isTauri()) {
           try {
             const exists = await invoke<boolean>('check_file_exists', { path: updated.folderPath });
             if (!exists) {
@@ -1113,12 +1161,12 @@ function App() {
         }
 
         // 포트 상태 확인 (포트 번호가 있는 경우만)
-        if (port.port) {
+        if (updated.port) {
           try {
-            const isRunning = await API.checkPortStatus(port.port);
+            const isRunning = await API.checkPortStatus(updated.port);
             updated.isRunning = isRunning;
           } catch (e) {
-            console.error(`Failed to check port status for ${port.port}:`, e);
+            console.error(`Failed to check port status for ${updated.port}:`, e);
           }
         }
 
@@ -1530,13 +1578,17 @@ function App() {
     // Apply sort
     switch (sortBy) {
       case 'name':
-        return filtered.sort((a, b) => a.name.localeCompare(b.name));
+        filtered.sort((a, b) => a.name.localeCompare(b.name));
+        break;
       case 'port':
-        return filtered.sort((a, b) => (a.port ?? 0) - (b.port ?? 0));
+        filtered.sort((a, b) => (a.port ?? 0) - (b.port ?? 0));
+        break;
       case 'recent':
       default:
-        return filtered.reverse();
+        // recent: 배열 순서 유지 (기본 등록 순)
+        break;
     }
+    return sortOrder === 'desc' ? filtered.reverse() : filtered;
   };
 
   return (
@@ -1856,6 +1908,14 @@ function App() {
               />
               <input
                 type="text"
+                placeholder="터미널 명령어 (선택사항, 예: bunx cursor-talk-to-figma-socket)"
+                value={terminalCommand}
+                onChange={(e) => setTerminalCommand(e.target.value)}
+                onKeyPress={handleKeyPress}
+                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+              />
+              <input
+                type="text"
                 placeholder="프로젝트 폴더 경로 (선택사항)"
                 value={folderPath}
                 onChange={(e) => setFolderPath(e.target.value)}
@@ -2069,6 +2129,13 @@ function App() {
                       <option value="name">이름순</option>
                       <option value="port">포트순</option>
                     </select>
+                    <button
+                      onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')}
+                      className="px-2 py-1 bg-black/30 border border-zinc-700 text-zinc-400 text-xs rounded-lg hover:bg-zinc-800 hover:text-zinc-200 transition-all"
+                      title={sortOrder === 'asc' ? '오름차순' : '내림차순'}
+                    >
+                      {sortOrder === 'asc' ? '↑ 오름' : '↓ 내림'}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -2128,6 +2195,14 @@ function App() {
                       />
                       <input
                         type="text"
+                        value={editTerminalCommand}
+                        onChange={(e) => setEditTerminalCommand(e.target.value)}
+                        onKeyDown={handleEditKeyPress}
+                        className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                        placeholder="터미널 명령어 (선택사항, 예: bunx cursor-talk-to-figma-socket)"
+                      />
+                      <input
+                        type="text"
                         value={editFolderPath}
                         onChange={(e) => setEditFolderPath(e.target.value)}
                         onKeyDown={handleEditKeyPress}
@@ -2174,7 +2249,7 @@ function App() {
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">
-                        {item.commandPath && (
+                        {(item.commandPath || item.terminalCommand) && (
                           isHtmlFile(item.commandPath) ? (
                             <button
                               onClick={() => executeCommand(item)}
@@ -2222,7 +2297,7 @@ function App() {
                             </>
                           )
                         )}
-                        {item.commandPath && isTauri() && (
+                        {(item.commandPath || item.terminalCommand) && isTauri() && (
                           <button
                             onClick={async () => {
                               try {
@@ -2340,7 +2415,7 @@ function App() {
                             </a>
                           )
                         )}
-                        {item.commandPath && item.port && (
+                        {(item.commandPath || item.terminalCommand) && item.port && (
                           isTauri() ? (
                             <button
                               onClick={async () => {
