@@ -914,6 +914,44 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
 }
 
 #[tauri::command]
+fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let escaped_title = format!("[tmux-fresh] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
+        let claude_cmd = if let Some(ref wt) = worktree_path {
+            let flags: String = wt.split(',')
+                .map(|p| p.trim())
+                .filter(|p| !p.is_empty())
+                .map(|p| format!("-w '{}'", p))
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("claude {}", flags)
+        } else {
+            "claude".to_string()
+        };
+        // Kill existing session first (ignore error), then create fresh (no -A)
+        let kill_cmd = format!("tmux kill-session -t '{}' 2>/dev/null || true", session_name);
+        let new_cmd = if let Some(ref fp) = folder_path {
+            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -s '{}' '{}'", fp, escaped_title, session_name, claude_cmd)
+        } else {
+            format!("printf '\\033]0;{}\\007'; tmux new-session -s '{}' '{}'", escaped_title, session_name, claude_cmd)
+        };
+        let cmd = format!("{}; {}", kill_cmd, new_cmd);
+        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+            escaped, escaped_title
+        );
+        Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn()
+            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+    }
+    Ok(format!("tmux 새 세션 시작 (세션: {})", session_name))
+}
+
+#[tauri::command]
 fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
@@ -1193,6 +1231,7 @@ pub fn run() {
         open_in_chrome,
         open_log,
         open_tmux_claude,
+        open_tmux_claude_fresh,
         open_tmux_claude_bypass,
         open_terminal_claude,
         open_terminal_claude_bypass,
