@@ -235,6 +235,21 @@ const API = {
     }
   },
 
+  async openTmuxClaudeFresh(sessionName: string, folderPath?: string, worktreePath?: string): Promise<string> {
+    if (isTauri()) {
+      return invoke<string>('open_tmux_claude_fresh', { sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null });
+    } else {
+      const response = await fetch('/api/open-tmux-claude-fresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null })
+      });
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error);
+      return data.message;
+    }
+  },
+
   async openTmuxClaudeBypass(sessionName: string, folderPath?: string, worktreePath?: string): Promise<string> {
     if (isTauri()) {
       return invoke<string>('open_tmux_claude_bypass', { sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null });
@@ -495,6 +510,16 @@ function App() {
       API.listGitWorktrees(item.folderPath)
         .then(list => setDetectedWorktrees(list))
         .catch(() => {});
+    }
+  };
+
+  const openTmuxClaudeFresh = async (item: PortInfo) => {
+    const sessionName = getSessionName(item);
+    try {
+      await API.openTmuxClaudeFresh(sessionName, item.folderPath, item.worktreePath);
+      showToast(`tmux 새 세션 시작 (기록 초기화) ↺`, 'success');
+    } catch (e) {
+      showToast(`tmux 새 세션 실패: ${e}`, 'error');
     }
   };
 
@@ -2313,20 +2338,33 @@ function App() {
                             <span>로그</span>
                           </button>
                         )}
-                        <button
-                          onClick={() => openTmuxClaude(item)}
-                          title={bypassPermissions
-                            ? `tmux + Claude --dangerously-skip-permissions (세션: ${getSessionName(item)}-bypass)`
-                            : `tmux 세션에서 Claude 실행 (세션: ${getSessionName(item)})`}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all duration-200 ${
-                            bypassPermissions
-                              ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border-orange-500/30 hover:border-orange-500/50'
-                              : 'bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border-violet-500/30 hover:border-violet-500/50'
-                          }`}
-                        >
-                          <SquareTerminal className="w-3 h-3" />
-                          <span>tmux{bypassPermissions ? ' ⚡' : ''}</span>
-                        </button>
+                        <div className="inline-flex rounded-lg overflow-hidden border border-violet-500/30">
+                          <button
+                            onClick={() => openTmuxClaude(item)}
+                            title={bypassPermissions
+                              ? `tmux + Claude --dangerously-skip-permissions (세션: ${getSessionName(item)}-bypass)`
+                              : `tmux 세션에서 Claude 실행 (세션: ${getSessionName(item)})`}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
+                              bypassPermissions
+                                ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-400'
+                                : 'bg-violet-500/10 hover:bg-violet-500/20 text-violet-400'
+                            }`}
+                          >
+                            <SquareTerminal className="w-3 h-3" />
+                            <span>tmux{bypassPermissions ? ' ⚡' : ''}</span>
+                          </button>
+                          <button
+                            onClick={() => openTmuxClaudeFresh(item)}
+                            title="새로 열기 — 기존 세션 종료 후 새 세션 시작"
+                            className={`inline-flex items-center px-1.5 py-1.5 text-xs font-medium border-l transition-all duration-200 ${
+                              bypassPermissions
+                                ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border-orange-500/30'
+                                : 'bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border-violet-500/30'
+                            }`}
+                          >
+                            <span>↺</span>
+                          </button>
+                        </div>
                         <button
                           onClick={() => openTerminalClaude(item)}
                           title={bypassPermissions ? 'Terminal에서 Claude --dangerously-skip-permissions 실행' : '일반 Terminal에서 Claude 실행'}

@@ -785,6 +785,29 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/open-tmux-claude-fresh" && req.method === "POST") {
+      try {
+        const { sessionName, folderPath, worktreePath } = await req.json();
+        const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const title = `[tmux-fresh] ${escapedSessionName}`;
+        const claudeCmd = worktreePath ? `claude -w '${worktreePath}'` : 'claude';
+        const killCmd = `tmux kill-session -t '${sessionName}' 2>/dev/null || true`;
+        const newCmd = folderPath
+          ? `cd '${folderPath}' && printf '\\033]0;${title}\\007'; tmux new-session -s '${sessionName}' '${claudeCmd}'`
+          : `printf '\\033]0;${title}\\007'; tmux new-session -s '${sessionName}' '${claudeCmd}'`;
+        const cmd = `${killCmd}; ${newCmd}`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(
+          JSON.stringify({ success: true, message: `tmux 새 세션 시작 (세션: ${sessionName})` }),
+          { headers }
+        );
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
     if (url.pathname === "/api/open-tmux-claude-bypass" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
