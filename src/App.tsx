@@ -445,7 +445,7 @@ const getSessionName = (item: PortInfo): string => {
 };
 
 /** Race a promise against a timeout. Rejects with Error if ms elapses first. */
-const withTimeout = <T>(promise: PromiseLike<T>, ms: number): Promise<T> =>
+const withTimeout = <T,>(promise: PromiseLike<T>, ms: number): Promise<T> =>
   Promise.race([
     Promise.resolve(promise),
     new Promise<never>((_, reject) =>
