@@ -874,17 +874,24 @@ fn open_log(port_id: String, app_handle: tauri::AppHandle) -> Result<String, Str
     Ok(format!("로그 파일을 열었습니다: {:?}", log_file))
 }
 
+/// Escape single quotes for use inside single-quoted shell strings.
+/// ' → '\'' (end-quote, literal-apostrophe, re-open-quote)
+fn escape_sq(s: &str) -> String {
+    s.replace("'", "'\\''")
+}
+
 #[tauri::command]
 fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
         // 명령어 생성
+        let esc_session = escape_sq(&session_name);
         let escaped_title = format!("[tmux] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
                 .filter(|p| !p.is_empty())
-                .map(|p| format!("-w '{}'", p))
+                .map(|p| format!("-w '{}'", escape_sq(p)))
                 .collect::<Vec<_>>()
                 .join(" ");
             format!("claude {}", flags)
@@ -892,9 +899,9 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
             "claude".to_string()
         };
         let cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -A -s '{}' '{}'", fp, escaped_title, session_name, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -A -s '{}' '{}'", escape_sq(fp), escaped_title, esc_session, claude_cmd)
         } else {
-            format!("printf '\\033]0;{}\\007'; tmux new-session -A -s '{}' '{}'", escaped_title, session_name, claude_cmd)
+            format!("printf '\\033]0;{}\\007'; tmux new-session -A -s '{}' '{}'", escaped_title, esc_session, claude_cmd)
         };
 
         // iTerm에서 명령어 자동 실행
@@ -917,12 +924,13 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
 fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
+        let esc_session = escape_sq(&session_name);
         let escaped_title = format!("[tmux-fresh] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
                 .filter(|p| !p.is_empty())
-                .map(|p| format!("-w '{}'", p))
+                .map(|p| format!("-w '{}'", escape_sq(p)))
                 .collect::<Vec<_>>()
                 .join(" ");
             format!("claude {}", flags)
@@ -930,11 +938,11 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
             "claude".to_string()
         };
         // Kill existing session first (ignore error), then create fresh (no -A)
-        let kill_cmd = format!("tmux kill-session -t '{}' 2>/dev/null || true", session_name);
+        let kill_cmd = format!("tmux kill-session -t '{}' 2>/dev/null || true", esc_session);
         let new_cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -s '{}' '{}'", fp, escaped_title, session_name, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -s '{}' '{}'", escape_sq(fp), escaped_title, esc_session, claude_cmd)
         } else {
-            format!("printf '\\033]0;{}\\007'; tmux new-session -s '{}' '{}'", escaped_title, session_name, claude_cmd)
+            format!("printf '\\033]0;{}\\007'; tmux new-session -s '{}' '{}'", escaped_title, esc_session, claude_cmd)
         };
         let cmd = format!("{}; {}", kill_cmd, new_cmd);
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
@@ -955,12 +963,13 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
 fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
+        let esc_session = escape_sq(&session_name);
         let escaped_title = format!("[tmux-bypass] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
                 .filter(|p| !p.is_empty())
-                .map(|p| format!("-w '{}'", p))
+                .map(|p| format!("-w '{}'", escape_sq(p)))
                 .collect::<Vec<_>>()
                 .join(" ");
             format!("claude --dangerously-skip-permissions {}", flags)
@@ -968,9 +977,9 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
             "claude --dangerously-skip-permissions".to_string()
         };
         let cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -A -s '{}-bypass' '{}'", fp, escaped_title, session_name, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -A -s '{}-bypass' '{}'", escape_sq(fp), escaped_title, esc_session, claude_cmd)
         } else {
-            format!("printf '\\033]0;{}\\007'; tmux new-session -A -s '{}-bypass' '{}'", escaped_title, session_name, claude_cmd)
+            format!("printf '\\033]0;{}\\007'; tmux new-session -A -s '{}-bypass' '{}'", escaped_title, esc_session, claude_cmd)
         };
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
