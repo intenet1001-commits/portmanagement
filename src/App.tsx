@@ -444,6 +444,31 @@ const getSessionName = (item: PortInfo): string => {
   return item.name.replace(/\s+/g, '-');
 };
 
+/** Race a promise against a timeout. Rejects with Error if ms elapses first. */
+const withTimeout = <T>(promise: PromiseLike<T>, ms: number): Promise<T> =>
+  Promise.race([
+    Promise.resolve(promise),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+    ),
+  ]);
+
+/**
+ * Model B merge: remote wins for known IDs, local-only rows survive.
+ * isRunning is preserved from the local copy.
+ */
+const mergePorts = (local: PortInfo[], remote: PortInfo[]): PortInfo[] => {
+  const remoteById = new Map(remote.map(p => [p.id, p]));
+  const merged = local.map(p =>
+    remoteById.has(p.id)
+      ? { ...p, ...remoteById.get(p.id)!, isRunning: p.isRunning }
+      : p
+  );
+  const localIds = new Set(local.map(p => p.id));
+  const newFromRemote = remote.filter(p => !localIds.has(p.id));
+  return [...merged, ...newFromRemote];
+};
+
 function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -459,8 +484,12 @@ function App() {
   const [githubUrl, setGithubUrl] = useState('');
   const [worktreePath, setWorktreePath] = useState('');
   const [activeTab, setActiveTab] = useState<'ports' | 'portal'>('ports');
-  const [sortBy, setSortBy] = useState<SortType>('recent');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [sortBy, setSortBy] = useState<SortType>(
+    () => (localStorage.getItem('portmanager-sortBy') as SortType) || 'recent'
+  );
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(
+    () => (localStorage.getItem('portmanager-sortOrder') as 'asc' | 'desc') || 'desc'
+  );
   const [filterType, setFilterType] = useState<'all' | 'with-port' | 'without-port'>('all');
   const [bypassPermissions, setBypassPermissions] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -490,6 +519,8 @@ function App() {
   const [newProjectName, setNewProjectName] = useState('');
   const [activeRootId, setActiveRootId] = useState<string | null>(null);
   const [registerAsProject, setRegisterAsProject] = useState(true);
+  const portalConfigRef = useRef<any>(null);
+  const autoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -516,8 +547,13 @@ function App() {
   const openTmuxClaudeFresh = async (item: PortInfo) => {
     const sessionName = getSessionName(item);
     try {
-      await API.openTmuxClaudeFresh(sessionName, item.folderPath, item.worktreePath);
-      showToast(`tmux 새 세션 시작 (기록 초기화) ↺`, 'success');
+      if (bypassPermissions) {
+        await API.openTmuxClaudeBypass(sessionName, item.folderPath, item.worktreePath);
+        showToast(`tmux 새 세션 시작 (↺ ⚡ bypass)`, 'success');
+      } else {
+        await API.openTmuxClaudeFresh(sessionName, item.folderPath, item.worktreePath);
+        showToast(`tmux 새 세션 시작 (기록 초기화) ↺`, 'success');
+      }
     } catch (e) {
       showToast(`tmux 새 세션 실패: ${e}`, 'error');
     }
@@ -621,6 +657,66 @@ function App() {
         setPorts(updatedData);
         hasInitiallyLoaded.current = true;
 
+        // 포털 설정 로드 및 캐시 (자동 push/pull에서 재사용)
+        try {
+          let portalData: any;
+          if (isTauri()) {
+            portalData = await invoke('load_portal');
+          } else {
+            const res = await fetch('/api/portal');
+            if (res.ok) portalData = await res.json();
+          }
+          portalConfigRef.current = portalData ?? null;
+
+          // Supabase 자동 Pull (10s timeout, Model B merge)
+          if (portalData?.supabaseUrl && portalData?.supabaseAnonKey) {
+            try {
+              const supabase = createClient(portalData.supabaseUrl, portalData.supabaseAnonKey);
+              const { data: remoteData, error } = await withTimeout(
+                supabase.from('ports').select('*'),
+                10_000
+              );
+              if (!error && remoteData && remoteData.length > 0) {
+                const remoteRows: PortInfo[] = remoteData.map((row: any) => ({
+                  id: row.id,
+                  name: row.name,
+                  port: row.port ?? undefined,
+                  commandPath: row.command_path ?? undefined,
+                  terminalCommand: row.terminal_command ?? undefined,
+                  folderPath: row.folder_path ?? undefined,
+                  deployUrl: row.deploy_url ?? undefined,
+                  githubUrl: row.github_url ?? undefined,
+                  worktreePath: row.worktree_path ?? undefined,
+                  isRunning: false,
+                }));
+                const merged = mergePorts(updatedData, remoteRows);
+                setPorts(merged);
+                await API.savePorts(merged);
+              }
+
+              // workspace_roots 자동 Pull (빈 결과면 로컬 덮어쓰기 방지)
+              const deviceId = portalData.deviceId;
+              if (deviceId) {
+                const { data: rootData } = await supabase
+                  .from('workspace_roots').select('*').eq('device_id', deviceId);
+                if (rootData && rootData.length > 0) {
+                  const restoredRoots: WorkspaceRoot[] = rootData.map((r: any) => ({
+                    id: r.id, name: r.name, path: r.path,
+                  }));
+                  setWorkspaceRoots(restoredRoots);
+                  await API.saveWorkspaceRoots(restoredRoots);
+                }
+                // guard: rootData.length === 0 → skip, keep local roots intact
+              }
+            } catch (pullErr) {
+              console.warn('[App] Auto-pull Supabase failed:', pullErr);
+              showToast('Supabase 자동 동기화 실패 (네트워크 확인)', 'error');
+            }
+          }
+        } catch (portalErr) {
+          console.warn('[App] Failed to load portal config:', portalErr);
+        }
+
         // 앱 시작 시 포트 상태 자동 확인 (병렬)
         const withPorts = updatedData.filter((p: PortInfo) => p.port);
         if (withPorts.length > 0) {
@@ -667,6 +763,46 @@ function App() {
       console.error('[App] Failed to save workspace roots:', e)
     );
   }, [workspaceRoots]);
+
+  // 정렬 설정 localStorage 저장
+  useEffect(() => { localStorage.setItem('portmanager-sortBy', sortBy); }, [sortBy]);
+  useEffect(() => { localStorage.setItem('portmanager-sortOrder', sortOrder); }, [sortOrder]);
+
+  // 자동 Push: 포트 목록 변경 후 3초 debounce (Supabase 설정된 경우만)
+  useEffect(() => {
+    if (!hasInitiallyLoaded.current) return;
+    const config = portalConfigRef.current;
+    if (!config?.supabaseUrl || !config?.supabaseAnonKey) return;
+
+    if (autoPushTimerRef.current) clearTimeout(autoPushTimerRef.current);
+    autoPushTimerRef.current = setTimeout(async () => {
+      const cfg = portalConfigRef.current;
+      if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) return;
+      try {
+        const supabase = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+        const rows = ports.map(p => ({
+          id: p.id,
+          name: p.name,
+          port: p.port ?? null,
+          command_path: p.commandPath ?? null,
+          terminal_command: p.terminalCommand ?? null,
+          folder_path: p.folderPath ?? null,
+          deploy_url: p.deployUrl ?? null,
+          github_url: p.githubUrl ?? null,
+          worktree_path: p.worktreePath ?? null,
+          device_id: cfg.deviceId ?? null,
+        }));
+        await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+      } catch (e) {
+        console.warn('[App] Auto-push failed:', e);
+      }
+    }, 3000);
+
+    return () => {
+      if (autoPushTimerRef.current) clearTimeout(autoPushTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ports]);
 
   // 포트 목록이 변경될 때마다 파일에 저장 (초기 로드 완료 후에만)
   useEffect(() => {
@@ -1011,15 +1147,20 @@ function App() {
       }
 
       const supabase = createClient(supabaseUrl, supabaseAnonKey);
-      const { data, error } = await supabase.from('ports').select('*');
+
+      // 30s timeout — manual pull
+      const { data, error } = await withTimeout(
+        supabase.from('ports').select('*'),
+        30_000
+      );
       if (error) throw new Error(error.message);
       if (!data || data.length === 0) {
         showToast('Supabase에 저장된 포트가 없습니다', 'error');
         return;
       }
 
-      // snake_case → camelCase 매핑
-      const restored: PortInfo[] = data.map((row: any) => ({
+      // snake_case → camelCase 매핑 (worktreePath 포함)
+      const remoteRows: PortInfo[] = data.map((row: any) => ({
         id: row.id,
         name: row.name,
         port: row.port ?? undefined,
@@ -1028,30 +1169,32 @@ function App() {
         folderPath: row.folder_path ?? undefined,
         deployUrl: row.deploy_url ?? undefined,
         githubUrl: row.github_url ?? undefined,
+        worktreePath: row.worktree_path ?? undefined,
         isRunning: false,
       }));
 
-      setPorts(restored);
-      await API.savePorts(restored);
+      // Model B merge: remote wins for known IDs, local-only rows survive
+      const merged = mergePorts(ports, remoteRows);
+      setPorts(merged);
+      await API.savePorts(merged);
 
-      // workspace_roots 복원
+      // workspace_roots 복원 (Fix #7: disk에도 저장, 빈 결과면 덮어쓰기 방지)
       const deviceId = portalData.deviceId;
+      let rootsMsg = '';
       if (deviceId) {
-        const { data: rootData } = await supabase.from('workspace_roots').select('*').eq('device_id', deviceId);
+        const { data: rootData } = await supabase
+          .from('workspace_roots').select('*').eq('device_id', deviceId);
         if (rootData && rootData.length > 0) {
           const restoredRoots: WorkspaceRoot[] = rootData.map((r: any) => ({
-            id: r.id,
-            name: r.name,
-            path: r.path,
+            id: r.id, name: r.name, path: r.path,
           }));
           setWorkspaceRoots(restoredRoots);
-          showToast(`Supabase에서 ${restored.length}개 포트 + ${restoredRoots.length}개 작업루트를 복원했습니다 ✓`, 'success');
-        } else {
-          showToast(`Supabase에서 ${restored.length}개 포트를 복원했습니다 ✓`, 'success');
+          await API.saveWorkspaceRoots(restoredRoots); // Fix #7
+          rootsMsg = ` + ${restoredRoots.length}개 작업루트`;
         }
-      } else {
-        showToast(`Supabase에서 ${restored.length}개 포트를 복원했습니다 ✓`, 'success');
+        // guard: rootData.length === 0 → skip, keep local roots intact
       }
+      showToast(`Supabase에서 ${merged.length}개 포트${rootsMsg}를 복원했습니다 ✓`, 'success');
     } catch (e) {
       showToast('Supabase 복원 실패: ' + e, 'error');
     } finally {
@@ -1076,22 +1219,24 @@ function App() {
         showToast('Supabase 설정이 없습니다. 포털 탭에서 먼저 설정하세요', 'error');
         return;
       }
+      const deviceId = portalData.deviceId ?? null;
       const supabase = createClient(supabaseUrl, supabaseAnonKey);
       const rows = ports.map(p => ({
         id: p.id,
         name: p.name,
         port: p.port ?? null,
-        command_path: (p as any).commandPath ?? null,
-        terminal_command: (p as any).terminalCommand ?? null,
-        folder_path: (p as any).folderPath ?? null,
-        deploy_url: (p as any).deployUrl ?? null,
-        github_url: (p as any).githubUrl ?? null,
+        command_path: p.commandPath ?? null,
+        terminal_command: p.terminalCommand ?? null,
+        folder_path: p.folderPath ?? null,
+        deploy_url: p.deployUrl ?? null,
+        github_url: p.githubUrl ?? null,
+        worktree_path: p.worktreePath ?? null,
+        device_id: deviceId,
       }));
       const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error) throw new Error(error.message);
 
       // workspace_roots 업로드
-      const deviceId = portalData.deviceId;
       let rootsMsg = '';
       if (deviceId && workspaceRoots.length > 0) {
         const rootRows = workspaceRoots.map(r => ({
