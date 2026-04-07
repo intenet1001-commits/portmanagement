@@ -381,6 +381,8 @@ interface PortInfo {
   deployUrl?: string;
   githubUrl?: string;
   worktreePath?: string;
+  category?: string;
+  description?: string;
   isRunning?: boolean;
 }
 
@@ -469,6 +471,16 @@ const mergePorts = (local: PortInfo[], remote: PortInfo[]): PortInfo[] => {
   return [...merged, ...newFromRemote];
 };
 
+// Supabase client cache — one instance per credential pair (Fix P2b)
+const _supabaseCache = new Map<string, ReturnType<typeof createClient>>();
+const getSupabaseClient = (url: string, key: string): ReturnType<typeof createClient> => {
+  const cacheKey = `${url}::${key}`;
+  if (!_supabaseCache.has(cacheKey)) {
+    _supabaseCache.set(cacheKey, createClient(url, key));
+  }
+  return _supabaseCache.get(cacheKey)!;
+};
+
 function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -503,6 +515,14 @@ function App() {
   const [editDeployUrl, setEditDeployUrl] = useState('');
   const [editGithubUrl, setEditGithubUrl] = useState('');
   const [editWorktreePath, setEditWorktreePath] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [category, setCategory] = useState('');
+  const [description, setDescription] = useState('');
+  const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [claudeStatus, setClaudeStatus] = useState<{ installed: boolean; authenticated: boolean; email?: string } | null>(null);
+  const [aiLoading, setAiLoading] = useState<{ [id: string]: 'name' | 'desc' | null }>({});
+  const [nameSuggestions, setNameSuggestions] = useState<{ [id: string]: string[] }>({});
   const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
   const [worktreePickerValue, setWorktreePickerValue] = useState('');
   const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
@@ -523,6 +543,20 @@ function App() {
   const [registerAsProject, setRegisterAsProject] = useState(true);
   const portalConfigRef = useRef<any>(null);
   const autoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Claude Code auth status polling (web mode, 30s interval)
+  useEffect(() => {
+    if (isTauri()) return;
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch('/api/claude-status');
+        if (res.ok) setClaudeStatus(await res.json());
+      } catch {}
+    };
+    fetchStatus();
+    const timer = setInterval(fetchStatus, 30_000);
+    return () => clearInterval(timer);
+  }, []);
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -657,7 +691,8 @@ function App() {
         });
 
         setPorts(updatedData);
-        hasInitiallyLoaded.current = true;
+        // NOTE: hasInitiallyLoaded is set AFTER auto-pull completes (Fix P2c)
+        // Setting it here would let the 3s auto-push debounce fire on stale data.
 
         // 포털 설정 로드 및 캐시 (자동 push/pull에서 재사용)
         try {
@@ -673,7 +708,7 @@ function App() {
           // Supabase 자동 Pull (10s timeout, Model B merge)
           if (portalData?.supabaseUrl && portalData?.supabaseAnonKey) {
             try {
-              const supabase = createClient(portalData.supabaseUrl, portalData.supabaseAnonKey);
+              const supabase = getSupabaseClient(portalData.supabaseUrl, portalData.supabaseAnonKey);
               const { data: remoteData, error } = await withTimeout(
                 supabase.from('ports').select('*'),
                 10_000
@@ -688,13 +723,16 @@ function App() {
                   folderPath: row.folder_path ?? undefined,
                   deployUrl: row.deploy_url ?? undefined,
                   githubUrl: row.github_url ?? undefined,
-                  worktreePath: row.worktree_path ?? undefined,
+                  category: row.category ?? undefined,
+                  description: row.description ?? undefined,
                   isRunning: false,
                 }));
                 const merged = mergePorts(updatedData, remoteRows);
                 setPorts(merged);
                 await API.savePorts(merged);
               }
+
+              hasInitiallyLoaded.current = true; // Fix P2c: set after pull completes
 
               // workspace_roots 자동 Pull (빈 결과면 로컬 덮어쓰기 방지)
               const deviceId = portalData.deviceId;
@@ -713,10 +751,12 @@ function App() {
             } catch (pullErr) {
               console.warn('[App] Auto-pull Supabase failed:', pullErr);
               showToast('Supabase 자동 동기화 실패 (네트워크 확인)', 'error');
+              hasInitiallyLoaded.current = true; // Fix P2c: still enable auto-push on pull failure
             }
           }
         } catch (portalErr) {
           console.warn('[App] Failed to load portal config:', portalErr);
+          hasInitiallyLoaded.current = true; // Fix P2c: still enable auto-push if portal load fails
         }
 
         // 앱 시작 시 포트 상태 자동 확인 (병렬)
@@ -796,7 +836,7 @@ function App() {
       const cfg = portalConfigRef.current;
       if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) return;
       try {
-        const supabase = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+        const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
         const rows = ports.map(p => ({
           id: p.id,
           name: p.name,
@@ -806,8 +846,17 @@ function App() {
           folder_path: p.folderPath ?? null,
           deploy_url: p.deployUrl ?? null,
           github_url: p.githubUrl ?? null,
+          category: p.category ?? null,
+          description: p.description ?? null,
         }));
         await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+        // Fix P2: delete remote rows whose IDs are no longer in local list
+        const localIds = ports.map(p => p.id);
+        const { data: remoteRows } = await supabase.from('ports').select('id');
+        const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
+        if (staleIds.length > 0) {
+          await supabase.from('ports').delete().in('id', staleIds);
+        }
       } catch (e) {
         console.warn('[App] Auto-push failed:', e);
       }
@@ -885,6 +934,8 @@ function App() {
         deployUrl: deployUrl || undefined,
         githubUrl: githubUrl || undefined,
         worktreePath: worktreePath || undefined,
+        category: category || undefined,
+        description: description || undefined,
         isRunning: false,
       };
       setPorts([...ports, newPort]);
@@ -896,11 +947,55 @@ function App() {
       setDeployUrl('');
       setGithubUrl('');
       setWorktreePath('');
+      setCategory('');
+      setDescription('');
     }
   };
 
   const deletePort = (id: string) => {
     setPorts(ports.filter(p => p.id !== id));
+  };
+
+  const suggestNames = async (item: PortInfo) => {
+    if (!item.folderPath) { showToast('폴더 경로가 없으면 AI 이름 제안 불가', 'error'); return; }
+    setAiLoading(prev => ({ ...prev, [item.id]: 'name' }));
+    setNameSuggestions(prev => ({ ...prev, [item.id]: [] }));
+    try {
+      const res = await fetch('/api/suggest-name', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath: item.folderPath }),
+      });
+      const data = await res.json();
+      if (data.error === 'claude_not_found') { showToast('Claude Code 로그인 필요', 'error'); return; }
+      setNameSuggestions(prev => ({ ...prev, [item.id]: data.suggestions ?? [] }));
+    } catch (e) {
+      showToast('이름 제안 실패: ' + e, 'error');
+    } finally {
+      setAiLoading(prev => ({ ...prev, [item.id]: null }));
+    }
+  };
+
+  const generateDescription = async (item: PortInfo) => {
+    if (!item.folderPath) { showToast('폴더 경로가 없으면 AI 설명 생성 불가', 'error'); return; }
+    setAiLoading(prev => ({ ...prev, [item.id]: 'desc' }));
+    try {
+      const res = await fetch('/api/generate-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath: item.folderPath, name: item.name }),
+      });
+      const data = await res.json();
+      if (data.error === 'claude_not_found') { showToast('Claude Code 로그인 필요', 'error'); return; }
+      if (data.description) {
+        setPorts(prev => prev.map(p => p.id === item.id ? { ...p, description: data.description } : p));
+        showToast('설명이 생성되었습니다 ✓', 'success');
+      }
+    } catch (e) {
+      showToast('설명 생성 실패: ' + e, 'error');
+    } finally {
+      setAiLoading(prev => ({ ...prev, [item.id]: null }));
+    }
   };
 
   const startEdit = (item: PortInfo) => {
@@ -913,6 +1008,8 @@ function App() {
     setEditDeployUrl(item.deployUrl || '');
     setEditGithubUrl(item.githubUrl || '');
     setEditWorktreePath(item.worktreePath || '');
+    setEditCategory(item.category || '');
+    setEditDescription(item.description || '');
   };
 
   const cancelEdit = () => {
@@ -925,6 +1022,8 @@ function App() {
     setEditDeployUrl('');
     setEditGithubUrl('');
     setEditWorktreePath('');
+    setEditCategory('');
+    setEditDescription('');
   };
 
   const saveEdit = () => {
@@ -940,7 +1039,7 @@ function App() {
 
       setPorts(ports.map(p =>
         p.id === editingId
-          ? { ...p, name: editName, port: editPort ? parseInt(editPort) : undefined, commandPath: editCommandPath || undefined, terminalCommand: editTerminalCommand || undefined, folderPath: autoFolderPath || undefined, deployUrl: editDeployUrl || undefined, githubUrl: editGithubUrl || undefined, worktreePath: editWorktreePath || undefined }
+          ? { ...p, name: editName, port: editPort ? parseInt(editPort) : undefined, commandPath: editCommandPath || undefined, terminalCommand: editTerminalCommand || undefined, folderPath: autoFolderPath || undefined, deployUrl: editDeployUrl || undefined, githubUrl: editGithubUrl || undefined, worktreePath: editWorktreePath || undefined, category: editCategory || undefined, description: editDescription || undefined }
           : p
       ));
       cancelEdit();
@@ -1161,7 +1260,7 @@ function App() {
         return;
       }
 
-      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+      const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
 
       // 30s timeout — manual pull
       const { data, error } = await withTimeout(
@@ -1174,7 +1273,7 @@ function App() {
         return;
       }
 
-      // snake_case → camelCase 매핑 (worktreePath 포함)
+      // snake_case → camelCase 매핑
       const remoteRows: PortInfo[] = data.map((row: any) => ({
         id: row.id,
         name: row.name,
@@ -1184,7 +1283,8 @@ function App() {
         folderPath: row.folder_path ?? undefined,
         deployUrl: row.deploy_url ?? undefined,
         githubUrl: row.github_url ?? undefined,
-        worktreePath: row.worktree_path ?? undefined,
+        category: row.category ?? undefined,
+        description: row.description ?? undefined,
         isRunning: false,
       }));
 
@@ -1235,7 +1335,7 @@ function App() {
         return;
       }
       const deviceId = portalData.deviceId ?? null;
-      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+      const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
       const rows = ports.map(p => ({
         id: p.id,
         name: p.name,
@@ -1245,9 +1345,18 @@ function App() {
         folder_path: p.folderPath ?? null,
         deploy_url: p.deployUrl ?? null,
         github_url: p.githubUrl ?? null,
+        category: p.category ?? null,
+        description: p.description ?? null,
       }));
       const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error) throw new Error(error.message);
+      // Fix P2: delete remote rows whose IDs are no longer in local list
+      const localIds = ports.map(p => p.id);
+      const { data: remoteRows } = await supabase.from('ports').select('id');
+      const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
+      if (staleIds.length > 0) {
+        await supabase.from('ports').delete().in('id', staleIds);
+      }
 
       // workspace_roots 업로드
       let rootsMsg = '';
@@ -1773,6 +1882,15 @@ function App() {
       filtered = filtered.filter(p => p.port == null || p.port === 0);
     }
 
+    // Apply category filter
+    if (filterCategory !== 'all') {
+      if (filterCategory === 'uncategorized') {
+        filtered = filtered.filter(p => !p.category);
+      } else {
+        filtered = filtered.filter(p => p.category === filterCategory);
+      }
+    }
+
     // Apply sort
     switch (sortBy) {
       case 'name':
@@ -2007,7 +2125,33 @@ function App() {
               </div>
               <div className="min-w-0">
                 <h1 className="text-xl font-semibold text-white whitespace-nowrap">프로젝트 관리 프로그램</h1>
-                <p className="text-xs text-zinc-400 mt-0.5 whitespace-nowrap">로컬 개발 프로젝트를 관리하세요</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <p className="text-xs text-zinc-400 whitespace-nowrap">로컬 개발 프로젝트를 관리하세요</p>
+                  {!isTauri() && claudeStatus && (
+                    claudeStatus.authenticated ? (
+                      <span className="flex items-center gap-1 text-xs text-green-400">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"></span>
+                        Claude {claudeStatus.email ? `(${claudeStatus.email})` : 'logged in'}
+                      </span>
+                    ) : claudeStatus.installed ? (
+                      <button
+                        onClick={async () => {
+                          await fetch('/api/claude-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login' }) });
+                          showToast('Claude Code 로그인 브라우저를 열었습니다', 'success');
+                        }}
+                        className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors"
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
+                        Claude 로그인 필요
+                      </button>
+                    ) : (
+                      <span className="flex items-center gap-1 text-xs text-zinc-600">
+                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 inline-block"></span>
+                        Claude 미설치
+                      </span>
+                    )
+                  )}
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0 ml-4">
@@ -2136,6 +2280,26 @@ function App() {
                 onKeyPress={handleKeyPress}
                 className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
               />
+              <div className="flex gap-2">
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                >
+                  <option value="">카테고리 (선택사항)</option>
+                  {['frontend', 'backend', 'AI', 'tools', 'infra', 'mobile', 'data', 'fullstack'].map(c => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  placeholder="프로젝트 설명 (선택사항)"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+              </div>
               <div className="flex items-start gap-2 px-1">
                 <div className="text-base">💡</div>
                 <p className="text-[11px] text-zinc-500 leading-relaxed">
@@ -2306,6 +2470,31 @@ function App() {
                   );
                 })}
               </div>
+              {/* Row 2b: Category filter (only shown when categories exist) */}
+              {(() => {
+                const usedCategories = [...new Set(ports.map(p => p.category).filter(Boolean))] as string[];
+                if (usedCategories.length === 0) return null;
+                return (
+                  <div className="flex gap-1 mb-3 flex-wrap">
+                    <button onClick={() => setFilterCategory('all')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${filterCategory === 'all' ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
+                      전체 카테고리
+                    </button>
+                    {usedCategories.map(cat => (
+                      <button key={cat} onClick={() => setFilterCategory(cat)}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${filterCategory === cat ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
+                        {cat} <span className="opacity-70">({ports.filter(p => p.category === cat).length})</span>
+                      </button>
+                    ))}
+                    {ports.some(p => !p.category) && (
+                      <button onClick={() => setFilterCategory('uncategorized')}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${filterCategory === 'uncategorized' ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
+                        미분류 <span className="opacity-70">({ports.filter(p => !p.category).length})</span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
               {/* Row 3: Title + Sort + Bypass Toggle */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -2450,15 +2639,63 @@ function App() {
                         className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
                         placeholder="GitHub 주소 (선택사항)"
                       />
+                      <div className="flex gap-2">
+                        <select
+                          value={editCategory}
+                          onChange={(e) => setEditCategory(e.target.value)}
+                          className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                        >
+                          <option value="">카테고리</option>
+                          {['frontend', 'backend', 'AI', 'tools', 'infra', 'mobile', 'data', 'fullstack'].map(c => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          value={editDescription}
+                          onChange={(e) => setEditDescription(e.target.value)}
+                          onKeyDown={handleEditKeyPress}
+                          className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                          placeholder="프로젝트 설명 (선택사항)"
+                        />
+                      </div>
                     </div>
                   ) : (
                     // 일반 모드
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4 flex-1">
-                        <div>
-                          <h3 className="text-sm font-medium text-white group-hover:text-white transition-colors">
-                            {item.name}
-                          </h3>
+                      <div className="flex items-center gap-4 flex-1 min-w-0">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="text-sm font-medium text-white group-hover:text-white transition-colors">
+                              {item.name}
+                            </h3>
+                            {item.category && (
+                              <span className="px-1.5 py-0.5 bg-violet-500/15 text-violet-400 text-[10px] font-medium rounded border border-violet-500/30">
+                                {item.category}
+                              </span>
+                            )}
+                            {/* AI name suggestions popover */}
+                            {nameSuggestions[item.id]?.length > 0 && (
+                              <div className="flex items-center gap-1 flex-wrap">
+                                {nameSuggestions[item.id].map((s, i) => (
+                                  <button key={i} onClick={() => {
+                                    setPorts(prev => prev.map(p => p.id === item.id ? { ...p, name: s } : p));
+                                    setNameSuggestions(prev => ({ ...prev, [item.id]: [] }));
+                                    showToast(`이름을 "${s}"로 변경했습니다 ✓`, 'success');
+                                  }}
+                                    className="px-1.5 py-0.5 bg-blue-500/15 text-blue-300 text-[10px] rounded border border-blue-500/30 hover:bg-blue-500/25 transition-all"
+                                  >{s}</button>
+                                ))}
+                                <button onClick={() => setNameSuggestions(prev => ({ ...prev, [item.id]: [] }))}
+                                  className="p-0.5 text-zinc-600 hover:text-zinc-400 transition-colors">
+                                  <XIcon className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          {item.description && (
+                            <p className="text-[11px] text-zinc-500 mt-0.5 truncate max-w-xs">{item.description}</p>
+                          )}
                           <div className="flex items-center gap-2 mt-1">
                             <div className="w-5 h-5 rounded-md bg-zinc-900 flex items-center justify-center border border-zinc-700">
                               <Server className="w-3 h-3 text-zinc-400" />
@@ -2680,6 +2917,27 @@ function App() {
                               <ExternalLink className="w-3 h-3" />
                             </a>
                           )
+                        )}
+                        {/* AI buttons (web mode only, folderPath required) */}
+                        {!isTauri() && item.folderPath && (
+                          <>
+                            <button
+                              onClick={() => suggestNames(item)}
+                              disabled={aiLoading[item.id] === 'name'}
+                              title="AI 이름 제안"
+                              className="p-1.5 hover:bg-blue-500/10 rounded-lg transition-colors border border-transparent hover:border-blue-500/30 disabled:opacity-40"
+                            >
+                              <span className="text-[11px] text-blue-400/70 font-bold">{aiLoading[item.id] === 'name' ? '...' : 'AI'}</span>
+                            </button>
+                            <button
+                              onClick={() => generateDescription(item)}
+                              disabled={aiLoading[item.id] === 'desc'}
+                              title="AI 설명 생성"
+                              className="p-1.5 hover:bg-violet-500/10 rounded-lg transition-colors border border-transparent hover:border-violet-500/30 disabled:opacity-40"
+                            >
+                              <span className="text-[11px] text-violet-400/70 font-bold">{aiLoading[item.id] === 'desc' ? '...' : '✍'}</span>
+                            </button>
+                          </>
                         )}
                         <button
                           onClick={() => startEdit(item)}
