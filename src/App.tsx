@@ -1245,7 +1245,6 @@ function App() {
         folder_path: p.folderPath ?? null,
         deploy_url: p.deployUrl ?? null,
         github_url: p.githubUrl ?? null,
-        worktree_path: p.worktreePath ?? null,
       }));
       const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error) throw new Error(error.message);
