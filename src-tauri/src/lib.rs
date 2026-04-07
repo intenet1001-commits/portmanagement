@@ -1003,7 +1003,7 @@ fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>
         let flags: String = wt.split(',')
             .map(|p| p.trim())
             .filter(|p| !p.is_empty())
-            .map(|p| format!("-w '{}'", p))
+            .map(|p| format!("-w '{}'", escape_sq(p)))
             .collect::<Vec<_>>()
             .join(" ");
         format!("claude --dangerously-skip-permissions {}", flags)
@@ -1011,7 +1011,7 @@ fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>
         "claude --dangerously-skip-permissions".to_string()
     };
     let cmd = if let Some(ref fp) = folder_path {
-        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", fp, escaped_name, claude_cmd)
+        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(fp), escaped_name, claude_cmd)
     } else {
         format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
     };
@@ -1036,7 +1036,7 @@ fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, workt
         let flags: String = wt.split(',')
             .map(|p| p.trim())
             .filter(|p| !p.is_empty())
-            .map(|p| format!("-w '{}'", p))
+            .map(|p| format!("-w '{}'", escape_sq(p)))
             .collect::<Vec<_>>()
             .join(" ");
         format!("claude {}", flags)
@@ -1044,7 +1044,7 @@ fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, workt
         "claude".to_string()
     };
     let cmd = if let Some(ref fp) = folder_path {
-        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", fp, escaped_name, claude_cmd)
+        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(fp), escaped_name, claude_cmd)
     } else {
         format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
     };

@@ -51,6 +51,45 @@ if (staleIds.length > 0) {
 
 ---
 
+## P2d — Supabase ports pull unscoped (no device_id filter)
+
+**What:** `handleRestoreFromSupabase` and auto-pull both do `.select('*')` on the `ports` table with no `device_id` filter. Every machine sharing the same Supabase credentials downloads and merges all other devices' port entries. With `remote wins` merge semantics, foreign rows can overwrite local data.
+
+**Why:** `ports` table has no `device_id` column, so scoping isn't possible today. Either add `device_id` to `ports` (and push it) or document that the `ports` table is intentionally shared (single user, multi-Mac).
+
+**Where to start:** Add `device_id` column to `ports` table; include it in Push row mapping (`App.tsx:1241`); add `.eq('device_id', deviceId)` to the select in auto-pull (`App.tsx:677`) and manual pull (`App.tsx:1169`).
+
+**Effort:** M (human: ~2h / CC: ~10min)
+**Blocked by:** Supabase migration
+
+---
+
+## P2e — portalConfigRef never refreshed after credential change
+
+**What:** `portalConfigRef` is set once on startup (`App.tsx:671`) and never updated. If the user saves new Supabase credentials in the Portal tab, auto-push keeps using the stale credentials until the app restarts.
+
+**Why:** The Portal tab saves directly to `portal.json` via `PortalManager.tsx` but doesn't notify App.tsx to refresh the ref.
+
+**Where to start:** Either expose a callback from PortalManager that re-reads and sets `portalConfigRef.current`, or re-read `portal.json` fresh inside the auto-push effect instead of using the cached ref.
+
+**Effort:** S (human: ~30min / CC: ~5min)
+**Blocked by:** nothing
+
+---
+
+## P2f — bypass-fresh re-attaches instead of killing existing session
+
+**What:** When bypass mode is toggled on, the "tmux 새 세션 (fresh)" button calls `openTmuxClaudeBypass` which uses `tmux new-session -A` (attach-or-create). This re-attaches to the old session rather than killing it and starting fresh.
+
+**Why:** The fresh path should kill the old `{session}-bypass` session before creating a new one, same as `open_tmux_claude_fresh` does for the regular path.
+
+**Where to start:** Add a kill step to `open_tmux_claude_bypass` (or add a dedicated bypass-fresh command) mirroring the `kill_cmd` pattern in `open_tmux_claude_fresh` (`lib.rs:941`).
+
+**Effort:** S (human: ~30min / CC: ~5min)
+**Blocked by:** nothing
+
+---
+
 ## P3 — Cross-Mac tmux session visibility
 
 **What:** The tmux health indicator (green dot) shows local sessions only. Sessions running on a different Mac are always invisible.
