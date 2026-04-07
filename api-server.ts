@@ -774,8 +774,8 @@ const server = Bun.serve({
         const title = `[tmux] ${escapedSessionName}`;
         const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
         const cmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;${title}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`
-          : `printf '\\033]0;${title}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`;
+          ? `cd '${escFolder}' && printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`
+          : `printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`;
 
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -800,8 +800,8 @@ const server = Bun.serve({
         const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
         const killCmd = `tmux kill-session -t '${escSession}' 2>/dev/null || true`;
         const newCmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;${title}\\007'; tmux new-session -s '${escSession}' '${claudeCmd}'`
-          : `printf '\\033]0;${title}\\007'; tmux new-session -s '${escSession}' '${claudeCmd}'`;
+          ? `cd '${escFolder}' && printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' '${claudeCmd}'`
+          : `printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' '${claudeCmd}'`;
         const cmd = `${killCmd}; ${newCmd}`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -827,8 +827,8 @@ const server = Bun.serve({
           ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`
           : 'claude --dangerously-skip-permissions';
         const cmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;${title}\\007'; tmux new-session -A -s '${escSession}-bypass' '${claudeCmd}'`
-          : `printf '\\033]0;${title}\\007'; tmux new-session -A -s '${escSession}-bypass' '${claudeCmd}'`;
+          ? `cd '${escFolder}' && printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' '${claudeCmd}'`
+          : `printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' '${claudeCmd}'`;
 
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;

@@ -38,6 +38,19 @@ if (staleIds.length > 0) {
 
 ---
 
+## P2c — hasInitiallyLoaded set before auto-pull completes (premature push risk)
+
+**What:** `hasInitiallyLoaded.current = true` (App.tsx:660) is set synchronously at component init, before the async auto-pull at line 695 finishes. If the 3-second auto-push debounce fires before pull completes (e.g., slow Supabase response), it could push stale local data and overwrite a newer remote state.
+
+**Why:** The flag is intended to gate auto-push from running on initial load, but it's set too early — should be set only after `setPorts(merged)` on line 695.
+
+**Where to start:** Move `hasInitiallyLoaded.current = true` to after `setPorts(merged)` inside the auto-pull useEffect.
+
+**Effort:** S (human: ~30min / CC: ~3min)
+**Blocked by:** nothing
+
+---
+
 ## P3 — Cross-Mac tmux session visibility
 
 **What:** The tmux health indicator (green dot) shows local sessions only. Sessions running on a different Mac are always invisible.

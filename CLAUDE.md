@@ -148,7 +148,8 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 - Push: `upsert(rows, { onConflict: 'id' })` — 멱등 동작
 - Pull: `device_id` 기준 필터링 (포털), 전체 select (프로젝트 관리)
 - 테이블 스키마 (DDL):
-  - `ports` (id, name, port, command_path, folder_path, deploy_url, github_url)
+  - `ports` (id, name, port, command_path, folder_path, terminal_command, deploy_url, github_url)
+  - `workspace_roots` (id, device_id, name, path) — 프로젝트 관리 탭 Push/Pull
   - `portal_items` (id, device_id, name, type, url, path, category, description, pinned, visit_count, last_visited, created_at)
   - `portal_categories` (id, device_id, name, color, order)
 - RLS: anon key 읽기/쓰기 허용 또는 비활성화 필요
@@ -175,6 +176,7 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
   - 3개 테이블 DDL을 Claude Code 프롬프트 형태로 제공
   - "Claude 프롬프트 복사" 버튼으로 클립보드 복사 (2초 후 초기화)
   - 위치: `PortalManager.tsx` `SetupGuide` 컴포넌트
+- **포트 정렬**: 3가지 옵션 + 오름차순/내림차순 토글 (최근 등록순, 이름순, 포트순)
 - **최적화된 창 크기**: MacBook 14인치 기준 세로 최대화 (1000x1050)
 
 ### Tauri 빌드 & 배포
@@ -260,9 +262,10 @@ interface PortInfo {
   id: string;
   name: string;
   port: number;
-  commandPath?: string;  // .command 파일 경로
-  folderPath?: string;   // 프로젝트 폴더 경로 (자동 추출)
-  isRunning?: boolean;   // 서버 실행 상태
+  commandPath?: string;      // .command 파일 경로
+  terminalCommand?: string;  // 터미널 실행 명령어 (Supabase push/pull 포함)
+  folderPath?: string;       // 프로젝트 폴더 경로 (자동 추출)
+  isRunning?: boolean;       // 서버 실행 상태
 }
 
 interface Toast {

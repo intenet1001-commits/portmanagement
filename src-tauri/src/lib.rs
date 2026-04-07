@@ -899,9 +899,9 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
             "claude".to_string()
         };
         let cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -A -s '{}' '{}'", escape_sq(fp), escaped_title, esc_session, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;[tmux] {}\\007'; tmux new-session -A -s '{}' '{}'", escape_sq(fp), esc_session, esc_session, claude_cmd)
         } else {
-            format!("printf '\\033]0;{}\\007'; tmux new-session -A -s '{}' '{}'", escaped_title, esc_session, claude_cmd)
+            format!("printf '\\033]0;[tmux] {}\\007'; tmux new-session -A -s '{}' '{}'", esc_session, esc_session, claude_cmd)
         };
 
         // iTerm에서 명령어 자동 실행
@@ -940,9 +940,9 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
         // Kill existing session first (ignore error), then create fresh (no -A)
         let kill_cmd = format!("tmux kill-session -t '{}' 2>/dev/null || true", esc_session);
         let new_cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -s '{}' '{}'", escape_sq(fp), escaped_title, esc_session, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' '{}'", escape_sq(fp), esc_session, esc_session, claude_cmd)
         } else {
-            format!("printf '\\033]0;{}\\007'; tmux new-session -s '{}' '{}'", escaped_title, esc_session, claude_cmd)
+            format!("printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' '{}'", esc_session, esc_session, claude_cmd)
         };
         let cmd = format!("{}; {}", kill_cmd, new_cmd);
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
@@ -977,9 +977,9 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
             "claude --dangerously-skip-permissions".to_string()
         };
         let cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -A -s '{}-bypass' '{}'", escape_sq(fp), escaped_title, esc_session, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;[tmux-bypass] {}\\007'; tmux new-session -A -s '{}-bypass' '{}'", escape_sq(fp), esc_session, esc_session, claude_cmd)
         } else {
-            format!("printf '\\033]0;{}\\007'; tmux new-session -A -s '{}-bypass' '{}'", escaped_title, esc_session, claude_cmd)
+            format!("printf '\\033]0;[tmux-bypass] {}\\007'; tmux new-session -A -s '{}-bypass' '{}'", esc_session, esc_session, claude_cmd)
         };
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
