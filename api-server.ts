@@ -847,9 +847,9 @@ const server = Bun.serve({
       try {
         const { folderPath, name, worktreePath } = await req.json();
         const escapedName = (name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const claudeCmd = worktreePath ? `claude -w '${worktreePath}'` : 'claude';
+        const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
         const cmd = folderPath
-          ? `cd '${folderPath}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
+          ? `cd '${escapeSq(folderPath)}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
           : `printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escapedName}"\n  end tell\nend tell`;
@@ -865,10 +865,10 @@ const server = Bun.serve({
         const { folderPath, name, worktreePath } = await req.json();
         const escapedName = `[bypass] ${(name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}`;
         const claudeCmd = worktreePath
-          ? `claude --dangerously-skip-permissions -w '${worktreePath}'`
+          ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`
           : 'claude --dangerously-skip-permissions';
         const cmd = folderPath
-          ? `cd '${folderPath}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
+          ? `cd '${escapeSq(folderPath)}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
           : `printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escapedName}"\n  end tell\nend tell`;
