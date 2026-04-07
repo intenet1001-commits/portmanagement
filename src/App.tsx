@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
@@ -491,6 +491,8 @@ function App() {
     () => (localStorage.getItem('portmanager-sortOrder') as 'asc' | 'desc') || 'desc'
   );
   const [filterType, setFilterType] = useState<'all' | 'with-port' | 'without-port'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [bypassPermissions, setBypassPermissions] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -767,6 +769,21 @@ function App() {
   // 정렬 설정 localStorage 저장
   useEffect(() => { localStorage.setItem('portmanager-sortBy', sortBy); }, [sortBy]);
   useEffect(() => { localStorage.setItem('portmanager-sortOrder', sortOrder); }, [sortOrder]);
+
+  // Cmd+F: 검색 포커스 / Esc: 검색 초기화
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (e.key === 'Escape' && document.activeElement === searchInputRef.current) {
+        setSearchQuery('');
+        searchInputRef.current?.blur();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   // 자동 Push: 포트 목록 변경 후 3초 debounce (Supabase 설정된 경우만)
   useEffect(() => {
@@ -1735,8 +1752,23 @@ function App() {
     }
   };
 
+  const matchesSearch = (p: PortInfo, q: string): boolean => {
+    const folderBasename = p.folderPath?.split('/').pop()?.toLowerCase() ?? '';
+    return (
+      p.name.toLowerCase().includes(q) ||
+      (p.port?.toString() ?? '').includes(q) ||
+      folderBasename.includes(q)
+    );
+  };
+
+  const getSearchFiltered = () => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return ports;
+    return ports.filter(p => matchesSearch(p, q));
+  };
+
   const getSortedPorts = () => {
-    let filtered = [...ports];
+    let filtered = getSearchFiltered();
 
     // Apply filter
     if (filterType === 'with-port') {
@@ -2240,12 +2272,33 @@ function App() {
         {ports.length > 0 ? (
           <div className="bg-[#18181b] rounded-xl border border-zinc-800 overflow-hidden">
             <div className="bg-zinc-900/50 px-6 py-4 border-b border-zinc-800">
-              {/* Row 1: Filter tabs */}
+              {/* Row 1: Search input */}
+              <div className="relative mb-3">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="프로젝트 검색... (Cmd+F)"
+                  className="w-full pl-8 pr-8 py-1.5 bg-black/30 border border-zinc-700 text-zinc-200 text-xs rounded-lg placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                  >
+                    <XIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {/* Row 2: Filter tabs (counts reflect search results) */}
               <div className="flex gap-1 mb-3">
                 {(['all', 'with-port', 'without-port'] as const).map(f => {
-                  const count = f === 'all' ? ports.length
-                    : f === 'with-port' ? ports.filter(p => p.port != null && p.port > 0).length
-                    : ports.filter(p => p.port == null || p.port === 0).length;
+                  const searchFiltered = getSearchFiltered();
+                  const count = f === 'all' ? searchFiltered.length
+                    : f === 'with-port' ? searchFiltered.filter(p => p.port != null && p.port > 0).length
+                    : searchFiltered.filter(p => p.port == null || p.port === 0).length;
                   const label = f === 'all' ? '전체' : f === 'with-port' ? '포트 있음' : '포트 없음';
                   return (
                     <button key={f} onClick={() => setFilterType(f)}
@@ -2257,13 +2310,13 @@ function App() {
                   );
                 })}
               </div>
-              {/* Row 2: Title + Sort + Bypass Toggle */}
+              {/* Row 3: Title + Sort + Bypass Toggle */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <Terminal className="w-4 h-4 text-zinc-400" />
                   <h2 className="text-sm font-semibold text-zinc-200">등록된 프로젝트</h2>
                   <span className="bg-zinc-800 px-2 py-0.5 rounded-md text-xs text-zinc-300 font-medium border border-zinc-700">
-                    {ports.length}
+                    {searchQuery.trim() ? `${getSearchFiltered().length}/${ports.length}` : ports.length}
                   </span>
                   <button
                     onClick={handleRefresh}
@@ -2311,12 +2364,18 @@ function App() {
               </div>
             </div>
             <div className="divide-y divide-zinc-800">
-              {getSortedPorts().length === 0 ? (
-                <div className="p-8 text-center text-sm text-zinc-500">
-                  이 필터에 해당하는 프로젝트가 없습니다
-                </div>
-              ) : null}
-              {getSortedPorts().map((item) => (
+              {(() => {
+                const displayedPorts = getSortedPorts();
+                if (displayedPorts.length === 0) {
+                  return (
+                    <div className="p-8 text-center text-sm text-zinc-500">
+                      {searchQuery.trim()
+                        ? `"${searchQuery.trim()}"에 대한 검색 결과가 없습니다`
+                        : '이 필터에 해당하는 프로젝트가 없습니다'}
+                    </div>
+                  );
+                }
+                return displayedPorts.map((item) => (
                 <div
                   key={item.id}
                   className="group p-4 hover:bg-zinc-900/30 transition-all duration-200"
@@ -2642,7 +2701,8 @@ function App() {
                     </div>
                   )}
                 </div>
-              ))}
+              ));
+              })()}
             </div>
           </div>
         ) : (
