@@ -21,6 +21,10 @@ struct PortInfo {
     github_url: Option<String>,
     #[serde(rename = "worktreePath", default)]
     worktree_path: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
     #[serde(rename = "isRunning", default)]
     is_running: bool,
 }
