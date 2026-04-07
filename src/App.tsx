@@ -806,7 +806,6 @@ function App() {
           folder_path: p.folderPath ?? null,
           deploy_url: p.deployUrl ?? null,
           github_url: p.githubUrl ?? null,
-          worktree_path: p.worktreePath ?? null,
         }));
         await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       } catch (e) {
