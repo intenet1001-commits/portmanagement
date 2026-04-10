@@ -565,7 +565,7 @@ const getPortalCredentials = async (): Promise<{ supabaseUrl?: string; supabaseA
 function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [apiServerOnline, setApiServerOnline] = useState(true);
+  const [apiServerOnline, setApiServerOnline] = useState<boolean | null>(null);
   const hasInitiallyLoaded = useRef(false);
   const hasWorkspaceRootsLoaded = useRef(false);
   const skipNextSave = useRef(false); // 서버 리로드(focus 등)로 인한 불필요한 덮어쓰기 방지
@@ -2016,9 +2016,9 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0b] p-8">
-      {!isTauri() && !apiServerOnline && (
+      {!isTauri() && apiServerOnline === false && (
         <div className="fixed top-0 left-0 right-0 z-50 bg-amber-500/90 text-black text-sm px-4 py-2 flex items-center justify-between">
-          <span>⚠️ API 서버가 꺼져 있습니다. <code className="bg-black/10 px-1 rounded">bun run dev</code> 로 실행하세요. Supabase는 캐시된 인증 정보로 동작합니다.</span>
+          <span>⚠️ API 서버가 꺼져 있습니다. <code className="bg-black/10 px-1 rounded">bun run start</code> 로 실행하세요. Supabase는 캐시된 인증 정보로 동작합니다.</span>
           <button onClick={() => { fetch('/api/ports').then(() => setApiServerOnline(true)).catch(() => {}); }} className="ml-4 px-2 py-0.5 bg-black/20 rounded hover:bg-black/30 text-xs">재확인</button>
         </div>
       )}
