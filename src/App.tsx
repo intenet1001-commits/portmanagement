@@ -534,9 +534,38 @@ const getSupabaseClient = (url: string, key: string): ReturnType<typeof createCl
   return _supabaseCache.get(cacheKey)!;
 };
 
+// localStorage credential fallback helper — works even when API server is offline
+const getPortalCredentials = async (): Promise<{ supabaseUrl?: string; supabaseAnonKey?: string; deviceId?: string }> => {
+  try {
+    const res = await Promise.race([
+      fetch('/api/portal'),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+    ]) as Response;
+    if (res.ok) {
+      const data = await res.json();
+      // Cache only credential fields (not full portal items to avoid localStorage size limits)
+      if (data.supabaseUrl) {
+        localStorage.setItem('portalCreds', JSON.stringify({
+          supabaseUrl: data.supabaseUrl,
+          supabaseAnonKey: data.supabaseAnonKey,
+          deviceId: data.deviceId,
+        }));
+      }
+      return data;
+    }
+  } catch {}
+  // Fallback to localStorage cache
+  try {
+    const cached = localStorage.getItem('portalCreds');
+    if (cached) return JSON.parse(cached);
+  } catch {}
+  return {};
+};
+
 function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [apiServerOnline, setApiServerOnline] = useState(true);
   const hasInitiallyLoaded = useRef(false);
   const hasWorkspaceRootsLoaded = useRef(false);
   const skipNextSave = useRef(false); // 서버 리로드(focus 등)로 인한 불필요한 덮어쓰기 방지
@@ -605,8 +634,16 @@ function App() {
         const status = await invoke<{ installed: boolean; authenticated: boolean; email?: string }>('check_claude_status');
         setClaudeStatus(status);
       } else {
-        const res = await fetch('/api/claude-status');
-        if (res.ok) setClaudeStatus(await res.json());
+        try {
+          const res = await fetch('/api/claude-status');
+          if (res.ok) {
+            setClaudeStatus(await res.json());
+          } else {
+            setClaudeStatus({ installed: false, authenticated: false });
+          }
+        } catch {
+          setClaudeStatus({ installed: false, authenticated: false });
+        }
       }
     } catch {}
   }, []);
@@ -616,6 +653,25 @@ function App() {
     const timer = setInterval(fetchClaudeStatus, 30_000);
     return () => clearInterval(timer);
   }, [fetchClaudeStatus]);
+
+  // API 서버 헬스 체크 (웹 모드 전용)
+  useEffect(() => {
+    if (isTauri()) return;
+    const check = async () => {
+      try {
+        const res = await Promise.race([
+          fetch('/api/ports'),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 2000)),
+        ]) as Response;
+        setApiServerOnline(res.ok);
+      } catch {
+        setApiServerOnline(false);
+      }
+    };
+    check();
+    const interval = setInterval(check, 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -1297,9 +1353,7 @@ function App() {
       if (isTauri()) {
         portalData = await invoke('load_portal');
       } else {
-        const res = await fetch('/api/portal');
-        if (!res.ok) throw new Error('portal.json 로드 실패');
-        portalData = await res.json();
+        portalData = await getPortalCredentials();
       }
 
       const { supabaseUrl, supabaseAnonKey } = portalData ?? {};
@@ -1374,9 +1428,7 @@ function App() {
       if (isTauri()) {
         portalData = await invoke('load_portal');
       } else {
-        const res = await fetch('/api/portal');
-        if (!res.ok) throw new Error('portal.json 로드 실패');
-        portalData = await res.json();
+        portalData = await getPortalCredentials();
       }
       const { supabaseUrl, supabaseAnonKey } = portalData ?? {};
       if (!supabaseUrl || !supabaseAnonKey) {
@@ -1964,6 +2016,12 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0b] p-8">
+      {!isTauri() && !apiServerOnline && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-amber-500/90 text-black text-sm px-4 py-2 flex items-center justify-between">
+          <span>⚠️ API 서버가 꺼져 있습니다. <code className="bg-black/10 px-1 rounded">bun run dev</code> 로 실행하세요. Supabase는 캐시된 인증 정보로 동작합니다.</span>
+          <button onClick={() => { fetch('/api/ports').then(() => setApiServerOnline(true)).catch(() => {}); }} className="ml-4 px-2 py-0.5 bg-black/20 rounded hover:bg-black/30 text-xs">재확인</button>
+        </div>
+      )}
       {/* 워크트리 경로 피커 모달 */}
       {worktreePickerState && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">

@@ -84,8 +84,27 @@ const PortalAPI = {
       }
       const res = await fetch('/api/portal');
       if (!res.ok) return { items: [], categories: DEFAULT_CATEGORIES };
-      return await res.json();
+      const data: PortalData = await res.json();
+      // Mirror credentials to localStorage for offline fallback
+      if (data.supabaseUrl || data.supabaseAnonKey) {
+        localStorage.setItem('portalCreds', JSON.stringify({
+          supabaseUrl: data.supabaseUrl,
+          supabaseAnonKey: data.supabaseAnonKey,
+          deviceId: data.deviceId,
+        }));
+      }
+      return data;
     } catch {
+      // api-server is down — try to restore credentials from localStorage
+      const cached = localStorage.getItem('portalCreds');
+      if (cached) {
+        try {
+          const { supabaseUrl, supabaseAnonKey, deviceId } = JSON.parse(cached);
+          return { items: [], categories: DEFAULT_CATEGORIES, supabaseUrl, supabaseAnonKey, deviceId };
+        } catch {
+          // ignore malformed cache
+        }
+      }
       return { items: [], categories: DEFAULT_CATEGORIES };
     }
   },
@@ -100,6 +119,14 @@ const PortalAPI = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
+    // Keep localStorage in sync so credentials survive api-server restarts
+    if (data.supabaseUrl || data.supabaseAnonKey) {
+      localStorage.setItem('portalCreds', JSON.stringify({
+        supabaseUrl: data.supabaseUrl,
+        supabaseAnonKey: data.supabaseAnonKey,
+        deviceId: data.deviceId,
+      }));
+    }
   },
 
   async openUrl(url: string): Promise<void> {
