@@ -90,6 +90,27 @@ if (staleIds.length > 0) {
 
 ---
 
+## P2g — delete pass unsafe on auto-pull failure ✅ FIXED (2026-04-10)
+
+**What:** Auto-push delete pass deleted all remote-only rows if startup auto-pull timed out.
+
+**Fix:** Added `autopullSucceeded` ref (App.tsx:598). Delete pass in auto-push (line 912) and manual push (line 1370) now gated behind `if (autopullSucceeded.current)`.
+
+---
+
+## P2h — Bun.spawnSync blocks API server during AI route calls
+
+**What:** `/api/suggest-name`, `/api/generate-description`, `/api/suggest-category` use `Bun.spawnSync` with 20–30s timeouts. Bun's event loop is single-threaded — a blocking spawn freezes all concurrent API requests for the duration.
+
+**Why:** For a single-user desktop tool this rarely matters, but a slow `claude -p` call (network auth, cold start) will make all port status checks unresponsive until it resolves.
+
+**Where to start:** Replace `Bun.spawnSync` with `await Bun.spawn(...).exited` pattern (async subprocess), or wrap each route in a `Promise.race` with a short abort.
+
+**Effort:** S (human: ~30min / CC: ~5min)
+**Blocked by:** nothing
+
+---
+
 ## P3 — Cross-Mac tmux session visibility
 
 **What:** The tmux health indicator (green dot) shows local sessions only. Sessions running on a different Mac are always invisible.

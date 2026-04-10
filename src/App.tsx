@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
@@ -371,6 +371,53 @@ const API = {
   },
 };
 
+const CLAUDE_AI_NAME_PROMPT = `포트관리기의 프로젝트 목록에 "AI 추천 이름(aiName)"을 채워줘.
+
+## 대상 파일
+~/Library/Application Support/com.portmanager.portmanager/ports.json
+
+## 절차
+
+1. **백업 먼저**: 쓰기 전에 반드시 백업 생성 (코드 한 줄로 충분).
+   \`cp "$HOME/Library/Application Support/com.portmanager.portmanager/ports.json" "$HOME/Library/Application Support/com.portmanager.portmanager/ports.json.bak"\`
+
+2. **읽기**: JSON을 파싱해서 배열을 메모리에 로드.
+
+3. **각 항목에 aiName 설정**:
+   - 이미 \`aiName\`이 있으면 건드리지 말 것 (idempotent — 재실행해도 기존 별칭 유지)
+   - \`aiName\`이 없는 항목에만 새 별칭 생성
+   - 참고 필드: name, folderPath(basename), description, githubUrl, deployUrl, commandPath, terminalCommand
+
+4. **별칭 규칙**:
+   - 2~4 단어의 짧은 영어 (공백 구분, 예: "port manager", "tax calculator", "link page generator")
+   - 프로젝트의 핵심 기능을 드러내는 키워드
+   - 한국어 프로젝트는 의미를 영어로 번역
+   - 이미 영어 이름이면 더 검색 친화적인 키워드 한 개로 압축
+   - 모두 소문자
+
+5. **필드 보존 규칙 (매우 중요)**:
+   - 다음 필드는 **원본 값 그대로 유지**해야 함 — 존재한다면 삭제/수정 금지:
+     id, name, port, commandPath, terminalCommand, folderPath, deployUrl, githubUrl, worktreePath, category, description, isRunning
+   - \`worktreePath: null\` 같은 명시적 null 값도 그대로 유지 (삭제 금지)
+   - \`isRunning: false\` 같은 boolean도 그대로 유지
+   - 원래 없던 필드를 새로 추가하지 말 것 (aiName 제외)
+
+6. **원자적 쓰기 (atomic write)**:
+   - 임시 파일에 먼저 쓴 후 rename으로 교체 (중간 인터럽트 시 원본 손상 방지)
+   - 예시 절차:
+     a. \`ports.json.tmp\`에 전체 JSON 직렬화 (2-space indent)
+     b. fs.rename(\`ports.json.tmp\`, \`ports.json\`)
+   - 들여쓰기는 원본과 동일하게 2-space
+
+7. **검증**:
+   - 쓰기 후 다시 읽어서 파싱 가능한지 확인
+   - 항목 수가 원본과 동일한지 확인
+   - 파싱 실패 시 백업(\`.bak\`)에서 복원
+
+8. **보고**: 완료 후 한 줄로 "N개 항목에 aiName 추가, M개 기존 유지, 총 K개 검증 완료" 형식으로 보고.
+
+완료되면 포트관리기에서 "새로고침" 버튼을 누르면 별칭이 에메랄드 배지로 표시되고 검색에서 매칭됩니다.`;
+
 interface PortInfo {
   id: string;
   name: string;
@@ -383,6 +430,7 @@ interface PortInfo {
   worktreePath?: string;
   category?: string;
   description?: string;
+  aiName?: string;  // AI-generated English alias for search
   isRunning?: boolean;
 }
 
@@ -461,11 +509,16 @@ const withTimeout = <T,>(promise: PromiseLike<T>, ms: number): Promise<T> =>
  */
 const mergePorts = (local: PortInfo[], remote: PortInfo[]): PortInfo[] => {
   const remoteById = new Map(remote.map(p => [p.id, p]));
-  const merged = local.map(p =>
-    remoteById.has(p.id)
-      ? { ...p, ...remoteById.get(p.id)!, isRunning: p.isRunning }
-      : p
-  );
+  const merged = local.map(p => {
+    const r = remoteById.get(p.id);
+    if (!r) return p;
+    // Remote wins for all synced fields, EXCEPT:
+    //   - isRunning: always local (live process state)
+    //   - aiName: local wins if remote has none (Supabase `ports` table
+    //     lacks an ai_name column, so remote always carries undefined;
+    //     this preserves the device-local AI alias across Pull)
+    return { ...p, ...r, isRunning: p.isRunning, aiName: r.aiName ?? p.aiName };
+  });
   const localIds = new Set(local.map(p => p.id));
   const newFromRemote = remote.filter(p => !localIds.has(p.id));
   return [...merged, ...newFromRemote];
@@ -521,8 +574,6 @@ function App() {
   const [description, setDescription] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [claudeStatus, setClaudeStatus] = useState<{ installed: boolean; authenticated: boolean; email?: string } | null>(null);
-  const [aiLoading, setAiLoading] = useState<{ [id: string]: 'name' | 'desc' | null }>({});
-  const [nameSuggestions, setNameSuggestions] = useState<{ [id: string]: string[] }>({});
   const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
   const [worktreePickerValue, setWorktreePickerValue] = useState('');
   const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
@@ -543,14 +594,21 @@ function App() {
   const [registerAsProject, setRegisterAsProject] = useState(true);
   const portalConfigRef = useRef<any>(null);
   const autoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Fix P2g: gate delete pass — only safe to delete remote rows after a successful auto-pull
+  // (otherwise local state has only this Mac's rows and would delete other Macs' remote data)
+  const autopullSucceeded = useRef(false);
 
-  // Claude Code auth status polling (web mode, 30s interval)
+  // Claude Code auth status polling (web mode: fetch API, Tauri mode: invoke)
   useEffect(() => {
-    if (isTauri()) return;
     const fetchStatus = async () => {
       try {
-        const res = await fetch('/api/claude-status');
-        if (res.ok) setClaudeStatus(await res.json());
+        if (isTauri()) {
+          const status = await invoke<{ installed: boolean; authenticated: boolean; email?: string }>('check_claude_status');
+          setClaudeStatus(status);
+        } else {
+          const res = await fetch('/api/claude-status');
+          if (res.ok) setClaudeStatus(await res.json());
+        }
       } catch {}
     };
     fetchStatus();
@@ -733,6 +791,7 @@ function App() {
               }
 
               hasInitiallyLoaded.current = true; // Fix P2c: set after pull completes
+              autopullSucceeded.current = true;  // Fix P2g: mark pull succeeded → delete pass is now safe
 
               // workspace_roots 자동 Pull (빈 결과면 로컬 덮어쓰기 방지)
               const deviceId = portalData.deviceId;
@@ -851,11 +910,14 @@ function App() {
         }));
         await supabase.from('ports').upsert(rows, { onConflict: 'id' });
         // Fix P2: delete remote rows whose IDs are no longer in local list
-        const localIds = ports.map(p => p.id);
-        const { data: remoteRows } = await supabase.from('ports').select('id');
-        const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
-        if (staleIds.length > 0) {
-          await supabase.from('ports').delete().in('id', staleIds);
+        // Fix P2g: skip delete pass if auto-pull never succeeded — local state may be incomplete
+        if (autopullSucceeded.current) {
+          const localIds = ports.map(p => p.id);
+          const { data: remoteRows } = await supabase.from('ports').select('id');
+          const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
+          if (staleIds.length > 0) {
+            await supabase.from('ports').delete().in('id', staleIds);
+          }
         }
       } catch (e) {
         console.warn('[App] Auto-push failed:', e);
@@ -954,48 +1016,6 @@ function App() {
 
   const deletePort = (id: string) => {
     setPorts(ports.filter(p => p.id !== id));
-  };
-
-  const suggestNames = async (item: PortInfo) => {
-    if (!item.folderPath) { showToast('폴더 경로가 없으면 AI 이름 제안 불가', 'error'); return; }
-    setAiLoading(prev => ({ ...prev, [item.id]: 'name' }));
-    setNameSuggestions(prev => ({ ...prev, [item.id]: [] }));
-    try {
-      const res = await fetch('/api/suggest-name', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderPath: item.folderPath }),
-      });
-      const data = await res.json();
-      if (data.error === 'claude_not_found') { showToast('Claude Code 로그인 필요', 'error'); return; }
-      setNameSuggestions(prev => ({ ...prev, [item.id]: data.suggestions ?? [] }));
-    } catch (e) {
-      showToast('이름 제안 실패: ' + e, 'error');
-    } finally {
-      setAiLoading(prev => ({ ...prev, [item.id]: null }));
-    }
-  };
-
-  const generateDescription = async (item: PortInfo) => {
-    if (!item.folderPath) { showToast('폴더 경로가 없으면 AI 설명 생성 불가', 'error'); return; }
-    setAiLoading(prev => ({ ...prev, [item.id]: 'desc' }));
-    try {
-      const res = await fetch('/api/generate-description', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folderPath: item.folderPath, name: item.name }),
-      });
-      const data = await res.json();
-      if (data.error === 'claude_not_found') { showToast('Claude Code 로그인 필요', 'error'); return; }
-      if (data.description) {
-        setPorts(prev => prev.map(p => p.id === item.id ? { ...p, description: data.description } : p));
-        showToast('설명이 생성되었습니다 ✓', 'success');
-      }
-    } catch (e) {
-      showToast('설명 생성 실패: ' + e, 'error');
-    } finally {
-      setAiLoading(prev => ({ ...prev, [item.id]: null }));
-    }
   };
 
   const startEdit = (item: PortInfo) => {
@@ -1351,11 +1371,14 @@ function App() {
       const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error) throw new Error(error.message);
       // Fix P2: delete remote rows whose IDs are no longer in local list
-      const localIds = ports.map(p => p.id);
-      const { data: remoteRows } = await supabase.from('ports').select('id');
-      const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
-      if (staleIds.length > 0) {
-        await supabase.from('ports').delete().in('id', staleIds);
+      // Fix P2g: skip delete pass if auto-pull never succeeded — pull first before deleting
+      if (autopullSucceeded.current) {
+        const localIds = ports.map(p => p.id);
+        const { data: remoteRows } = await supabase.from('ports').select('id');
+        const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
+        if (staleIds.length > 0) {
+          await supabase.from('ports').delete().in('id', staleIds);
+        }
       }
 
       // workspace_roots 업로드
@@ -1859,8 +1882,10 @@ function App() {
 
   const matchesSearch = (p: PortInfo, q: string): boolean => {
     const folderBasename = p.folderPath?.split('/').pop()?.toLowerCase() ?? '';
+    const aiName = p.aiName?.toLowerCase() ?? '';
     return (
       p.name.toLowerCase().includes(q) ||
+      aiName.includes(q) ||
       (p.port?.toString() ?? '').includes(q) ||
       folderBasename.includes(q)
     );
@@ -2109,7 +2134,7 @@ function App() {
 
         {/* 포털 탭 */}
         {activeTab === 'portal' && (
-          <PortalManager showToast={showToast} />
+          <PortalManager showToast={showToast} onClaudeBypass={API.openTmuxClaudeBypass} />
         )}
 
         {/* 포트 관리 탭 */}
@@ -2127,7 +2152,7 @@ function App() {
                 <h1 className="text-xl font-semibold text-white whitespace-nowrap">프로젝트 관리 프로그램</h1>
                 <div className="flex items-center gap-2 mt-0.5">
                   <p className="text-xs text-zinc-400 whitespace-nowrap">로컬 개발 프로젝트를 관리하세요</p>
-                  {!isTauri() && claudeStatus && (
+                  {claudeStatus && (
                     claudeStatus.authenticated ? (
                       <span className="flex items-center gap-1 text-xs text-green-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"></span>
@@ -2136,8 +2161,17 @@ function App() {
                     ) : claudeStatus.installed ? (
                       <button
                         onClick={async () => {
-                          await fetch('/api/claude-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login' }) });
-                          showToast('Claude Code 로그인 브라우저를 열었습니다', 'success');
+                          try {
+                            if (isTauri()) {
+                              await invoke('open_claude_auth_login');
+                              showToast('Claude Code 로그인 창을 열었습니다 (iTerm)', 'success');
+                            } else {
+                              await fetch('/api/claude-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login' }) });
+                              showToast('Claude Code 로그인 브라우저를 열었습니다', 'success');
+                            }
+                          } catch (e) {
+                            showToast('Claude 로그인 실패: ' + e, 'error');
+                          }
                         }}
                         className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors"
                       >
@@ -2156,13 +2190,17 @@ function App() {
             </div>
             <div className="flex items-center gap-2 shrink-0 ml-4">
               <button
-                onClick={() => isTauri()
-                  ? API.openInChrome('https://vibe2-navy.vercel.app/')
-                  : window.open('https://vibe2-navy.vercel.app/', '_blank')}
-                className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/35 text-blue-400 text-sm rounded-lg border border-blue-500/50 hover:border-blue-400/70 transition-all duration-200 flex items-center gap-1.5"
+                onClick={() => {
+                  navigator.clipboard.writeText(CLAUDE_AI_NAME_PROMPT).then(
+                    () => showToast('AI 이름 업데이트 프롬프트가 복사되었습니다 ✓', 'success'),
+                    () => showToast('클립보드 복사에 실패했습니다', 'error'),
+                  );
+                }}
+                title="AI 추천 이름 업데이트 프롬프트 복사 (Claude Code에 붙여넣으면 ports.json의 aiName을 채워줍니다)"
+                className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-sm rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all flex items-center gap-1"
               >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span className="font-medium">AI 오케스트레이터</span>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span className="text-xs font-medium">AI 이름</span>
               </button>
               <button onClick={handleExportPorts} title="내보내기" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center">
                 <Download className="w-3.5 h-3.5" />
@@ -2669,28 +2707,18 @@ function App() {
                             <h3 className="text-sm font-medium text-white group-hover:text-white transition-colors">
                               {item.name}
                             </h3>
+                            {item.aiName && (
+                              <span
+                                className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium rounded border border-emerald-500/30"
+                                title="AI 추천 이름 (검색용 별칭)"
+                              >
+                                {item.aiName}
+                              </span>
+                            )}
                             {item.category && (
                               <span className="px-1.5 py-0.5 bg-violet-500/15 text-violet-400 text-[10px] font-medium rounded border border-violet-500/30">
                                 {item.category}
                               </span>
-                            )}
-                            {/* AI name suggestions popover */}
-                            {nameSuggestions[item.id]?.length > 0 && (
-                              <div className="flex items-center gap-1 flex-wrap">
-                                {nameSuggestions[item.id].map((s, i) => (
-                                  <button key={i} onClick={() => {
-                                    setPorts(prev => prev.map(p => p.id === item.id ? { ...p, name: s } : p));
-                                    setNameSuggestions(prev => ({ ...prev, [item.id]: [] }));
-                                    showToast(`이름을 "${s}"로 변경했습니다 ✓`, 'success');
-                                  }}
-                                    className="px-1.5 py-0.5 bg-blue-500/15 text-blue-300 text-[10px] rounded border border-blue-500/30 hover:bg-blue-500/25 transition-all"
-                                  >{s}</button>
-                                ))}
-                                <button onClick={() => setNameSuggestions(prev => ({ ...prev, [item.id]: [] }))}
-                                  className="p-0.5 text-zinc-600 hover:text-zinc-400 transition-colors">
-                                  <XIcon className="w-3 h-3" />
-                                </button>
-                              </div>
                             )}
                           </div>
                           {item.description && (
@@ -2919,26 +2947,6 @@ function App() {
                           )
                         )}
                         {/* AI buttons (web mode only, folderPath required) */}
-                        {!isTauri() && item.folderPath && (
-                          <>
-                            <button
-                              onClick={() => suggestNames(item)}
-                              disabled={aiLoading[item.id] === 'name'}
-                              title="AI 이름 제안"
-                              className="p-1.5 hover:bg-blue-500/10 rounded-lg transition-colors border border-transparent hover:border-blue-500/30 disabled:opacity-40"
-                            >
-                              <span className="text-[11px] text-blue-400/70 font-bold">{aiLoading[item.id] === 'name' ? '...' : 'AI'}</span>
-                            </button>
-                            <button
-                              onClick={() => generateDescription(item)}
-                              disabled={aiLoading[item.id] === 'desc'}
-                              title="AI 설명 생성"
-                              className="p-1.5 hover:bg-violet-500/10 rounded-lg transition-colors border border-transparent hover:border-violet-500/30 disabled:opacity-40"
-                            >
-                              <span className="text-[11px] text-violet-400/70 font-bold">{aiLoading[item.id] === 'desc' ? '...' : '✍'}</span>
-                            </button>
-                          </>
-                        )}
                         <button
                           onClick={() => startEdit(item)}
                           className="p-1.5 hover:bg-zinc-800/60 rounded-lg transition-colors border border-transparent hover:border-zinc-700/50"

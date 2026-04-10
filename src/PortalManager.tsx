@@ -3,7 +3,7 @@ import {
   Globe, Folder, Plus, Trash2, Pencil, X, Check, Search,
   ExternalLink, FolderOpen, Star, Download, Upload,
   Cloud, CloudOff, CloudUpload, CloudDownload, Settings, RefreshCw, Link2, Pin,
-  BookMarked, ChevronDown, Database
+  BookMarked, ChevronDown, Database, Bot, Loader2
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -154,6 +154,7 @@ const EMPTY_FORM = { name: '', type: 'web' as 'web' | 'folder', url: '', path: '
 
 interface Props {
   showToast: (msg: string, type: 'success' | 'error') => void;
+  onClaudeBypass?: (sessionName: string, folderPath?: string) => Promise<string>;
 }
 
 const CLAUDE_PROMPT = `Supabase CLI로 아래 3개 테이블을 생성해줘.
@@ -164,10 +165,18 @@ create table if not exists ports (
   name text not null,
   port integer,
   command_path text,
+  terminal_command text,
   folder_path text,
   deploy_url text,
-  github_url text
+  github_url text,
+  category text,
+  description text
 );
+
+-- 기존 테이블 업그레이드 (이미 생성된 경우)
+alter table ports add column if not exists terminal_command text;
+alter table ports add column if not exists category text;
+alter table ports add column if not exists description text;
 
 -- 2. 포털 아이템 테이블
 create table if not exists portal_items (
@@ -246,7 +255,7 @@ function SetupGuide() {
   );
 }
 
-export default function PortalManager({ showToast }: Props) {
+export default function PortalManager({ showToast, onClaudeBypass }: Props) {
   const [data, setData] = useState<PortalData>({ items: [], categories: DEFAULT_CATEGORIES });
   const [selectedCat, setSelectedCat] = useState<string>('all');
   const [search, setSearch] = useState('');
@@ -266,6 +275,7 @@ export default function PortalManager({ showToast }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [sbUrl, setSbUrl] = useState('');
   const [sbKey, setSbKey] = useState('');
+  const [isUpdatingCategories, setIsUpdatingCategories] = useState(false);
 
   // ── Load ──────────────────────────────────────────────────────────────────
 
@@ -289,6 +299,26 @@ export default function PortalManager({ showToast }: Props) {
       showToast('저장 실패: ' + e, 'error');
     }
   }, [showToast]);
+
+  // ── Claude 카테고리 최신화 ───────────────────────────────────────────────────
+
+  async function handleUpdateCategories() {
+    if (!onClaudeBypass) {
+      showToast('Claude Code 연동이 설정되지 않았습니다', 'error');
+      return;
+    }
+    setIsUpdatingCategories(true);
+    try {
+      const projectPath = typeof window !== 'undefined' ? window.location.hostname : undefined;
+      const sessionName = `portal-categories-${Date.now()}`;
+      await onClaudeBypass(sessionName, projectPath);
+      showToast('Claude Code Agent Teams 실행 완료', 'success');
+    } catch (e) {
+      showToast('카테고리 최신화 실패: ' + e, 'error');
+    } finally {
+      setIsUpdatingCategories(false);
+    }
+  }
 
   // ── Item CRUD ─────────────────────────────────────────────────────────────
 
@@ -935,6 +965,20 @@ export default function PortalManager({ showToast }: Props) {
       {showSettings && (
         <Modal title="Supabase 설정" onClose={() => setShowSettings(false)} onConfirm={saveSettings} confirmLabel="저장">
           <SetupGuide />
+          {onClaudeBypass && (
+            <button
+              onClick={handleUpdateCategories}
+              disabled={isUpdatingCategories}
+              className="w-full mb-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-sm rounded-lg border border-emerald-500/30 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isUpdatingCategories ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Bot className="w-4 h-4" />
+              )}
+              카테고리 최신화하기
+            </button>
+          )}
           <label className="block text-xs text-zinc-400 mb-1">Project URL</label>
           <input
             type="text"
