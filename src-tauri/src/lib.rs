@@ -1288,6 +1288,58 @@ fn check_claude_status() -> Result<serde_json::Value, String> {
     }))
 }
 
+/// AI 이름 추천 (folderPath 기반, claude -p 호출)
+#[tauri::command]
+fn suggest_name(folder_path: String) -> Result<Vec<String>, String> {
+    use std::fs;
+    let claude_path = resolve_claude_path().ok_or("Claude CLI not found")?;
+
+    let path = std::path::Path::new(&folder_path);
+    if !path.exists() {
+        return Err("folder not found".to_string());
+    }
+
+    // 디렉토리 파일 목록 (최대 30개)
+    let files: Vec<String> = fs::read_dir(path)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .take(30)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // package.json 내용 (있으면 최대 500자)
+    let pkg_json = fs::read_to_string(path.join("package.json"))
+        .map(|s| s.chars().take(500).collect::<String>())
+        .unwrap_or_default();
+
+    let prompt = format!(
+        "Project files: {}\npackage.json: {}\n\nSuggest 3 concise project names (2-4 words, English). Reply with JSON array only: [\"name1\",\"name2\",\"name3\"]",
+        files.join(", "),
+        pkg_json
+    );
+
+    let out = std::process::Command::new(&claude_path)
+        .args(["-p", &prompt])
+        .env("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // JSON 배열 추출
+    if let Some(start) = raw.find('[') {
+        if let Some(end) = raw.rfind(']') {
+            let json_str = &raw[start..=end];
+            if let Ok(suggestions) = serde_json::from_str::<Vec<String>>(json_str) {
+                return Ok(suggestions);
+            }
+        }
+    }
+    Ok(vec![])
+}
+
 /// Claude Code 로그아웃
 #[tauri::command]
 fn claude_auth_logout() -> Result<String, String> {
@@ -1372,6 +1424,7 @@ pub fn run() {
         check_claude_status,
         open_claude_auth_login,
         claude_auth_logout,
+        suggest_name,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
