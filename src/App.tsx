@@ -654,13 +654,19 @@ function App() {
     const updated = [...ports];
     for (const p of targets) {
       try {
-        const res = await fetch('http://localhost:3001/api/suggest-name', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folderPath: p.folderPath }),
-        });
-        const { suggestions } = await res.json();
-        if (suggestions?.[0]) {
+        let suggestions: string[] = [];
+        if (isTauri()) {
+          suggestions = await invoke<string[]>('suggest_name', { folderPath: p.folderPath });
+        } else {
+          const res = await fetch('http://localhost:3001/api/suggest-name', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folderPath: p.folderPath }),
+          });
+          const data = await res.json();
+          suggestions = data.suggestions ?? [];
+        }
+        if (suggestions[0]) {
           const idx = updated.findIndex(x => x.id === p.id);
           if (idx !== -1) updated[idx] = { ...updated[idx], aiName: suggestions[0] };
         }
