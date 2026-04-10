@@ -1328,6 +1328,14 @@ fn suggest_name(folder_path: String) -> Result<Vec<String>, String> {
         .map_err(|e| e.to_string())?;
 
     let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let err_raw = String::from_utf8_lossy(&out.stderr).trim().to_string();
+
+    // 실패 시 stderr/stdout 포함한 에러 반환 (디버깅용)
+    if !out.status.success() || raw.is_empty() {
+        return Err(format!("claude 실패 (exit={}) stdout='{}' stderr='{}'",
+            out.status.code().unwrap_or(-1), &raw[..raw.len().min(200)], &err_raw[..err_raw.len().min(200)]));
+    }
+
     // JSON 배열 추출
     if let Some(start) = raw.find('[') {
         if let Some(end) = raw.rfind(']') {
@@ -1337,7 +1345,8 @@ fn suggest_name(folder_path: String) -> Result<Vec<String>, String> {
             }
         }
     }
-    Ok(vec![])
+    // JSON 파싱 실패 시 raw 출력 포함 에러
+    Err(format!("JSON 파싱 실패: '{}'", &raw[..raw.len().min(300)]))
 }
 
 /// Claude Code 로그아웃
