@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -599,22 +599,23 @@ function App() {
   const autopullSucceeded = useRef(false);
 
   // Claude Code auth status polling (web mode: fetch API, Tauri mode: invoke)
-  useEffect(() => {
-    const fetchStatus = async () => {
-      try {
-        if (isTauri()) {
-          const status = await invoke<{ installed: boolean; authenticated: boolean; email?: string }>('check_claude_status');
-          setClaudeStatus(status);
-        } else {
-          const res = await fetch('/api/claude-status');
-          if (res.ok) setClaudeStatus(await res.json());
-        }
-      } catch {}
-    };
-    fetchStatus();
-    const timer = setInterval(fetchStatus, 30_000);
-    return () => clearInterval(timer);
+  const fetchClaudeStatus = useCallback(async () => {
+    try {
+      if (isTauri()) {
+        const status = await invoke<{ installed: boolean; authenticated: boolean; email?: string }>('check_claude_status');
+        setClaudeStatus(status);
+      } else {
+        const res = await fetch('/api/claude-status');
+        if (res.ok) setClaudeStatus(await res.json());
+      }
+    } catch {}
   }, []);
+
+  useEffect(() => {
+    fetchClaudeStatus();
+    const timer = setInterval(fetchClaudeStatus, 30_000);
+    return () => clearInterval(timer);
+  }, [fetchClaudeStatus]);
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -626,6 +627,55 @@ function App() {
       setToasts(prev => prev.filter(toast => toast.id !== id));
     }, 3000);
   };
+
+  // Claude 로그아웃
+  const handleClaudeLogout = useCallback(async () => {
+    try {
+      if (isTauri()) {
+        await invoke('claude_auth_logout');
+      } else {
+        await fetch('/api/claude-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'logout' }) });
+      }
+      showToast('Claude 로그아웃 완료', 'success');
+      setTimeout(fetchClaudeStatus, 500);
+    } catch (e) {
+      showToast('로그아웃 실패: ' + e, 'error');
+    }
+  }, [fetchClaudeStatus]);
+
+  // AI 이름 자동 생성 (folderPath 있는 포트 중 aiName 없는 것들)
+  const handleGenerateAiNames = useCallback(async () => {
+    const targets = ports.filter(p => p.folderPath && !p.aiName);
+    if (targets.length === 0) {
+      showToast('모든 포트에 AI 이름이 있습니다', 'success');
+      return;
+    }
+    showToast(`AI 이름 생성 중... (${targets.length}개)`, 'success');
+    const updated = [...ports];
+    for (const p of targets) {
+      try {
+        const res = await fetch('http://localhost:3001/api/suggest-name', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath: p.folderPath }),
+        });
+        const { suggestions } = await res.json();
+        if (suggestions?.[0]) {
+          const idx = updated.findIndex(x => x.id === p.id);
+          if (idx !== -1) updated[idx] = { ...updated[idx], aiName: suggestions[0] };
+        }
+      } catch {}
+    }
+    setPorts(updated);
+    try {
+      if (isTauri()) {
+        await invoke('save_ports', { ports: updated });
+      } else {
+        await fetch('/api/ports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
+      }
+    } catch {}
+    showToast('AI 이름 업데이트 완료', 'success');
+  }, [ports]);
 
   const openTmuxClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'tmux' });
@@ -783,6 +833,7 @@ function App() {
                   githubUrl: row.github_url ?? undefined,
                   category: row.category ?? undefined,
                   description: row.description ?? undefined,
+                  aiName: row.ai_name ?? undefined,
                   isRunning: false,
                 }));
                 const merged = mergePorts(updatedData, remoteRows);
@@ -907,6 +958,7 @@ function App() {
           github_url: p.githubUrl ?? null,
           category: p.category ?? null,
           description: p.description ?? null,
+          ai_name: p.aiName ?? null,
         }));
         await supabase.from('ports').upsert(rows, { onConflict: 'id' });
         // Fix P2: delete remote rows whose IDs are no longer in local list
@@ -1305,6 +1357,7 @@ function App() {
         githubUrl: row.github_url ?? undefined,
         category: row.category ?? undefined,
         description: row.description ?? undefined,
+        aiName: row.ai_name ?? undefined,
         isRunning: false,
       }));
 
@@ -1367,6 +1420,7 @@ function App() {
         github_url: p.githubUrl ?? null,
         category: p.category ?? null,
         description: p.description ?? null,
+        ai_name: p.aiName ?? null,
       }));
       const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error) throw new Error(error.message);
@@ -2157,6 +2211,13 @@ function App() {
                       <span className="flex items-center gap-1 text-xs text-green-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"></span>
                         Claude {claudeStatus.email ? `(${claudeStatus.email})` : 'logged in'}
+                        <button
+                          onClick={handleClaudeLogout}
+                          className="ml-1 text-zinc-500 hover:text-zinc-300 transition-colors"
+                          title="Claude 로그아웃"
+                        >
+                          로그아웃
+                        </button>
                       </span>
                     ) : claudeStatus.installed ? (
                       <button
@@ -2169,6 +2230,8 @@ function App() {
                               await fetch('/api/claude-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login' }) });
                               showToast('Claude Code 로그인 브라우저를 열었습니다', 'success');
                             }
+                            // 로그인 후 3초 뒤 상태 재확인
+                            setTimeout(fetchClaudeStatus, 3000);
                           } catch (e) {
                             showToast('Claude 로그인 실패: ' + e, 'error');
                           }
@@ -2190,13 +2253,8 @@ function App() {
             </div>
             <div className="flex items-center gap-2 shrink-0 ml-4">
               <button
-                onClick={() => {
-                  navigator.clipboard.writeText(CLAUDE_AI_NAME_PROMPT).then(
-                    () => showToast('AI 이름 업데이트 프롬프트가 복사되었습니다 ✓', 'success'),
-                    () => showToast('클립보드 복사에 실패했습니다', 'error'),
-                  );
-                }}
-                title="AI 추천 이름 업데이트 프롬프트 복사 (Claude Code에 붙여넣으면 ports.json의 aiName을 채워줍니다)"
+                onClick={handleGenerateAiNames}
+                title="AI가 각 프로젝트의 영어 별칭(aiName)을 자동 생성합니다"
                 className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-sm rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all flex items-center gap-1"
               >
                 <Sparkles className="w-3.5 h-3.5" />
