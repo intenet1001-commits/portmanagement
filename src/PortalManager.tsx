@@ -170,13 +170,15 @@ create table if not exists ports (
   deploy_url text,
   github_url text,
   category text,
-  description text
+  description text,
+  ai_name text
 );
 
 -- 기존 테이블 업그레이드 (이미 생성된 경우)
 alter table ports add column if not exists terminal_command text;
 alter table ports add column if not exists category text;
 alter table ports add column if not exists description text;
+alter table ports add column if not exists ai_name text;
 
 -- 2. 포털 아이템 테이블
 create table if not exists portal_items (

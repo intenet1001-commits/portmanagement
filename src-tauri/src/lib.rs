@@ -1266,23 +1266,43 @@ fn check_claude_status() -> Result<serde_json::Value, String> {
         .output()
         .map_err(|e| e.to_string())?;
 
-    let output = String::from_utf8_lossy(&status_out.stdout).to_string()
-        + &String::from_utf8_lossy(&status_out.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&status_out.stdout).to_string();
 
-    let authenticated = status_out.status.success() && !output.contains("not logged in");
+    // claude auth status outputs JSON: { "loggedIn": true, "email": "...", ... }
+    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&stdout) {
+        let authenticated = parsed.get("loggedIn").and_then(|v| v.as_bool()).unwrap_or(false);
+        let email = parsed.get("email").and_then(|v| v.as_str()).map(|s| s.to_string());
+        return Ok(serde_json::json!({
+            "installed": true,
+            "authenticated": authenticated,
+            "email": email
+        }));
+    }
 
-    // 이메일 파싱 시도 (예: "Logged in as foo@bar.com")
-    let email = output
-        .lines()
-        .find(|l| l.contains('@'))
-        .and_then(|l| l.split_whitespace().find(|w| w.contains('@')))
-        .map(|s| s.to_string());
-
+    // Fallback: text-based check
+    let text = stdout.to_lowercase();
+    let authenticated = status_out.status.success() && !text.contains("not logged in");
     Ok(serde_json::json!({
         "installed": true,
         "authenticated": authenticated,
-        "email": email
     }))
+}
+
+/// Claude Code 로그아웃
+#[tauri::command]
+fn claude_auth_logout() -> Result<String, String> {
+    let claude_path = resolve_claude_path().ok_or("Claude CLI not found")?;
+    let out = std::process::Command::new(&claude_path)
+        .args(["auth", "logout"])
+        .env("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok("로그아웃 완료".to_string())
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        Err(err)
+    }
 }
 
 /// Claude Code 로그인 브라우저 열기 (터미널에서 `claude auth login --claudeai` 실행)
@@ -1351,6 +1371,7 @@ pub fn run() {
         create_folder,
         check_claude_status,
         open_claude_auth_login,
+        claude_auth_logout,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())

@@ -1267,15 +1267,20 @@ const server = Bun.serve({
         if (!CLAUDE_PATH) {
           return new Response(JSON.stringify({ installed: false, authenticated: false }), { headers });
         }
-        const proc = Bun.spawnSync([CLAUDE_PATH!, 'auth', 'status', '--output-format', 'json'], {
+        const proc = Bun.spawnSync([CLAUDE_PATH!, 'auth', 'status'], {
           env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
         });
         const raw = proc.stdout.toString().trim();
         try {
           const parsed = JSON.parse(raw);
-          return new Response(JSON.stringify({ installed: true, ...parsed }), { headers });
+          // claude outputs { loggedIn, email, ... } — map to { authenticated, email }
+          return new Response(JSON.stringify({
+            installed: true,
+            authenticated: !!parsed.loggedIn,
+            email: parsed.email ?? undefined,
+          }), { headers });
         } catch {
-          // Non-JSON output means not authenticated
+          // Non-JSON output fallback
           const text = raw.toLowerCase();
           const authenticated = text.includes('logged in') || text.includes('authenticated');
           return new Response(JSON.stringify({ installed: true, authenticated }), { headers });
