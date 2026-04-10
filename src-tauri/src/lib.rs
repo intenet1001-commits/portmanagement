@@ -25,6 +25,8 @@ struct PortInfo {
     category: Option<String>,
     #[serde(default)]
     description: Option<String>,
+    #[serde(rename = "aiName", default, skip_serializing_if = "Option::is_none")]
+    ai_name: Option<String>,
     #[serde(rename = "isRunning", default)]
     is_running: bool,
 }
@@ -1216,6 +1218,101 @@ fn list_git_worktrees(folder_path: String) -> Result<Vec<WorktreeInfo>, String> 
     Ok(worktrees)
 }
 
+/// claude CLI 경로 탐색 (Tauri 앱은 Homebrew PATH를 상속하지 않으므로 직접 탐색)
+fn resolve_claude_path() -> Option<String> {
+    let candidates = [
+        "/opt/homebrew/bin/claude",
+        "/usr/local/bin/claude",
+        "/usr/bin/claude",
+    ];
+    for path in &candidates {
+        if std::path::Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+    // fallback: which with extended PATH
+    let result = std::process::Command::new("which")
+        .arg("claude")
+        .env("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+        .output();
+    if let Ok(o) = result {
+        if o.status.success() {
+            let p = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if !p.is_empty() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+/// Claude Code CLI 설치 여부 및 인증 상태 확인
+#[tauri::command]
+fn check_claude_status() -> Result<serde_json::Value, String> {
+    use std::process::Command;
+
+    // 1. claude 실행 가능 여부 확인 (Homebrew 등 직접 경로 탐색)
+    let claude_path = resolve_claude_path();
+    if claude_path.is_none() {
+        return Ok(serde_json::json!({ "installed": false, "authenticated": false }));
+    }
+    let claude_path = claude_path.unwrap();
+
+    // 2. `claude auth status` 로 인증 확인
+    let status_out = Command::new(&claude_path)
+        .arg("auth")
+        .arg("status")
+        .env("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    let output = String::from_utf8_lossy(&status_out.stdout).to_string()
+        + &String::from_utf8_lossy(&status_out.stderr).to_string();
+
+    let authenticated = status_out.status.success() && !output.contains("not logged in");
+
+    // 이메일 파싱 시도 (예: "Logged in as foo@bar.com")
+    let email = output
+        .lines()
+        .find(|l| l.contains('@'))
+        .and_then(|l| l.split_whitespace().find(|w| w.contains('@')))
+        .map(|s| s.to_string());
+
+    Ok(serde_json::json!({
+        "installed": true,
+        "authenticated": authenticated,
+        "email": email
+    }))
+}
+
+/// Claude Code 로그인 브라우저 열기 (터미널에서 `claude auth login --claudeai` 실행)
+#[tauri::command]
+fn open_claude_auth_login() -> Result<String, String> {
+    // iTerm에서 새 창으로 실행
+    let script = r#"
+        tell application "iTerm"
+            activate
+            set newWindow to (create window with default profile)
+            tell current session of newWindow
+                write text "claude auth login --claudeai"
+            end tell
+        end tell
+    "#;
+
+    let out = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if out.status.success() {
+        Ok("Claude auth 로그인 창을 열었습니다".to_string())
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        Err(err)
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -1252,6 +1349,8 @@ pub fn run() {
         list_git_worktrees,
         check_file_exists,
         create_folder,
+        check_claude_status,
+        open_claude_auth_login,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
