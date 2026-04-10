@@ -652,8 +652,10 @@ function App() {
     }
     showToast(`AI 이름 생성 중... (${targets.length}개)`, 'success');
     const updated = [...ports];
+    let successCount = 0;
     for (const p of targets) {
       try {
+        showToast(`분석 중: ${p.name} (${p.folderPath})`, 'success');
         let suggestions: string[] = [];
         if (isTauri()) {
           suggestions = await invoke<string[]>('suggest_name', { folderPath: p.folderPath });
@@ -668,9 +670,16 @@ function App() {
         }
         if (suggestions[0]) {
           const idx = updated.findIndex(x => x.id === p.id);
-          if (idx !== -1) updated[idx] = { ...updated[idx], aiName: suggestions[0] };
+          if (idx !== -1) {
+            updated[idx] = { ...updated[idx], aiName: suggestions[0] };
+            successCount++;
+          }
+        } else {
+          showToast(`⚠️ ${p.name}: 이름 생성 결과 없음`, 'error');
         }
-      } catch {}
+      } catch (e) {
+        showToast(`❌ ${p.name} 실패: ${e}`, 'error');
+      }
     }
     setPorts(updated);
     try {
@@ -679,8 +688,10 @@ function App() {
       } else {
         await fetch('/api/ports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
       }
-    } catch {}
-    showToast('AI 이름 업데이트 완료', 'success');
+    } catch (e) {
+      showToast(`저장 실패: ${e}`, 'error');
+    }
+    showToast(`AI 이름 업데이트 완료 (${successCount}/${targets.length}개 성공)`, 'success');
   }, [ports]);
 
   const openTmuxClaude = (item: PortInfo) => {
