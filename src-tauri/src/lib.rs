@@ -1288,15 +1288,14 @@ fn check_claude_status() -> Result<serde_json::Value, String> {
     }))
 }
 
-/// AI 이름 추천 (folderPath 기반, claude -p 호출)
+/// AI 이름 추천 (folderPath 기반, login shell에서 claude -p 호출)
 #[tauri::command]
 fn suggest_name(folder_path: String) -> Result<Vec<String>, String> {
     use std::fs;
-    let claude_path = resolve_claude_path().ok_or("Claude CLI not found")?;
 
     let path = std::path::Path::new(&folder_path);
     if !path.exists() {
-        return Err("folder not found".to_string());
+        return Err(format!("폴더 없음: {}", folder_path));
     }
 
     // 디렉토리 파일 목록 (최대 30개)
@@ -1321,11 +1320,19 @@ fn suggest_name(folder_path: String) -> Result<Vec<String>, String> {
         pkg_json
     );
 
-    let out = std::process::Command::new(&claude_path)
-        .args(["-p", &prompt])
-        .env("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+    // login shell로 실행 — ~/.zshrc 소싱 → 올바른 PATH + claude 인증 토큰 자동 로드
+    // (Tauri 직접 spawn은 Homebrew PATH / auth 환경이 없어서 claude를 못 찾거나 인증 실패)
+    let escaped_prompt = prompt.replace('\'', "'\"'\"'"); // sh single-quote escape
+    let shell_cmd = format!(
+        "cd '{}' && claude -p '{}'",
+        escape_sq(&folder_path),
+        escaped_prompt
+    );
+
+    let out = std::process::Command::new("/bin/zsh")
+        .args(["-l", "-c", &shell_cmd])
         .output()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("shell 실행 실패: {}", e))?;
 
     let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let err_raw = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -1333,7 +1340,9 @@ fn suggest_name(folder_path: String) -> Result<Vec<String>, String> {
     // 실패 시 stderr/stdout 포함한 에러 반환 (디버깅용)
     if !out.status.success() || raw.is_empty() {
         return Err(format!("claude 실패 (exit={}) stdout='{}' stderr='{}'",
-            out.status.code().unwrap_or(-1), &raw[..raw.len().min(200)], &err_raw[..err_raw.len().min(200)]));
+            out.status.code().unwrap_or(-1),
+            &raw[..raw.len().min(300)],
+            &err_raw[..err_raw.len().min(300)]));
     }
 
     // JSON 배열 추출
@@ -1345,8 +1354,8 @@ fn suggest_name(folder_path: String) -> Result<Vec<String>, String> {
             }
         }
     }
-    // JSON 파싱 실패 시 raw 출력 포함 에러
-    Err(format!("JSON 파싱 실패: '{}'", &raw[..raw.len().min(300)]))
+    // JSON 파싱 실패 시 raw 출력 포함 에러 (claude가 마크다운 등으로 응답했을 가능성)
+    Err(format!("JSON 파싱 실패 (raw='{}')", &raw[..raw.len().min(300)]))
 }
 
 /// Claude Code 로그아웃
