@@ -1358,6 +1358,92 @@ fn suggest_name(folder_path: String) -> Result<Vec<String>, String> {
     Err(format!("JSON 파싱 실패 (raw='{}')", &raw[..raw.len().min(300)]))
 }
 
+/// AI 이름 일괄 추천 (여러 포트를 한 번의 claude -p 호출로 처리)
+#[tauri::command]
+fn suggest_names_batch(ports: Vec<serde_json::Value>) -> Result<serde_json::Value, String> {
+    use std::fs;
+
+    if ports.is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+
+    let mut project_lines: Vec<String> = Vec::new();
+    let mut valid_ids: Vec<String> = Vec::new();
+
+    for port in &ports {
+        let id = port.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let folder_path = port.get("folderPath").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        if id.is_empty() || folder_path.is_empty() {
+            continue;
+        }
+        let path = std::path::Path::new(&folder_path);
+        if !path.exists() {
+            continue;
+        }
+
+        let files: Vec<String> = fs::read_dir(path)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .take(20)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let pkg_json = fs::read_to_string(path.join("package.json"))
+            .map(|s| s.chars().take(300).collect::<String>())
+            .unwrap_or_default();
+
+        project_lines.push(format!(
+            "id={} files=[{}] package.json={}",
+            id,
+            files.join(", "),
+            if pkg_json.is_empty() { "none".to_string() } else { pkg_json }
+        ));
+        valid_ids.push(id);
+    }
+
+    if valid_ids.is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+
+    let prompt = format!(
+        "For each project below, suggest 1 concise English project name (2-4 words).\nReply ONLY with a JSON object mapping each id to a name: {{\"id1\": \"Name One\", \"id2\": \"Name Two\"}}\n\n{}",
+        project_lines.join("\n")
+    );
+
+    let escaped_prompt = prompt.replace('\'', "'\"'\"'");
+    let shell_cmd = format!("claude -p '{}'", escaped_prompt);
+
+    let out = std::process::Command::new("/bin/zsh")
+        .args(["-l", "-c", &shell_cmd])
+        .output()
+        .map_err(|e| format!("shell 실행 실패: {}", e))?;
+
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let err_raw = String::from_utf8_lossy(&out.stderr).trim().to_string();
+
+    if !out.status.success() || raw.is_empty() {
+        return Err(format!("claude 실패 (exit={}) stdout='{}' stderr='{}'",
+            out.status.code().unwrap_or(-1),
+            &raw[..raw.len().min(300)],
+            &err_raw[..err_raw.len().min(300)]));
+    }
+
+    if let Some(start) = raw.find('{') {
+        if let Some(end) = raw.rfind('}') {
+            let json_str = &raw[start..=end];
+            if let Ok(result) = serde_json::from_str::<serde_json::Value>(json_str) {
+                return Ok(result);
+            }
+        }
+    }
+
+    Err(format!("JSON 파싱 실패 (raw='{}')", &raw[..raw.len().min(300)]))
+}
+
 /// Claude Code 로그아웃
 #[tauri::command]
 fn claude_auth_logout() -> Result<String, String> {
@@ -1443,6 +1529,7 @@ pub fn run() {
         open_claude_auth_login,
         claude_auth_logout,
         suggest_name,
+        suggest_names_batch,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
