@@ -643,55 +643,60 @@ function App() {
     }
   }, [fetchClaudeStatus]);
 
-  // AI 이름 자동 생성 (folderPath 있는 포트 중 aiName 없는 것들)
+  // AI 이름 자동 생성 — 모든 포트를 한 번의 claude -p 호출로 처리 (batch)
   const handleGenerateAiNames = useCallback(async () => {
     const targets = ports.filter(p => p.folderPath && !p.aiName);
     if (targets.length === 0) {
       showToast('모든 포트에 AI 이름이 있습니다', 'success');
       return;
     }
-    showToast(`AI 이름 생성 중... (${targets.length}개)`, 'success');
-    const updated = [...ports];
-    let successCount = 0;
-    for (const p of targets) {
-      try {
-        showToast(`분석 중: ${p.name} (${p.folderPath})`, 'success');
-        let suggestions: string[] = [];
-        if (isTauri()) {
-          suggestions = await invoke<string[]>('suggest_name', { folderPath: p.folderPath });
-        } else {
-          const res = await fetch('http://localhost:3001/api/suggest-name', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ folderPath: p.folderPath }),
-          });
-          const data = await res.json();
-          suggestions = data.suggestions ?? [];
-        }
-        if (suggestions[0]) {
-          const idx = updated.findIndex(x => x.id === p.id);
-          if (idx !== -1) {
-            updated[idx] = { ...updated[idx], aiName: suggestions[0] };
-            successCount++;
+    showToast(`AI 이름 생성 중... (${targets.length}개, 잠시 대기)`, 'success');
+
+    try {
+      let nameMap: Record<string, string> = {};
+
+      if (isTauri()) {
+        // 1번의 claude -p 호출로 모든 포트 처리
+        const batchInput = targets.map(p => ({ id: p.id, folderPath: p.folderPath }));
+        const result = await invoke<Record<string, string>>('suggest_names_batch', { ports: batchInput });
+        nameMap = result ?? {};
+      } else {
+        // web 모드: 순차 호출 유지
+        for (const p of targets) {
+          try {
+            const res = await fetch('http://localhost:3001/api/suggest-name', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ folderPath: p.folderPath }),
+            });
+            const data = await res.json();
+            if (data.suggestions?.[0]) nameMap[p.id] = data.suggestions[0];
+          } catch (e) {
+            showToast(`❌ ${p.name} 실패: ${e}`, 'error');
           }
+        }
+      }
+
+      const updated = ports.map(p =>
+        nameMap[p.id] ? { ...p, aiName: nameMap[p.id] } : p
+      );
+      setPorts(updated);
+
+      try {
+        if (isTauri()) {
+          await invoke('save_ports', { ports: updated });
         } else {
-          showToast(`⚠️ ${p.name}: 이름 생성 결과 없음`, 'error');
+          await fetch('/api/ports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
         }
       } catch (e) {
-        showToast(`❌ ${p.name} 실패: ${e}`, 'error');
+        showToast(`저장 실패: ${e}`, 'error');
       }
-    }
-    setPorts(updated);
-    try {
-      if (isTauri()) {
-        await invoke('save_ports', { ports: updated });
-      } else {
-        await fetch('/api/ports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
-      }
+
+      const count = Object.keys(nameMap).length;
+      showToast(`AI 이름 업데이트 완료 (${count}/${targets.length}개 성공)`, 'success');
     } catch (e) {
-      showToast(`저장 실패: ${e}`, 'error');
+      showToast(`❌ AI 이름 생성 실패: ${e}`, 'error');
     }
-    showToast(`AI 이름 업데이트 완료 (${successCount}/${targets.length}개 성공)`, 'success');
   }, [ports]);
 
   const openTmuxClaude = (item: PortInfo) => {
