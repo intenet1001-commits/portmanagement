@@ -6,6 +6,18 @@ import { homedir } from "node:os";
 /** Escape single quotes for use inside single-quoted shell strings: ' → '\'' */
 const escapeSq = (s: string): string => s.replace(/'/g, "'\\''");
 
+// Resolve claude binary path once at startup (Homebrew first, then PATH fallback)
+function resolveClaudePath(): string | null {
+  if (existsSync('/opt/homebrew/bin/claude')) return '/opt/homebrew/bin/claude';
+  if (existsSync('/usr/local/bin/claude')) return '/usr/local/bin/claude';
+  const result = Bun.spawnSync(['which', 'claude'], {
+    env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
+  });
+  const resolved = result.stdout.toString().trim();
+  return resolved || null;
+}
+const CLAUDE_PATH = resolveClaudePath();
+
 const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
 let buildStatus = { isBuilding: false, type: '', output: [] as string[], exitCode: null as number | null };
@@ -1251,11 +1263,11 @@ const server = Bun.serve({
     // Claude Code auth status
     if (url.pathname === "/api/claude-status" && req.method === "GET") {
       try {
-        const claudePath = '/opt/homebrew/bin/claude';
-        if (!existsSync(claudePath)) {
+
+        if (!CLAUDE_PATH) {
           return new Response(JSON.stringify({ installed: false, authenticated: false }), { headers });
         }
-        const proc = Bun.spawnSync([claudePath, 'auth', 'status', '--output-format', 'json'], {
+        const proc = Bun.spawnSync([CLAUDE_PATH!, 'auth', 'status', '--output-format', 'json'], {
           env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
         });
         const raw = proc.stdout.toString().trim();
@@ -1277,19 +1289,19 @@ const server = Bun.serve({
     if (url.pathname === "/api/claude-auth" && req.method === "POST") {
       try {
         const body = await req.json();
-        const claudePath = '/opt/homebrew/bin/claude';
-        if (!existsSync(claudePath)) {
+
+        if (!CLAUDE_PATH) {
           return new Response(JSON.stringify({ success: false, error: 'claude not found' }), { headers });
         }
         if (body.action === 'login') {
-          Bun.spawn([claudePath, 'auth', 'login', '--claudeai'], {
+          Bun.spawn([CLAUDE_PATH!, 'auth', 'login', '--claudeai'], {
             env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
             detached: true,
           });
           return new Response(JSON.stringify({ success: true, message: 'Login browser opened' }), { headers });
         }
         if (body.action === 'logout') {
-          Bun.spawnSync([claudePath, 'auth', 'logout'], {
+          Bun.spawnSync([CLAUDE_PATH!, 'auth', 'logout'], {
             env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
           });
           return new Response(JSON.stringify({ success: true, message: 'Logged out' }), { headers });
@@ -1300,12 +1312,44 @@ const server = Bun.serve({
       }
     }
 
+    // AI: suggest category for a single project
+    if (url.pathname === "/api/suggest-category" && req.method === "POST") {
+      try {
+        const { folderPath, name } = await req.json();
+
+        if (!CLAUDE_PATH) {
+          return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
+        }
+        if (!folderPath || !existsSync(folderPath)) {
+          return new Response(JSON.stringify({ error: 'invalid_folder' }), { status: 400, headers });
+        }
+        const { readdirSync, readFileSync } = await import("node:fs");
+        const files = readdirSync(folderPath).slice(0, 30).join(', ');
+        let pkgJson = '';
+        const pkgPath = join(folderPath, 'package.json');
+        if (existsSync(pkgPath)) {
+          try { pkgJson = readFileSync(pkgPath, 'utf-8').slice(0, 400); } catch {}
+        }
+        const categories = ['frontend', 'backend', 'AI', 'tools', 'infra', 'mobile', 'data', 'fullstack'];
+        const prompt = `Project name: ${name || 'unknown'}\nFiles: ${files}\npackage.json: ${pkgJson}\n\nChoose exactly ONE category for this project from this list: ${categories.join(', ')}.\nReply with the single category word only, nothing else.`;
+        const proc = Bun.spawnSync(
+          [CLAUDE_PATH!, '-p', prompt],
+          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, timeout: 20_000 }
+        );
+        const raw = proc.stdout.toString().trim().toLowerCase();
+        const matched = categories.find(c => raw.includes(c.toLowerCase()));
+        return new Response(JSON.stringify({ category: matched ?? null }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
     // AI: suggest project name from folder
     if (url.pathname === "/api/suggest-name" && req.method === "POST") {
       try {
         const { folderPath } = await req.json();
-        const claudePath = '/opt/homebrew/bin/claude';
-        if (!existsSync(claudePath)) {
+
+        if (!CLAUDE_PATH) {
           return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
         }
         if (!folderPath || !existsSync(folderPath)) {
@@ -1320,7 +1364,7 @@ const server = Bun.serve({
         }
         const prompt = `Project files: ${files}\npackage.json: ${pkgJson}\n\nSuggest 3 concise project names (2-4 words, English). Reply with JSON array only: ["name1","name2","name3"]`;
         const proc = Bun.spawnSync(
-          [claudePath, '-p', prompt],
+          [CLAUDE_PATH!, '-p', prompt],
           { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, timeout: 30_000 }
         );
         const raw = proc.stdout.toString().trim();
@@ -1336,8 +1380,8 @@ const server = Bun.serve({
     if (url.pathname === "/api/generate-description" && req.method === "POST") {
       try {
         const { folderPath, name } = await req.json();
-        const claudePath = '/opt/homebrew/bin/claude';
-        if (!existsSync(claudePath)) {
+
+        if (!CLAUDE_PATH) {
           return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
         }
         if (!folderPath || !existsSync(folderPath)) {
@@ -1352,7 +1396,7 @@ const server = Bun.serve({
         }
         const prompt = `Project name: ${name || 'unknown'}\nFiles: ${files}\npackage.json: ${pkgJson}\n\nWrite a one-sentence project description (max 100 chars, English). Reply with plain text only, no quotes.`;
         const proc = Bun.spawnSync(
-          [claudePath, '-p', prompt],
+          [CLAUDE_PATH!, '-p', prompt],
           { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, timeout: 30_000 }
         );
         const description = proc.stdout.toString().trim().slice(0, 120);
