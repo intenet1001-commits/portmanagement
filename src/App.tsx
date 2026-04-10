@@ -643,61 +643,15 @@ function App() {
     }
   }, [fetchClaudeStatus]);
 
-  // AI 이름 자동 생성 — 모든 포트를 한 번의 claude -p 호출로 처리 (batch)
-  const handleGenerateAiNames = useCallback(async () => {
-    const targets = ports.filter(p => p.folderPath && !p.aiName);
-    if (targets.length === 0) {
-      showToast('모든 포트에 AI 이름이 있습니다', 'success');
-      return;
-    }
-    showToast(`AI 이름 생성 중... (${targets.length}개, 잠시 대기)`, 'success');
-
+  // AI이름 적용 프롬프트 — ports.json 경로와 함께 클립보드에 복사
+  const handleCopyAiNamePrompt = useCallback(async () => {
     try {
-      let nameMap: Record<string, string> = {};
-
-      if (isTauri()) {
-        // 1번의 claude -p 호출로 모든 포트 처리
-        const batchInput = targets.map(p => ({ id: p.id, folderPath: p.folderPath }));
-        const result = await invoke<Record<string, string>>('suggest_names_batch', { ports: batchInput });
-        nameMap = result ?? {};
-      } else {
-        // web 모드: 순차 호출 유지
-        for (const p of targets) {
-          try {
-            const res = await fetch('http://localhost:3001/api/suggest-name', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ folderPath: p.folderPath }),
-            });
-            const data = await res.json();
-            if (data.suggestions?.[0]) nameMap[p.id] = data.suggestions[0];
-          } catch (e) {
-            showToast(`❌ ${p.name} 실패: ${e}`, 'error');
-          }
-        }
-      }
-
-      const updated = ports.map(p =>
-        nameMap[p.id] ? { ...p, aiName: nameMap[p.id] } : p
-      );
-      setPorts(updated);
-
-      try {
-        if (isTauri()) {
-          await invoke('save_ports', { ports: updated });
-        } else {
-          await fetch('/api/ports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
-        }
-      } catch (e) {
-        showToast(`저장 실패: ${e}`, 'error');
-      }
-
-      const count = Object.keys(nameMap).length;
-      showToast(`AI 이름 업데이트 완료 (${count}/${targets.length}개 성공)`, 'success');
-    } catch (e) {
-      showToast(`❌ AI 이름 생성 실패: ${e}`, 'error');
+      await navigator.clipboard.writeText(CLAUDE_AI_NAME_PROMPT);
+      showToast('AI이름 프롬프트 복사됨 — Claude Code에 붙여넣기 하세요', 'success');
+    } catch {
+      showToast('클립보드 복사 실패', 'error');
     }
-  }, [ports]);
+  }, []);
 
   const openTmuxClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'tmux' });
@@ -2275,12 +2229,12 @@ function App() {
             </div>
             <div className="flex items-center gap-2 shrink-0 ml-4">
               <button
-                onClick={handleGenerateAiNames}
-                title="AI가 각 프로젝트의 영어 별칭(aiName)을 자동 생성합니다"
+                onClick={handleCopyAiNamePrompt}
+                title="Claude Code에 붙여넣을 AI이름 생성 프롬프트를 클립보드에 복사합니다"
                 className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-sm rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all flex items-center gap-1"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                <span className="text-xs font-medium">AI 이름</span>
+                <span className="text-xs font-medium">AI이름 프롬프트</span>
               </button>
               <button onClick={handleExportPorts} title="내보내기" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center">
                 <Download className="w-3.5 h-3.5" />
