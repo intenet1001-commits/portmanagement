@@ -1973,14 +1973,9 @@ function App() {
     );
   };
 
-  const getSearchFiltered = () => {
+  const displayedPorts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return ports;
-    return ports.filter(p => matchesSearch(p, q));
-  };
-
-  const getSortedPorts = () => {
-    let filtered = getSearchFiltered();
+    let filtered = q ? ports.filter(p => matchesSearch(p, q)) : ports;
 
     // Apply filter
     if (filterType === 'with-port') {
@@ -2008,11 +2003,10 @@ function App() {
         break;
       case 'recent':
       default:
-        // recent: 배열 순서 유지 (기본 등록 순)
         break;
     }
-    return sortOrder === 'desc' ? filtered.reverse() : filtered;
-  };
+    return sortOrder === 'desc' ? [...filtered].reverse() : filtered;
+  }, [ports, searchQuery, filterType, filterCategory, sortBy, sortOrder]);
 
   return (
     <div className="min-h-screen bg-[#0a0a0b] p-8">
@@ -2244,7 +2238,7 @@ function App() {
                     claudeStatus.authenticated ? (
                       <span className="flex items-center gap-1 text-xs text-green-400">
                         <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"></span>
-                        Claude {claudeStatus.email ? `(${claudeStatus.email})` : 'logged in'}
+                        Claude {claudeStatus.email ? `(${claudeStatus.email.split('@')[0].charAt(0)}${'*'.repeat(Math.max(claudeStatus.email.split('@')[0].length - 1, 0))})` : 'logged in'}
                         <button
                           onClick={handleClaudeLogout}
                           className="ml-1 text-zinc-500 hover:text-zinc-300 transition-colors"
@@ -2680,7 +2674,6 @@ function App() {
             </div>
             <div className="divide-y divide-zinc-800">
               {(() => {
-                const displayedPorts = getSortedPorts();
                 if (displayedPorts.length === 0) {
                   return (
                     <div className="p-8 text-center text-sm text-zinc-500">
