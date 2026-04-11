@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -602,7 +602,6 @@ function App() {
   const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
-  const [claudeStatus, setClaudeStatus] = useState<{ installed: boolean; authenticated: boolean; email?: string } | null>(null);
   const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
   const [worktreePickerValue, setWorktreePickerValue] = useState('');
   const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
@@ -626,33 +625,6 @@ function App() {
   // Fix P2g: gate delete pass — only safe to delete remote rows after a successful auto-pull
   // (otherwise local state has only this Mac's rows and would delete other Macs' remote data)
   const autopullSucceeded = useRef(false);
-
-  // Claude Code auth status polling (web mode: fetch API, Tauri mode: invoke)
-  const fetchClaudeStatus = useCallback(async () => {
-    try {
-      if (isTauri()) {
-        const status = await invoke<{ installed: boolean; authenticated: boolean; email?: string }>('check_claude_status');
-        setClaudeStatus(status);
-      } else {
-        try {
-          const res = await fetch('/api/claude-status');
-          if (res.ok) {
-            setClaudeStatus(await res.json());
-          } else {
-            setClaudeStatus({ installed: false, authenticated: false });
-          }
-        } catch {
-          setClaudeStatus({ installed: false, authenticated: false });
-        }
-      }
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    fetchClaudeStatus();
-    const timer = setInterval(fetchClaudeStatus, 30_000);
-    return () => clearInterval(timer);
-  }, [fetchClaudeStatus]);
 
   // API 서버 헬스 체크 (웹 모드 전용)
   useEffect(() => {
@@ -683,21 +655,6 @@ function App() {
       setToasts(prev => prev.filter(toast => toast.id !== id));
     }, 3000);
   };
-
-  // Claude 로그아웃
-  const handleClaudeLogout = useCallback(async () => {
-    try {
-      if (isTauri()) {
-        await invoke('claude_auth_logout');
-      } else {
-        await fetch('/api/claude-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'logout' }) });
-      }
-      showToast('Claude 로그아웃 완료', 'success');
-      setTimeout(fetchClaudeStatus, 500);
-    } catch (e) {
-      showToast('로그아웃 실패: ' + e, 'error');
-    }
-  }, [fetchClaudeStatus]);
 
   // AI이름 적용 프롬프트 — ports.json 경로와 함께 클립보드에 복사
   const handleCopyAiNamePrompt = useCallback(async () => {
@@ -2008,6 +1965,11 @@ function App() {
     return sortOrder === 'desc' ? [...filtered].reverse() : filtered;
   }, [ports, searchQuery, filterType, filterCategory, sortBy, sortOrder]);
 
+  const searchFilteredPorts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return q ? ports.filter(p => matchesSearch(p, q)) : ports;
+  }, [ports, searchQuery]);
+
   return (
     <div className="min-h-screen bg-[#0a0a0b] p-8">
       {!isTauri() && apiServerOnline === false && (
@@ -2234,48 +2196,6 @@ function App() {
                 <h1 className="text-xl font-semibold text-white whitespace-nowrap">프로젝트 관리 프로그램</h1>
                 <div className="flex items-center gap-2 mt-0.5">
                   <p className="text-xs text-zinc-400 whitespace-nowrap">로컬 개발 프로젝트를 관리하세요</p>
-                  {claudeStatus && (
-                    claudeStatus.authenticated ? (
-                      <span className="flex items-center gap-1 text-xs text-green-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block"></span>
-                        Claude {claudeStatus.email ? `(${claudeStatus.email.split('@')[0].charAt(0)}${'*'.repeat(Math.max(claudeStatus.email.split('@')[0].length - 1, 0))})` : 'logged in'}
-                        <button
-                          onClick={handleClaudeLogout}
-                          className="ml-1 text-zinc-500 hover:text-zinc-300 transition-colors"
-                          title="Claude 로그아웃"
-                        >
-                          로그아웃
-                        </button>
-                      </span>
-                    ) : claudeStatus.installed ? (
-                      <button
-                        onClick={async () => {
-                          try {
-                            if (isTauri()) {
-                              await invoke('open_claude_auth_login');
-                              showToast('Claude Code 로그인 창을 열었습니다 (iTerm)', 'success');
-                            } else {
-                              await fetch('/api/claude-auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'login' }) });
-                              showToast('Claude Code 로그인 브라우저를 열었습니다', 'success');
-                            }
-                            // 로그인 후 3초 뒤 상태 재확인
-                            setTimeout(fetchClaudeStatus, 3000);
-                          } catch (e) {
-                            showToast('Claude 로그인 실패: ' + e, 'error');
-                          }
-                        }}
-                        className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 transition-colors"
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block"></span>
-                        Claude 로그인 필요
-                      </button>
-                    ) : (
-                      <span className="flex items-center gap-1 text-xs text-zinc-600">
-                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 inline-block"></span>
-                        Claude 미설치
-                      </span>
-                    )
-                  )}
                 </div>
               </div>
             </div>
@@ -2579,7 +2499,7 @@ function App() {
               {/* Row 2: Filter tabs (counts reflect search results) */}
               <div className="flex gap-1 mb-3">
                 {(['all', 'with-port', 'without-port'] as const).map(f => {
-                  const searchFiltered = getSearchFiltered();
+                  const searchFiltered = searchFilteredPorts;
                   const count = f === 'all' ? searchFiltered.length
                     : f === 'with-port' ? searchFiltered.filter(p => p.port != null && p.port > 0).length
                     : searchFiltered.filter(p => p.port == null || p.port === 0).length;
@@ -2625,7 +2545,7 @@ function App() {
                   <Terminal className="w-4 h-4 text-zinc-400" />
                   <h2 className="text-sm font-semibold text-zinc-200">등록된 프로젝트</h2>
                   <span className="bg-zinc-800 px-2 py-0.5 rounded-md text-xs text-zinc-300 font-medium border border-zinc-700">
-                    {searchQuery.trim() ? `${getSearchFiltered().length}/${ports.length}` : ports.length}
+                    {searchQuery.trim() ? `${searchFilteredPorts.length}/${ports.length}` : ports.length}
                   </span>
                   <button
                     onClick={handleRefresh}
