@@ -94,7 +94,7 @@ const server = Bun.serve({
     // CORS 헤더 설정
     const headers = {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": "http://localhost:5173",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
@@ -1337,11 +1337,14 @@ const server = Bun.serve({
         }
         const categories = ['frontend', 'backend', 'AI', 'tools', 'infra', 'mobile', 'data', 'fullstack'];
         const prompt = `Project name: ${name || 'unknown'}\nFiles: ${files}\npackage.json: ${pkgJson}\n\nChoose exactly ONE category for this project from this list: ${categories.join(', ')}.\nReply with the single category word only, nothing else.`;
-        const proc = Bun.spawnSync(
+        const proc = Bun.spawn(
           [CLAUDE_PATH!, '-p', prompt],
-          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, timeout: 20_000 }
+          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, stdout: 'pipe', stderr: 'pipe' }
         );
-        const raw = proc.stdout.toString().trim().toLowerCase();
+        const timeoutId = setTimeout(() => proc.kill(), 20_000);
+        await proc.exited;
+        clearTimeout(timeoutId);
+        const raw = (await new Response(proc.stdout).text()).trim().toLowerCase();
         const matched = categories.find(c => raw.includes(c.toLowerCase()));
         return new Response(JSON.stringify({ category: matched ?? null }), { headers });
       } catch (e: any) {
@@ -1368,11 +1371,14 @@ const server = Bun.serve({
           try { pkgJson = readFileSync(pkgPath, 'utf-8').slice(0, 500); } catch {}
         }
         const prompt = `Project files: ${files}\npackage.json: ${pkgJson}\n\nSuggest 3 concise project names (2-4 words, English). Reply with JSON array only: ["name1","name2","name3"]`;
-        const proc = Bun.spawnSync(
+        const proc = Bun.spawn(
           [CLAUDE_PATH!, '-p', prompt],
-          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, timeout: 30_000 }
+          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, stdout: 'pipe', stderr: 'pipe' }
         );
-        const raw = proc.stdout.toString().trim();
+        const timeoutId = setTimeout(() => proc.kill(), 30_000);
+        await proc.exited;
+        clearTimeout(timeoutId);
+        const raw = (await new Response(proc.stdout).text()).trim();
         const match = raw.match(/\[.*\]/s);
         const suggestions = match ? JSON.parse(match[0]) : [];
         return new Response(JSON.stringify({ suggestions }), { headers });
@@ -1400,11 +1406,14 @@ const server = Bun.serve({
           try { pkgJson = readFileSync(pkgPath, 'utf-8').slice(0, 500); } catch {}
         }
         const prompt = `Project name: ${name || 'unknown'}\nFiles: ${files}\npackage.json: ${pkgJson}\n\nWrite a one-sentence project description (max 100 chars, English). Reply with plain text only, no quotes.`;
-        const proc = Bun.spawnSync(
+        const proc = Bun.spawn(
           [CLAUDE_PATH!, '-p', prompt],
-          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, timeout: 30_000 }
+          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, stdout: 'pipe', stderr: 'pipe' }
         );
-        const description = proc.stdout.toString().trim().slice(0, 120);
+        const timeoutId = setTimeout(() => proc.kill(), 30_000);
+        await proc.exited;
+        clearTimeout(timeoutId);
+        const description = (await new Response(proc.stdout).text()).trim().slice(0, 120);
         return new Response(JSON.stringify({ description }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
