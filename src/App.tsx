@@ -4,7 +4,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
 import PortalManager from './PortalManager';
-import ClaudeAuthBadge from './ClaudeAuthBadge';
 
 // Tauri API 체크
 const isTauri = () => {
@@ -2239,7 +2238,6 @@ function App() {
               포털
             </button>
           </div>
-          {!isTauri() && <ClaudeAuthBadge />}
         </div>
 
         {/* 포털 탭 */}

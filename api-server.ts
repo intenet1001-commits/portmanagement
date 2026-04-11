@@ -22,10 +22,6 @@ const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
 let buildStatus = { isBuilding: false, type: '', output: [] as string[], exitCode: null as number | null };
 
-// Claude status cache (30 s TTL)
-let claudeStatusCache: { data: any; ts: number } | null = null;
-const CLAUDE_STATUS_TTL = 30_000;
-
 // GitHub Actions 설정
 const GITHUB_OWNER = 'intenet1001-commits';
 const GITHUB_REPO = 'portmanagement';
@@ -92,6 +88,7 @@ async function saveWorkspaceRootsData(data: any) {
 
 const server = Bun.serve({
   port: 3001,
+  hostname: "127.0.0.1",
   async fetch(req) {
     const url = new URL(req.url);
 
@@ -1414,76 +1411,6 @@ Analyze this project and reply with JSON only (no markdown, no explanation):
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
       }
-    }
-
-    // ── Claude Auth: status ──────────────────────────────────────────────────
-    if (url.pathname === "/api/claude-status" && req.method === "GET") {
-      if (claudeStatusCache && Date.now() - claudeStatusCache.ts < CLAUDE_STATUS_TTL) {
-        return new Response(JSON.stringify(claudeStatusCache.data), { headers });
-      }
-      if (!CLAUDE_PATH) {
-        const data = { installed: false, authenticated: false, email: '', subscriptionType: '', authMethod: '', version: '' };
-        return new Response(JSON.stringify(data), { headers });
-      }
-      // version
-      let version = '';
-      const verResult = Bun.spawnSync([CLAUDE_PATH, '--version'], {
-        env: { HOME: process.env.HOME ?? '', PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
-      });
-      if (verResult.exitCode === 0) version = verResult.stdout.toString().trim();
-
-      // auth status
-      const authResult = Bun.spawnSync([CLAUDE_PATH, 'auth', 'status'], {
-        env: { HOME: process.env.HOME ?? '', PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
-      });
-      const authOutput = (authResult.stdout.toString() + authResult.stderr.toString()).trim();
-      let authenticated = false, email = '', subscriptionType = '', authMethod = '';
-      try {
-        const json = JSON.parse(authOutput);
-        authenticated = json.loggedIn ?? json.authenticated ?? false;
-        email = json.email ?? '';
-        subscriptionType = json.subscriptionType ?? json.subscription_type ?? '';
-        authMethod = json.authMethod ?? json.auth_method ?? '';
-      } catch {
-        // text output fallback
-        authenticated = /logged in|authenticated/i.test(authOutput);
-        const emailMatch = authOutput.match(/[\w.+-]+@[\w.-]+\.\w+/);
-        email = emailMatch ? emailMatch[0] : '';
-        if (/\bmax\b/i.test(authOutput)) subscriptionType = 'max';
-        else if (/\bpro\b/i.test(authOutput)) subscriptionType = 'pro';
-        else if (/\bteam\b/i.test(authOutput)) subscriptionType = 'team';
-        else if (authenticated) subscriptionType = 'free';
-        if (/claude\.ai/i.test(authOutput)) authMethod = 'claudeai';
-        else if (/api key/i.test(authOutput)) authMethod = 'apikey';
-      }
-      const data = { installed: true, authenticated, email, subscriptionType, authMethod, version };
-      claudeStatusCache = { data, ts: Date.now() };
-      return new Response(JSON.stringify(data), { headers });
-    }
-
-    // ── Claude Auth: login / logout ──────────────────────────────────────────
-    if (url.pathname === "/api/claude-auth" && req.method === "POST") {
-      const { action } = await req.json() as { action: 'login' | 'logout' };
-      if (!CLAUDE_PATH) {
-        return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
-      }
-      claudeStatusCache = null; // invalidate cache
-      if (action === 'logout') {
-        Bun.spawnSync([CLAUDE_PATH, 'auth', 'logout'], {
-          env: { HOME: process.env.HOME ?? '', PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
-        });
-        return new Response(JSON.stringify({ ok: true }), { headers });
-      }
-      if (action === 'login') {
-        // fire-and-forget — browser OAuth will open
-        Bun.spawn([CLAUDE_PATH, 'auth', 'login', '--claudeai'], {
-          env: { HOME: process.env.HOME ?? '', PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
-          stdout: 'ignore',
-          stderr: 'ignore',
-        });
-        return new Response(JSON.stringify({ ok: true, message: 'browser_opening' }), { headers });
-      }
-      return new Response(JSON.stringify({ error: 'unknown_action' }), { status: 400, headers });
     }
 
     return new Response(JSON.stringify({ error: "Not found" }), {
