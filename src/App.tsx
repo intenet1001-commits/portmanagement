@@ -879,6 +879,9 @@ function App() {
               showToast('Supabase 자동 동기화 실패 (네트워크 확인)', 'error');
               hasInitiallyLoaded.current = true; // Fix P2c: still enable auto-push on pull failure
             }
+          } else {
+            // No credentials at startup → still enable auto-push so it fires once credentials are added
+            hasInitiallyLoaded.current = true;
           }
         } catch (portalErr) {
           console.warn('[App] Failed to load portal config:', portalErr);
@@ -1336,6 +1339,8 @@ function App() {
       } else {
         portalData = await getPortalCredentials();
       }
+      // Keep portalConfigRef in sync so auto-push fires after credentials are set
+      if (portalData?.supabaseUrl) portalConfigRef.current = portalData;
 
       const { supabaseUrl, supabaseAnonKey } = portalData ?? {};
       if (!supabaseUrl || !supabaseAnonKey) {
@@ -1411,6 +1416,8 @@ function App() {
       } else {
         portalData = await getPortalCredentials();
       }
+      // Keep portalConfigRef in sync so auto-push fires after credentials are set
+      if (portalData?.supabaseUrl) portalConfigRef.current = portalData;
       const { supabaseUrl, supabaseAnonKey } = portalData ?? {};
       if (!supabaseUrl || !supabaseAnonKey) {
         showToast('Supabase 설정이 없습니다. 포털 탭에서 먼저 설정하세요', 'error');
