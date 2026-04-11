@@ -186,6 +186,7 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
   - 예: `포트관리기_2025.12.10_aarch64.dmg`
   - `bun run tauri:build` 또는 `bun run tauri:build:dmg` 실행 시 자동 적용
   - 수동 업데이트: `bun run update-version`
+  - **⚠️ 버전 날짜 = 마지막 git 커밋 날짜** (오늘 날짜 아님) — 올바른 날짜 DMG 생성하려면 빌드 전 반드시 커밋 완료
   - **DMG 빌드 후처리**: macOS 버전 호환성 문제 시 자동으로 임시 DMG를 최종 위치로 복사
 - **실시간 빌드 로그**:
   - 빌드 진행 상황을 실시간으로 확인할 수 있는 모달 창
@@ -222,10 +223,10 @@ bun run tauri:dev
 # 버전 업데이트 (수동)
 bun run update-version
 
-# 프로덕션 빌드 (.app) - 버전 자동 업데이트됨
+# 프로덕션 빌드 (.app) — update-version → bun run build → tauri build
 bun run tauri:build
 
-# DMG 빌드 (배포용) - 버전 자동 업데이트됨
+# DMG 빌드 (배포용) — update-version → bun run build → tauri build --bundles dmg → fix-dmg
 bun run tauri:build:dmg
 
 # 빌드 결과물 위치
@@ -253,6 +254,23 @@ bun run tauri:build:dmg
 - `POST /api/create-folder` - 폴더 생성 (절대경로 필수)
 - `GET /api/portal` - portal.json 로드
 - `POST /api/portal` - portal.json 저장
+
+### Claude AI 엔드포인트
+
+- `GET /api/claude-status` - Claude CLI 설치/인증 상태 확인 (email, subscriptionType, version 포함, **30초 서버 캐시**)
+- `POST /api/claude-auth` - Claude 로그인/로그아웃 (`{ action: 'login' | 'logout' }`) — 로그인은 브라우저 OAuth 즉시 열고 응답, 프론트가 3초 폴링으로 완료 감지
+- `POST /api/suggest-batch` - N개 포트 이름+카테고리 **단일 Claude 호출**로 일괄 생성 (`{ ports: [{id, folderPath, name, aiName?}] }`)
+- `POST /api/suggest-name-and-category` - 단일 포트 이름+카테고리 생성 (fast path)
+
+**Claude auth status 파싱 주의**: JSON 출력의 로그인 키 = `loggedIn` (not `authenticated`) → `json.loggedIn ?? json.authenticated ?? false` 순서로 처리
+
+### AI 이름/카테고리 일괄 보강
+
+- **새로고침 Phase 2**: 포트 상태 갱신 후, `aiName` 또는 `category` 없는 포트를 `/api/suggest-batch` 단일 호출로 처리
+- **카테고리**: 자유형 토픽 단어 (하드코딩 목록 없음, AI가 프로젝트 성격 분석해 생성)
+- **성능**: N개 포트 × 5s → ~8s (단일 배치 호출)
+- **legacy shim**: `/api/suggest-name`, `/api/suggest-category`는 내부적으로 새 endpoint에 위임 (삭제 금지)
+- **ClaudeAuthBadge** (`src/ClaudeAuthBadge.tsx`): 헤더 우측 Claude 계정 상태 배지 — 웹 모드 전용 (`!isTauri()` 조건으로 Tauri에서 숨김)
 
 ## 데이터 구조
 

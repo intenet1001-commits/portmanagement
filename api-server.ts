@@ -22,6 +22,10 @@ const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
 let buildStatus = { isBuilding: false, type: '', output: [] as string[], exitCode: null as number | null };
 
+// Claude status cache (30 s TTL)
+let claudeStatusCache: { data: any; ts: number } | null = null;
+const CLAUDE_STATUS_TTL = 30_000;
+
 // GitHub Actions 설정
 const GITHUB_OWNER = 'intenet1001-commits';
 const GITHUB_REPO = 'portmanagement';
@@ -94,7 +98,7 @@ const server = Bun.serve({
     // CORS 헤더 설정
     const headers = {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "http://localhost:5173",
+      "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type",
     };
@@ -1260,68 +1264,86 @@ const server = Bun.serve({
       }
     }
 
-    // Claude Code auth status
-    if (url.pathname === "/api/claude-status" && req.method === "GET") {
-      try {
-
-        if (!CLAUDE_PATH) {
-          return new Response(JSON.stringify({ installed: false, authenticated: false }), { headers });
-        }
-        const proc = Bun.spawnSync([CLAUDE_PATH!, 'auth', 'status'], {
-          env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
-        });
-        const raw = proc.stdout.toString().trim();
-        try {
-          const parsed = JSON.parse(raw);
-          // claude outputs { loggedIn, email, ... } — map to { authenticated, email }
-          return new Response(JSON.stringify({
-            installed: true,
-            authenticated: !!parsed.loggedIn,
-            email: parsed.email ?? undefined,
-          }), { headers });
-        } catch {
-          // Non-JSON output fallback
-          const text = raw.toLowerCase();
-          const authenticated = text.includes('logged in') || text.includes('authenticated');
-          return new Response(JSON.stringify({ installed: true, authenticated }), { headers });
-        }
-      } catch (e: any) {
-        return new Response(JSON.stringify({ installed: false, error: e.message }), { headers });
-      }
-    }
-
-    // Claude Code auth login trigger
-    if (url.pathname === "/api/claude-auth" && req.method === "POST") {
-      try {
-        const body = await req.json();
-
-        if (!CLAUDE_PATH) {
-          return new Response(JSON.stringify({ success: false, error: 'claude not found' }), { headers });
-        }
-        if (body.action === 'login') {
-          Bun.spawn([CLAUDE_PATH!, 'auth', 'login', '--claudeai'], {
-            env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
-            detached: true,
-          });
-          return new Response(JSON.stringify({ success: true, message: 'Login browser opened' }), { headers });
-        }
-        if (body.action === 'logout') {
-          Bun.spawnSync([CLAUDE_PATH!, 'auth', 'logout'], {
-            env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
-          });
-          return new Response(JSON.stringify({ success: true, message: 'Logged out' }), { headers });
-        }
-        return new Response(JSON.stringify({ success: false, error: 'unknown action' }), { headers });
-      } catch (e: any) {
-        return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers });
-      }
-    }
-
     // AI: suggest category for a single project
+    // AI: batch name + category for multiple ports in ONE claude call
+    if (url.pathname === "/api/suggest-batch" && req.method === "POST") {
+      try {
+        const { ports: batchPorts } = await req.json() as { ports: Array<{ id: string; folderPath: string; name: string }> };
+        if (!CLAUDE_PATH) {
+          return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
+        }
+        if (!Array.isArray(batchPorts) || batchPorts.length === 0) {
+          return new Response(JSON.stringify({ results: [] }), { headers });
+        }
+        const { readdirSync, readFileSync } = await import("node:fs");
+
+        // Build project summaries for prompt
+        const summaries = (batchPorts as Array<{ id: string; folderPath: string; name: string; aiName?: string }>).map((p, i) => {
+          let files = '', pkg = '';
+          try {
+            if (existsSync(p.folderPath)) {
+              files = readdirSync(p.folderPath).slice(0, 15).join(', ');
+              const pkgPath = join(p.folderPath, 'package.json');
+              if (existsSync(pkgPath)) pkg = readFileSync(pkgPath, 'utf-8').slice(0, 200);
+            }
+          } catch {}
+          const displayName = p.aiName || p.name;
+          return `${i + 1}. id="${p.id}" display_name="${displayName}" raw_name="${p.name}" files=[${files}]${pkg ? ` pkg=${pkg.replace(/\n/g, ' ')}` : ''}`;
+        }).join('\n');
+
+        const prompt = `Analyze these ${batchPorts.length} projects and return a JSON array ONLY (no markdown, no explanation).
+IMPORTANT: derive the "name" and "category" primarily from display_name (the human-readable name), not from raw file listings.
+category must be a single lowercase word that describes WHAT this project does (e.g. converter, dashboard, manager, tracker, bot, guide, calculator, automation, monitor, generator, etc.)
+
+Return format:
+[{"id":"...","name":"2-4 word English alias","category":"single lowercase word"},...]
+
+Projects:
+${summaries}`;
+
+        const proc = Bun.spawn(
+          [CLAUDE_PATH!, '-p', prompt],
+          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, stdout: 'pipe', stderr: 'pipe' }
+        );
+        const timeoutId = setTimeout(() => proc.kill(), 60_000);
+        await proc.exited;
+        clearTimeout(timeoutId);
+        const raw = (await new Response(proc.stdout).text()).trim();
+        const match = raw.match(/\[[\s\S]*\]/);
+        if (!match) return new Response(JSON.stringify({ results: [] }), { headers });
+        const parsed: Array<{ id: string; name: string; category: string }> = JSON.parse(match[0]);
+        return new Response(JSON.stringify({ results: parsed }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // AI: suggest-category (legacy, kept for backward compat)
     if (url.pathname === "/api/suggest-category" && req.method === "POST") {
+      const { folderPath, name } = await req.json();
+      const res = await fetch(`http://localhost:${server.port}/api/suggest-name-and-category`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath, name }),
+      });
+      const d = await res.json() as any;
+      return new Response(JSON.stringify({ category: d.category ?? null }), { headers });
+    }
+
+    // AI: suggest-name (legacy, kept for backward compat)
+    if (url.pathname === "/api/suggest-name" && req.method === "POST") {
+      const { folderPath } = await req.json();
+      const res = await fetch(`http://localhost:${server.port}/api/suggest-name-and-category`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath }),
+      });
+      const d = await res.json() as any;
+      return new Response(JSON.stringify({ suggestions: d.name ? [d.name] : [] }), { headers });
+    }
+
+    // AI: name + category in ONE claude call (fast path)
+    if (url.pathname === "/api/suggest-name-and-category" && req.method === "POST") {
       try {
         const { folderPath, name } = await req.json();
-
         if (!CLAUDE_PATH) {
           return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
         }
@@ -1335,42 +1357,12 @@ const server = Bun.serve({
         if (existsSync(pkgPath)) {
           try { pkgJson = readFileSync(pkgPath, 'utf-8').slice(0, 400); } catch {}
         }
-        const categories = ['frontend', 'backend', 'AI', 'tools', 'infra', 'mobile', 'data', 'fullstack'];
-        const prompt = `Project name: ${name || 'unknown'}\nFiles: ${files}\npackage.json: ${pkgJson}\n\nChoose exactly ONE category for this project from this list: ${categories.join(', ')}.\nReply with the single category word only, nothing else.`;
-        const proc = Bun.spawn(
-          [CLAUDE_PATH!, '-p', prompt],
-          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, stdout: 'pipe', stderr: 'pipe' }
-        );
-        const timeoutId = setTimeout(() => proc.kill(), 20_000);
-        await proc.exited;
-        clearTimeout(timeoutId);
-        const raw = (await new Response(proc.stdout).text()).trim().toLowerCase();
-        const matched = categories.find(c => raw.includes(c.toLowerCase()));
-        return new Response(JSON.stringify({ category: matched ?? null }), { headers });
-      } catch (e: any) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
-      }
-    }
+        const prompt = `Project name hint: ${name || 'unknown'}
+Files: ${files}
+package.json excerpt: ${pkgJson}
 
-    // AI: suggest project name from folder
-    if (url.pathname === "/api/suggest-name" && req.method === "POST") {
-      try {
-        const { folderPath } = await req.json();
-
-        if (!CLAUDE_PATH) {
-          return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
-        }
-        if (!folderPath || !existsSync(folderPath)) {
-          return new Response(JSON.stringify({ error: 'invalid_folder' }), { status: 400, headers });
-        }
-        const { readdirSync, readFileSync } = await import("node:fs");
-        const files = readdirSync(folderPath).slice(0, 30).join(', ');
-        let pkgJson = '';
-        const pkgPath = join(folderPath, 'package.json');
-        if (existsSync(pkgPath)) {
-          try { pkgJson = readFileSync(pkgPath, 'utf-8').slice(0, 500); } catch {}
-        }
-        const prompt = `Project files: ${files}\npackage.json: ${pkgJson}\n\nSuggest 3 concise project names (2-4 words, English). Reply with JSON array only: ["name1","name2","name3"]`;
+Analyze this project and reply with JSON only (no markdown, no explanation):
+{"name":"2-4 word English alias","category":"one short topic word that best describes this project (e.g. converter, dashboard, automation, chatbot, portfolio, tracker, etc.)"}`;
         const proc = Bun.spawn(
           [CLAUDE_PATH!, '-p', prompt],
           { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, stdout: 'pipe', stderr: 'pipe' }
@@ -1379,9 +1371,13 @@ const server = Bun.serve({
         await proc.exited;
         clearTimeout(timeoutId);
         const raw = (await new Response(proc.stdout).text()).trim();
-        const match = raw.match(/\[.*\]/s);
-        const suggestions = match ? JSON.parse(match[0]) : [];
-        return new Response(JSON.stringify({ suggestions }), { headers });
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (!match) return new Response(JSON.stringify({ name: null, category: null }), { headers });
+        const parsed = JSON.parse(match[0]);
+        return new Response(JSON.stringify({
+          name: typeof parsed.name === 'string' ? parsed.name.slice(0, 60) : null,
+          category: typeof parsed.category === 'string' ? parsed.category.slice(0, 30).toLowerCase() : null,
+        }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
       }
@@ -1418,6 +1414,76 @@ const server = Bun.serve({
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
       }
+    }
+
+    // ── Claude Auth: status ──────────────────────────────────────────────────
+    if (url.pathname === "/api/claude-status" && req.method === "GET") {
+      if (claudeStatusCache && Date.now() - claudeStatusCache.ts < CLAUDE_STATUS_TTL) {
+        return new Response(JSON.stringify(claudeStatusCache.data), { headers });
+      }
+      if (!CLAUDE_PATH) {
+        const data = { installed: false, authenticated: false, email: '', subscriptionType: '', authMethod: '', version: '' };
+        return new Response(JSON.stringify(data), { headers });
+      }
+      // version
+      let version = '';
+      const verResult = Bun.spawnSync([CLAUDE_PATH, '--version'], {
+        env: { HOME: process.env.HOME ?? '', PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
+      });
+      if (verResult.exitCode === 0) version = verResult.stdout.toString().trim();
+
+      // auth status
+      const authResult = Bun.spawnSync([CLAUDE_PATH, 'auth', 'status'], {
+        env: { HOME: process.env.HOME ?? '', PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
+      });
+      const authOutput = (authResult.stdout.toString() + authResult.stderr.toString()).trim();
+      let authenticated = false, email = '', subscriptionType = '', authMethod = '';
+      try {
+        const json = JSON.parse(authOutput);
+        authenticated = json.loggedIn ?? json.authenticated ?? false;
+        email = json.email ?? '';
+        subscriptionType = json.subscriptionType ?? json.subscription_type ?? '';
+        authMethod = json.authMethod ?? json.auth_method ?? '';
+      } catch {
+        // text output fallback
+        authenticated = /logged in|authenticated/i.test(authOutput);
+        const emailMatch = authOutput.match(/[\w.+-]+@[\w.-]+\.\w+/);
+        email = emailMatch ? emailMatch[0] : '';
+        if (/\bmax\b/i.test(authOutput)) subscriptionType = 'max';
+        else if (/\bpro\b/i.test(authOutput)) subscriptionType = 'pro';
+        else if (/\bteam\b/i.test(authOutput)) subscriptionType = 'team';
+        else if (authenticated) subscriptionType = 'free';
+        if (/claude\.ai/i.test(authOutput)) authMethod = 'claudeai';
+        else if (/api key/i.test(authOutput)) authMethod = 'apikey';
+      }
+      const data = { installed: true, authenticated, email, subscriptionType, authMethod, version };
+      claudeStatusCache = { data, ts: Date.now() };
+      return new Response(JSON.stringify(data), { headers });
+    }
+
+    // ── Claude Auth: login / logout ──────────────────────────────────────────
+    if (url.pathname === "/api/claude-auth" && req.method === "POST") {
+      const { action } = await req.json() as { action: 'login' | 'logout' };
+      if (!CLAUDE_PATH) {
+        return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
+      }
+      claudeStatusCache = null; // invalidate cache
+      if (action === 'logout') {
+        Bun.spawnSync([CLAUDE_PATH, 'auth', 'logout'], {
+          env: { HOME: process.env.HOME ?? '', PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
+        });
+        return new Response(JSON.stringify({ ok: true }), { headers });
+      }
+      if (action === 'login') {
+        // fire-and-forget — browser OAuth will open
+        Bun.spawn([CLAUDE_PATH, 'auth', 'login', '--claudeai'], {
+          env: { HOME: process.env.HOME ?? '', PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
+          stdout: 'ignore',
+          stderr: 'ignore',
+        });
+        return new Response(JSON.stringify({ ok: true, message: 'browser_opening' }), { headers });
+      }
+      return new Response(JSON.stringify({ error: 'unknown_action' }), { status: 400, headers });
     }
 
     return new Response(JSON.stringify({ error: "Not found" }), {

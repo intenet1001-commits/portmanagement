@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
 import PortalManager from './PortalManager';
+import ClaudeAuthBadge from './ClaudeAuthBadge';
 
 // Tauri API 체크
 const isTauri = () => {
@@ -369,6 +370,31 @@ const API = {
       });
     }
   },
+
+  async suggestNameAndCategory(folderPath: string, name: string): Promise<{ name: string | null; category: string | null }> {
+    try {
+      const res = await fetch('/api/suggest-name-and-category', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath, name }),
+      });
+      if (!res.ok) return { name: null, category: null };
+      return res.json();
+    } catch { return { name: null, category: null }; }
+  },
+
+  async suggestBatch(ports: Array<{ id: string; folderPath: string; name: string; aiName?: string }>): Promise<Array<{ id: string; name: string | null; category: string | null }>> {
+    try {
+      const res = await fetch('/api/suggest-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ports }),
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.results ?? [];
+    } catch { return []; }
+  },
 };
 
 const CLAUDE_AI_NAME_PROMPT = `포트관리기의 프로젝트 목록에 "AI 추천 이름(aiName)"을 채워줘.
@@ -607,6 +633,7 @@ function App() {
   const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isAiEnriching, setIsAiEnriching] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isPushingPorts, setIsPushingPorts] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
@@ -945,9 +972,6 @@ function App() {
           folder_path: p.folderPath ?? null,
           deploy_url: p.deployUrl ?? null,
           github_url: p.githubUrl ?? null,
-          category: p.category ?? null,
-          description: p.description ?? null,
-          ai_name: p.aiName ?? null,
         }));
         await supabase.from('ports').upsert(rows, { onConflict: 'id' });
         // Fix P2: delete remote rows whose IDs are no longer in local list
@@ -1403,9 +1427,6 @@ function App() {
         folder_path: p.folderPath ?? null,
         deploy_url: p.deployUrl ?? null,
         github_url: p.githubUrl ?? null,
-        category: p.category ?? null,
-        description: p.description ?? null,
-        ai_name: p.aiName ?? null,
       }));
       const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error) throw new Error(error.message);
@@ -1444,10 +1465,20 @@ function App() {
     }
   };
 
+  // 동시 실행 수 제한 풀 (AI 일괄 요청용)
+  async function runWithLimit<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+    const queue = [...items];
+    const slots = Array.from({ length: Math.min(limit, queue.length) }, () =>
+      (async () => { while (queue.length > 0) await worker(queue.shift()!); })()
+    );
+    await Promise.all(slots);
+  }
+
   const handleRefresh = async () => {
-    if (isRefreshing) return;
+    if (isRefreshing || isAiEnriching) return;
 
     setIsRefreshing(true);
+    let _refreshed: PortInfo[] = [];
     try {
       const data = await API.loadPorts();
 
@@ -1529,6 +1560,7 @@ function App() {
 
       const updatedData = await Promise.all(updatedDataPromises);
 
+      _refreshed = updatedData;
       setPorts(updatedData);
       showToast('포트 목록을 새로고침했습니다', 'success');
     } catch (error) {
@@ -1536,6 +1568,30 @@ function App() {
     } finally {
       setIsRefreshing(false);
     }
+
+    // Phase 2: AI 이름/카테고리 배치 생성 (missing 항목만, 단 1회 Claude 호출)
+    const targets = _refreshed.filter(p => p.folderPath && (!p.aiName || !p.category));
+    if (targets.length === 0) return;
+    setIsAiEnriching(true);
+    showToast(`AI 이름/카테고리 생성 중… (${targets.length}개)`, 'success');
+    let nameCount = 0, catCount = 0;
+    try {
+      const batchInput = targets.map(p => ({ id: p.id, folderPath: p.folderPath!, name: p.name, aiName: p.aiName }));
+      const results = await API.suggestBatch(batchInput);
+      const resultMap = new Map(results.map(r => [r.id, r]));
+      setPorts(prev => prev.map(p => {
+        const r = resultMap.get(p.id);
+        if (!r) return p;
+        const newName = !p.aiName && r.name ? r.name : undefined;
+        const newCat = !p.category && r.category ? r.category : undefined;
+        if (newName) nameCount++;
+        if (newCat) catCount++;
+        return (newName || newCat) ? { ...p, aiName: newName ?? p.aiName, category: newCat ?? p.category } : p;
+      }));
+    } catch {}
+    setPorts(prev => { API.savePorts(prev); return prev; });
+    setIsAiEnriching(false);
+    showToast(`AI 업데이트 완료: 이름 ${nameCount}개, 카테고리 ${catCount}개`, 'success');
   };
 
   const handleBuildApp = async () => {
@@ -2151,29 +2207,32 @@ function App() {
 
       <div className="max-w-4xl mx-auto">
         {/* 탭 네비게이션 */}
-        <div className="flex gap-1 mb-4 bg-[#18181b] border border-zinc-800 rounded-xl p-1 w-fit">
-          <button
-            onClick={() => setActiveTab('ports')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-              activeTab === 'ports'
-                ? 'bg-zinc-700 text-white shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-            }`}
-          >
-            <Server className="w-3.5 h-3.5" />
-            프로젝트 관리
-          </button>
-          <button
-            onClick={() => setActiveTab('portal')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-              activeTab === 'portal'
-                ? 'bg-zinc-700 text-white shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-            }`}
-          >
-            <BookMarked className="w-3.5 h-3.5" />
-            포털
-          </button>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex gap-1 bg-[#18181b] border border-zinc-800 rounded-xl p-1 w-fit">
+            <button
+              onClick={() => setActiveTab('ports')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                activeTab === 'ports'
+                  ? 'bg-zinc-700 text-white shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+              }`}
+            >
+              <Server className="w-3.5 h-3.5" />
+              프로젝트 관리
+            </button>
+            <button
+              onClick={() => setActiveTab('portal')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                activeTab === 'portal'
+                  ? 'bg-zinc-700 text-white shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+              }`}
+            >
+              <BookMarked className="w-3.5 h-3.5" />
+              포털
+            </button>
+          </div>
+          {!isTauri() && <ClaudeAuthBadge />}
         </div>
 
         {/* 포털 탭 */}
@@ -2214,8 +2273,9 @@ function App() {
               <button onClick={handleImportPorts} title="불러오기" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center">
                 <Upload className="w-3.5 h-3.5" />
               </button>
-              <button onClick={handleRefresh} disabled={isRefreshing} title="새로고침" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center disabled:opacity-50 disabled:cursor-not-allowed">
-                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <button onClick={handleRefresh} disabled={isRefreshing || isAiEnriching} title={isAiEnriching ? 'AI 분석 중…' : '새로고침'} className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing || isAiEnriching ? 'animate-spin' : ''}`} />
+                {isAiEnriching && <span className="text-xs text-zinc-400">AI</span>}
               </button>
               <div className="flex items-center rounded-lg border border-zinc-700 overflow-hidden">
                 <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-700 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
@@ -2325,16 +2385,14 @@ function App() {
                 className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
               />
               <div className="flex gap-2">
-                <select
+                <input
+                  type="text"
+                  placeholder="카테고리 (AI 자동)"
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                >
-                  <option value="">카테고리 (선택사항)</option>
-                  {['frontend', 'backend', 'AI', 'tools', 'infra', 'mobile', 'data', 'fullstack'].map(c => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                  onKeyPress={handleKeyPress}
+                  className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                />
                 <input
                   type="text"
                   placeholder="프로젝트 설명 (선택사항)"
@@ -2549,9 +2607,9 @@ function App() {
                   </span>
                   <button
                     onClick={handleRefresh}
-                    disabled={isRefreshing}
+                    disabled={isRefreshing || isAiEnriching}
                     className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-all disabled:opacity-40"
-                    title="새로고침 (실행파일 자동 감지)"
+                    title={isAiEnriching ? 'AI 분석 중…' : '새로고침 (실행파일 자동 감지)'}
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                   </button>
@@ -2683,16 +2741,14 @@ function App() {
                         placeholder="GitHub 주소 (선택사항)"
                       />
                       <div className="flex gap-2">
-                        <select
+                        <input
+                          type="text"
                           value={editCategory}
                           onChange={(e) => setEditCategory(e.target.value)}
-                          className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                        >
-                          <option value="">카테고리</option>
-                          {['frontend', 'backend', 'AI', 'tools', 'infra', 'mobile', 'data', 'fullstack'].map(c => (
-                            <option key={c} value={c}>{c}</option>
-                          ))}
-                        </select>
+                          onKeyDown={handleEditKeyPress}
+                          placeholder="카테고리 (AI 자동)"
+                          className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                        />
                         <input
                           type="text"
                           value={editDescription}

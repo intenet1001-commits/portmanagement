@@ -4,9 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun api-server.ts & vite",
-    "api": "bun api-server.ts",
-    "start": "bun api-server.ts & vite",
+    "dev": "bun --watch api-server.ts & vite",
+    "api": "bun --watch api-server.ts",
+    "start": "bun --watch api-server.ts & vite",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
