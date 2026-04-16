@@ -672,6 +672,8 @@ function App() {
   const [isAiEnriching, setIsAiEnriching] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isPushingPorts, setIsPushingPorts] = useState(false);
+  const [remappingPorts, setRemappingPorts] = useState<PortInfo[]>([]);
+  const [remappingPaths, setRemappingPaths] = useState<Record<string, string>>({});
   const [isBuilding, setIsBuilding] = useState(false);
   const [showBuildLog, setShowBuildLog] = useState(false);
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
@@ -1466,6 +1468,15 @@ function App() {
       }
       const label = isOtherDevice ? '[다른 기기] ' : '';
       showToast(`${label}Supabase에서 ${merged.length}개 포트${rootsMsg}를 복원했습니다 ✓`, 'success');
+
+      // 다른 기기 Pull 후 경로 없는 포트가 있으면 remapping 모달 표시
+      if (isOtherDevice) {
+        const needsPath = merged.filter(p => !p.folderPath && !p.commandPath && !p.terminalCommand);
+        if (needsPath.length > 0) {
+          setRemappingPorts(needsPath);
+          setRemappingPaths({});
+        }
+      }
     } catch (e) {
       showToast('Supabase 복원 실패: ' + e, 'error');
     } finally {
@@ -2428,6 +2439,77 @@ function App() {
           actionsRef={portalActionsRef}
           isVisible={activeTab === 'portal'}
         />
+
+        {/* 경로 remapping 모달 — 다른 기기 Pull 후 경로 없는 포트 설정 */}
+        {remappingPorts.length > 0 && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[90] flex items-center justify-center p-6">
+            <div className="bg-[#0a0a0b] border border-zinc-700/80 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
+              <div className="px-5 py-4 border-b border-zinc-800 shrink-0">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <FolderOpen className="w-4 h-4 text-amber-400" />
+                  경로 설정 필요 — {remappingPorts.length}개 프로젝트
+                </h2>
+                <p className="text-xs text-zinc-500 mt-1">다른 기기에서 가져온 프로젝트에 이 기기의 폴더 경로를 설정하세요. 나중에 개별 설정도 가능합니다.</p>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {remappingPorts.map(p => (
+                  <div key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-white">{p.name}</span>
+                      {p.port && <span className="text-xs text-zinc-500 font-mono">:{p.port}</span>}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={remappingPaths[p.id] ?? ''}
+                        onChange={e => setRemappingPaths(prev => ({ ...prev, [p.id]: e.target.value }))}
+                        placeholder="/Users/nhis/..."
+                        className="flex-1 px-3 py-1.5 text-xs bg-black/40 border border-zinc-700 text-white placeholder-zinc-600 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+                      />
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await fetch('/api/pick-folder');
+                            const { path } = await res.json();
+                            if (path) setRemappingPaths(prev => ({ ...prev, [p.id]: path }));
+                          } catch {}
+                        }}
+                        className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs rounded-lg border border-zinc-700 transition-all"
+                        title="폴더 선택"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-zinc-800 px-5 py-4 flex justify-between shrink-0">
+                <button
+                  onClick={() => setRemappingPorts([])}
+                  className="px-4 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  나중에 설정
+                </button>
+                <button
+                  onClick={() => {
+                    const updated = ports.map(p => {
+                      const newPath = remappingPaths[p.id];
+                      return newPath ? { ...p, folderPath: newPath } : p;
+                    });
+                    setPorts(updated);
+                    API.savePorts(updated);
+                    setRemappingPorts([]);
+                    const count = Object.values(remappingPaths).filter(Boolean).length;
+                    if (count > 0) showToast(`${count}개 경로 저장됨 ✓`, 'success');
+                  }}
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-black text-sm font-semibold rounded-lg transition-all"
+                >
+                  저장
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* 설정 마법사 오버레이 */}
         {showSetupWizard && (
