@@ -795,7 +795,8 @@ const server = Bun.serve({
         const escSession = escapeSq(sessionName);
         const escFolder = folderPath ? escapeSq(folderPath) : null;
         const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const title = `[tmux] ${escapedSessionName}`;
+        const worktreeName1 = worktreePath ? worktreePath.replace(/\/$/, '').split('/').pop() : null;
+        const title = worktreeName1 ? `[tmux] ${escapedSessionName} (${worktreeName1})` : `[tmux] ${escapedSessionName}`;
         const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
         const cmd = escFolder
           ? `cd '${escFolder}' && printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`
@@ -820,7 +821,8 @@ const server = Bun.serve({
         const escSession = escapeSq(sessionName);
         const escFolder = folderPath ? escapeSq(folderPath) : null;
         const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const title = `[tmux-fresh] ${escapedSessionName}`;
+        const worktreeName2 = worktreePath ? worktreePath.replace(/\/$/, '').split('/').pop() : null;
+        const title = worktreeName2 ? `[tmux-fresh] ${escapedSessionName} (${worktreeName2})` : `[tmux-fresh] ${escapedSessionName}`;
         const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
         const killCmd = `tmux kill-session -t '${escSession}' 2>/dev/null || true`;
         const newCmd = escFolder
@@ -846,7 +848,8 @@ const server = Bun.serve({
         const escSession = escapeSq(sessionName);
         const escFolder = folderPath ? escapeSq(folderPath) : null;
         const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const title = `[tmux-bypass] ${escapedSessionName}`;
+        const worktreeName3 = worktreePath ? worktreePath.replace(/\/$/, '').split('/').pop() : null;
+        const title = worktreeName3 ? `[tmux-bypass] ${escapedSessionName} (${worktreeName3})` : `[tmux-bypass] ${escapedSessionName}`;
         const claudeCmd = worktreePath
           ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`
           : 'claude --dangerously-skip-permissions';
@@ -908,7 +911,9 @@ end tell`;
     if (url.pathname === "/api/open-terminal-claude" && req.method === "POST") {
       try {
         const { folderPath, name, worktreePath } = await req.json();
-        const escapedName = (name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const baseName = (name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const worktreeName4 = worktreePath ? worktreePath.replace(/\/$/, '').split('/').pop() : null;
+        const escapedName = worktreeName4 ? `${baseName} (${worktreeName4})` : baseName;
         const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
         const cmd = folderPath
           ? `cd '${escapeSq(folderPath)}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
@@ -925,7 +930,9 @@ end tell`;
     if (url.pathname === "/api/open-terminal-claude-bypass" && req.method === "POST") {
       try {
         const { folderPath, name, worktreePath } = await req.json();
-        const escapedName = `[bypass] ${(name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}`;
+        const worktreeName5 = worktreePath ? worktreePath.replace(/\/$/, '').split('/').pop() : null;
+        const baseName5 = (name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const escapedName = worktreeName5 ? `[bypass] ${baseName5} (${worktreeName5})` : `[bypass] ${baseName5}`;
         const claudeCmd = worktreePath
           ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`
           : 'claude --dangerously-skip-permissions';
