@@ -256,6 +256,14 @@ function FirstSetupWizard({ onComplete, onBack }: { onComplete: SetupWizardProps
   const [deviceName, setDeviceName] = useState('');
   const [testResult, setTestResult] = useState<'idle' | 'ok' | 'fail'>('idle');
   const [testing, setTesting] = useState(false);
+  const [cliReady, setCliReady] = useState(false);
+
+  // 앱 진입 시 CLI 인증 여부 자동 확인 → 이미 준비된 경우 스킵 안내
+  useEffect(() => {
+    fetch('/api/supabase-cli/status').then(r => r.json()).then(d => {
+      if (d.installed && d.loggedIn) setCliReady(true);
+    }).catch(() => {});
+  }, []);
 
   // refId → URL 자동 완성
   React.useEffect(() => {
@@ -304,11 +312,17 @@ supabase projects create portmanagement \\
   const stepContent = [
     // 0: 가입
     <div key={0} className="space-y-4">
+      {cliReady && (
+        <InfoBox color="green">
+          <p className="font-semibold mb-1">✅ Supabase CLI 인증 확인됨</p>
+          <p className="text-xs text-green-200">CLI가 이미 설치·로그인되어 있습니다. Step 1~2를 건너뛰고 <strong>Step 3 (프로젝트 생성)</strong>으로 바로 이동하거나, API Key 단계에서 자동 입력을 사용하세요.</p>
+        </InfoBox>
+      )}
       <p className="text-zinc-400 text-sm">Supabase는 무료 PostgreSQL 호스팅으로, 여러 기기 간 데이터 동기화에 사용합니다.</p>
       <InfoBox color="blue">
         <p className="font-semibold mb-2">가입 방법</p>
         <ol className="list-decimal list-inside space-y-1.5 text-sm">
-          <li><span className="text-blue-300 underline cursor-pointer">supabase.com</span> 접속</li>
+          <li><a href="https://supabase.com" target="_blank" rel="noreferrer" className="text-blue-300 underline">supabase.com</a> 접속</li>
           <li><span className="font-medium text-white">Start your project</span> 클릭</li>
           <li>GitHub 계정으로 로그인 (권장) 또는 이메일</li>
           <li>이메일 인증 완료</li>
@@ -321,16 +335,31 @@ supabase projects create portmanagement \\
 
     // 1: CLI 설치
     <div key={1} className="space-y-4">
-      <p className="text-zinc-400 text-sm">Supabase CLI로 프로젝트 생성부터 테이블 생성까지 모두 터미널에서 처리합니다.</p>
-      <OsToggle os={os} onChange={setOs} />
-      <CodeBlock label="1. CLI 설치" code={cliInstall} />
-      <CodeBlock label="2. 버전 확인" code="supabase --version" comment="1.x 이상이면 정상" />
-      <CodeBlock label="3. 로그인 (브라우저 인증)" code="supabase login" comment="브라우저가 열리면 Supabase 계정으로 인증" />
-      {os === 'windows' && (
-        <InfoBox color="amber">
-          <p className="text-xs">⚠️ Windows: PowerShell을 <strong>관리자 권한</strong>으로 실행하거나, Scoop 설치 후 새 터미널 창을 여세요.</p>
+      {cliReady ? (
+        <InfoBox color="green">
+          <p className="font-semibold">✅ 이미 설치·로그인됨 — 이 단계를 건너뛰어도 됩니다</p>
         </InfoBox>
+      ) : (
+        <p className="text-zinc-400 text-sm">Supabase CLI로 프로젝트 생성부터 테이블 생성까지 모두 터미널에서 처리합니다.</p>
       )}
+      <OsToggle os={os} onChange={setOs} />
+      {os === 'mac' && (
+        <>
+          <CodeBlock label="방법 1: Homebrew (권장)" code="brew install supabase/tap/supabase" />
+          <CodeBlock label="방법 2: Homebrew 없는 경우" code={`curl -L https://github.com/supabase/cli/releases/latest/download/supabase_darwin_amd64.tar.gz -o /tmp/supabase.tar.gz\ntar -xzf /tmp/supabase.tar.gz -C /tmp\nmkdir -p ~/.local/bin && mv /tmp/supabase ~/.local/bin/supabase`} />
+        </>
+      )}
+      {os === 'windows' && (
+        <>
+          <CodeBlock label="방법 1: Scoop (권장)" code={`scoop bucket add supabase https://github.com/supabase/scoop-bucket.git\nscoop install supabase`} />
+          <CodeBlock label="방법 2: Scoop 없는 경우" code={`powershell -c "irm https://github.com/supabase/cli/releases/latest/download/supabase_windows_amd64.zip -OutFile supabase.zip"\nExpand-Archive supabase.zip\nmove supabase\\supabase.exe C:\\Windows\\System32\\`} comment="PowerShell 관리자 권한으로 실행" />
+          <InfoBox color="amber">
+            <p className="text-xs">⚠️ Windows: Scoop 설치 후 <strong>새 터미널 창</strong>을 열어야 명령이 인식됩니다.</p>
+          </InfoBox>
+        </>
+      )}
+      <CodeBlock label="버전 확인" code="supabase --version" comment="1.x 이상이면 정상" />
+      <CodeBlock label="로그인 (브라우저 인증)" code="supabase login" comment="브라우저가 열리면 Supabase 계정으로 인증 완료 후 돌아오세요" />
     </div>,
 
     // 2: 프로젝트 생성
@@ -550,24 +579,32 @@ bun run start`;
     <div key={0} className="space-y-4">
       <p className="text-zinc-400 text-sm">동일한 코드를 이 기기에 설치합니다.</p>
       <OsToggle os={os} onChange={setOs} />
-      <CodeBlock label="저장소 클론 & 실행" code={cloneCmd} />
+
+      {os === 'windows' && (
+        <div className="space-y-3">
+          <CodeBlock label="① Bun 설치 (없는 경우)" code={`powershell -c "irm bun.sh/install.ps1 | iex"`} comment="PowerShell에서 실행, 설치 후 새 터미널 창 열기" />
+          <CodeBlock label="② Git 설치 (없는 경우)" code="winget install Git.Git" comment="또는 https://git-scm.com 에서 다운로드" />
+        </div>
+      )}
       {os === 'mac' && (
-        <CodeBlock label="또는: 이미 폴더가 있는 경우" code={`cd portmanagement
-git pull
-bun run start`} />
+        <div className="space-y-3">
+          <CodeBlock label="① Bun 설치 (없는 경우)" code={`curl -fsSL https://bun.sh/install | bash`} comment="이미 있으면 건너뛰기" />
+        </div>
+      )}
+
+      <CodeBlock label={os === 'windows' ? '③ 저장소 클론 & 실행 (PowerShell)' : '② 저장소 클론 & 실행'} code={cloneCmd} />
+
+      {os === 'mac' && (
+        <CodeBlock label="또는: 이미 폴더가 있는 경우" code={`cd portmanagement\ngit pull\nbun run start`} />
       )}
       {os === 'windows' && (
-        <InfoBox color="amber">
-          <p className="text-xs space-y-1">
-            <span className="block">• Bun for Windows: <code>powershell -c "irm bun.sh/install.ps1 | iex"</code></span>
-            <span className="block">• 또는 npm 사용: <code>npm install && npm run start</code></span>
-          </p>
-        </InfoBox>
+        <CodeBlock label="또는: 이미 폴더가 있는 경우" code={`cd portmanagement\ngit pull\nbun run start`} />
       )}
+
       <InfoBox>
         <p className="text-xs text-zinc-400">
           실행 후 브라우저에서 <code className="text-emerald-400">http://localhost:9000</code> 접속
-          {os === 'windows' && ' (방화벽 허용 필요할 수 있음)'}
+          {os === 'windows' && ' — 방화벽 허용 팝업이 뜨면 허용을 클릭하세요'}
         </p>
       </InfoBox>
     </div>,
