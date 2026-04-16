@@ -336,9 +336,10 @@ function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices,
                   )}
                   {knownDevices.map(d => {
                     const isOwn = d.device_id === deviceId;
-                    const label = isOwn
-                      ? (deviceName || d.device_name || d.device_id.slice(0, 10) + '…')
-                      : (d.device_name || d.device_id.slice(0, 10) + '…');
+                    const name = isOwn
+                      ? (deviceName || d.device_name)
+                      : d.device_name;
+                    const label = name || `기기 ${d.device_id.slice(0, 8)}…`;
                     return (
                       <option key={d.device_id} value={d.device_id}>
                         {label}{isOwn ? ' (이 기기)' : ''}
@@ -900,39 +901,55 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     try {
       const supabase = createClient(sbUrl, sbKey);
       const seen = new Set<string>();
-      const devices: {device_id: string; device_name?: string}[] = [];
+      // device_id → device_name 맵 (여러 소스에서 보강)
+      const nameMap = new Map<string, string>();
 
-      // 1순위: ports 테이블 (device_name 포함 시도 → 없으면 device_id만)
-      const { data: portsWithName, error: e1 } = await supabase
-        .from('ports').select('device_id, device_name').not('device_id', 'is', null);
-      if (!e1 && portsWithName) {
-        for (const r of portsWithName) {
-          if (r.device_id && r.device_id !== '__shared__' && !seen.has(r.device_id)) {
-            seen.add(r.device_id);
-            devices.push({ device_id: r.device_id, device_name: r.device_name ?? undefined });
-          }
-        }
-      } else {
-        // device_name 컬럼 없는 경우 fallback
-        const { data: portsOnly } = await supabase
-          .from('ports').select('device_id').not('device_id', 'is', null);
-        for (const r of portsOnly ?? []) {
-          if (r.device_id && r.device_id !== '__shared__' && !seen.has(r.device_id)) {
-            seen.add(r.device_id);
-            devices.push({ device_id: r.device_id });
-          }
-        }
-      }
-
-      // 2순위: portal_items folder 타입에서 추가 (ports에 없는 device_id 보충)
-      const { data: folderRows } = await supabase
-        .from('portal_items').select('device_id').eq('type', 'folder').not('device_id', 'is', null);
-      for (const r of folderRows ?? []) {
-        if (r.device_id && r.device_id !== '__shared__' && !seen.has(r.device_id)) {
+      // 1순위: ports 테이블 (device_name 컬럼 있으면 사용)
+      const { data: portsRows, error: portsErr } = await supabase
+        .from('ports').select('device_id, device_name, folder_path').not('device_id', 'is', null);
+      if (!portsErr && portsRows) {
+        for (const r of portsRows) {
+          if (!r.device_id || r.device_id === '__shared__') continue;
           seen.add(r.device_id);
-          devices.push({ device_id: r.device_id });
+          if (r.device_name && !nameMap.has(r.device_id)) {
+            nameMap.set(r.device_id, r.device_name);
+          }
+          // device_name 없으면 folder_path에서 사용자명 추출 (/Users/username/...)
+          if (!nameMap.has(r.device_id) && r.folder_path) {
+            const m = r.folder_path.match(/^\/(?:Users|home)\/([^/]+)\//);
+            if (m) nameMap.set(r.device_id, `${m[1]}의 기기`);
+          }
         }
       }
+
+      // 2순위: workspace_roots — device_id + path에서 사용자명 추출
+      const { data: rootRows } = await supabase
+        .from('workspace_roots').select('device_id, path').not('device_id', 'is', null);
+      for (const r of rootRows ?? []) {
+        if (!r.device_id || r.device_id === '__shared__') continue;
+        seen.add(r.device_id);
+        if (!nameMap.has(r.device_id) && r.path) {
+          const m = r.path.match(/^\/(?:Users|home)\/([^/]+)\//);
+          if (m) nameMap.set(r.device_id, `${m[1]}의 기기`);
+        }
+      }
+
+      // 3순위: portal_items folder 타입
+      const { data: folderRows } = await supabase
+        .from('portal_items').select('device_id, path').eq('type', 'folder').not('device_id', 'is', null);
+      for (const r of folderRows ?? []) {
+        if (!r.device_id || r.device_id === '__shared__') continue;
+        seen.add(r.device_id);
+        if (!nameMap.has(r.device_id) && r.path) {
+          const m = r.path.match(/^\/(?:Users|home)\/([^/]+)\//);
+          if (m) nameMap.set(r.device_id, `${m[1]}의 기기`);
+        }
+      }
+
+      const devices = Array.from(seen).map(id => ({
+        device_id: id,
+        device_name: nameMap.get(id),
+      }));
 
       setKnownDevices(devices);
       if (devices.length === 0) {
