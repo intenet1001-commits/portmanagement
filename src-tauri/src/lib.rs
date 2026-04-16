@@ -1068,6 +1068,39 @@ fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, workt
 }
 
 #[tauri::command]
+fn run_claude_with_prompt(folder_path: Option<String>, prompt: String) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Escape for shell single-quoted string
+        let cd_part = folder_path
+            .as_deref()
+            .map(|fp| format!("cd '{}' && ", escape_sq(fp)))
+            .unwrap_or_default();
+        let cmd = format!("{}claude", cd_part);
+        let escaped_cmd = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        // Prompt: collapse newlines → spaces, escape for AppleScript
+        let escaped_prompt = prompt
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', " ");
+        let script = format!(
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 4\n    write text \"{}\"\n  end tell\nend tell",
+            escaped_cmd, escaped_prompt
+        );
+        Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn()
+            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+        Ok("iTerm에서 Claude 실행 + 프롬프트 전송".to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("macOS 전용 기능입니다".to_string())
+    }
+}
+
+#[tauri::command]
 fn open_in_chrome(url: String) -> Result<String, String> {
     if url.is_empty() {
         return Err("URL이 비어 있습니다".to_string());
@@ -1406,6 +1439,7 @@ pub fn run() {
         open_tmux_claude_bypass,
         open_terminal_claude,
         open_terminal_claude_bypass,
+        run_claude_with_prompt,
         export_dmg,
         list_git_worktrees,
         check_file_exists,

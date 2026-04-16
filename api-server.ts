@@ -704,6 +704,10 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/project-path" && req.method === "GET") {
+      return new Response(JSON.stringify({ path: process.cwd() }), { headers });
+    }
+
     if (url.pathname === "/api/pick-folder" && req.method === "GET") {
       try {
         const proc = Bun.spawn({
@@ -849,6 +853,44 @@ const server = Bun.serve({
 
         return new Response(
           JSON.stringify({ success: true, message: `tmux + Claude (bypass) 실행 중 (세션: ${sessionName}-bypass)` }),
+          { headers }
+        );
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    // 카테고리 최신화: iTerm 새 창 열기 + 자동 프롬프트 전송
+    if (url.pathname === "/api/run-claude-with-prompt" && req.method === "POST") {
+      try {
+        const { folderPath, prompt } = await req.json();
+
+        // Escape for AppleScript double-quoted string
+        const escAS = (s: string) => s
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"')
+          .replace(/\n/g, ' ');  // newlines → spaces (single-line input to Claude)
+
+        const escapedFolder = folderPath ? escAS(escapeSq(folderPath)) : null;
+        const escapedPrompt = escAS(prompt as string);
+
+        const lines: string[] = [];
+        if (escapedFolder) lines.push(`write text "cd \\"${escapedFolder}\\""`);
+        lines.push(`write text "claude"`);
+        lines.push(`delay 4`);
+        lines.push(`write text "${escapedPrompt}"`);
+
+        const script = `tell application "iTerm"
+  activate
+  set newWindow to create window with default profile
+  tell current session of newWindow
+    ${lines.join('\n    ')}
+  end tell
+end tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+
+        return new Response(
+          JSON.stringify({ success: true, message: "Claude 실행 + 프롬프트 자동 전송" }),
           { headers }
         );
       } catch (error: any) {

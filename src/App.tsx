@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
-import PortalManager from './PortalManager';
+import PortalManager, { type PortalActions } from './PortalManager';
+import SetupWizard from './SetupWizard';
 
 // Tauri API 체크
 const isTauri = () => {
@@ -603,6 +604,8 @@ function App() {
   const [githubUrl, setGithubUrl] = useState('');
   const [worktreePath, setWorktreePath] = useState('');
   const [activeTab, setActiveTab] = useState<'ports' | 'portal'>('ports');
+  const [openPortalSettings, setOpenPortalSettings] = useState(false);
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [sortBy, setSortBy] = useState<SortType>(
     () => (localStorage.getItem('portmanager-sortBy') as SortType) || 'recent'
   );
@@ -647,6 +650,7 @@ function App() {
   const [activeRootId, setActiveRootId] = useState<string | null>(null);
   const [registerAsProject, setRegisterAsProject] = useState(true);
   const portalConfigRef = useRef<any>(null);
+  const portalActionsRef = useRef<PortalActions | null>(null);
   const autoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Fix P2g: gate delete pass — only safe to delete remote rows after a successful auto-pull
   // (otherwise local state has only this Mac's rows and would delete other Macs' remote data)
@@ -832,10 +836,9 @@ function App() {
           if (portalData?.supabaseUrl && portalData?.supabaseAnonKey) {
             try {
               const supabase = getSupabaseClient(portalData.supabaseUrl, portalData.supabaseAnonKey);
-              const { data: remoteData, error } = await withTimeout(
-                supabase.from('ports').select('*'),
-                10_000
-              );
+              let portsQuery = supabase.from('ports').select('*');
+              if (portalData.deviceId) portsQuery = portsQuery.eq('device_id', portalData.deviceId);
+              const { data: remoteData, error } = await withTimeout(portsQuery, 10_000);
               if (!error && remoteData && remoteData.length > 0) {
                 const remoteRows: PortInfo[] = remoteData.map((row: any) => ({
                   id: row.id,
@@ -977,7 +980,12 @@ function App() {
           github_url: p.githubUrl ?? null,
           device_id: deviceId,
         }));
-        await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+        let upsertErr = (await supabase.from('ports').upsert(rows, { onConflict: 'id' })).error;
+        if (upsertErr?.message?.includes('device_id') || upsertErr?.message?.includes('device_name')) {
+          const rowsWithout = rows.map(({ device_id, ...rest }: any) => rest);
+          upsertErr = (await supabase.from('ports').upsert(rowsWithout, { onConflict: 'id' })).error;
+        }
+        if (upsertErr) throw new Error(upsertErr.message);
         // Fix P2: delete remote rows whose IDs are no longer in local list
         // Fix P2g: skip delete pass if auto-pull never succeeded — local state may be incomplete
         // Step 4: scope stale-delete to this device only to avoid clobbering other devices
@@ -1444,7 +1452,14 @@ function App() {
         github_url: p.githubUrl ?? null,
         device_id: deviceId,
       }));
-      const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+      let { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+      if (error?.message?.includes('device_id') || error?.message?.includes('device_name')) {
+        // device_id/device_name column not yet migrated — retry without it
+        const rowsWithout = rows.map(({ device_id, ...rest }: any) => rest);
+        const { error: e2 } = await supabase.from('ports').upsert(rowsWithout, { onConflict: 'id' });
+        error = e2 ?? null;
+        if (!e2) showToast('⚠ device_id 컬럼 없음 — 초기설정 가이드의 AI 프롬프트로 마이그레이션 후 재Push 권장', 'error');
+      }
       if (error) throw new Error(error.message);
       // Fix P2: delete remote rows whose IDs are no longer in local list
       // Fix P2g: skip delete pass if auto-pull never succeeded — pull first before deleting
@@ -2227,35 +2242,157 @@ function App() {
       <div className="max-w-4xl mx-auto">
         {/* 탭 네비게이션 */}
         <div className="flex items-center justify-between mb-4">
-          <div className="flex gap-1 bg-[#18181b] border border-zinc-800 rounded-xl p-1 w-fit">
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1 bg-[#18181b] border border-zinc-800 rounded-xl p-1 w-fit">
+              <button
+                onClick={() => setActiveTab('ports')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  activeTab === 'ports'
+                    ? 'bg-zinc-700 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                }`}
+              >
+                <Server className="w-3.5 h-3.5" />
+                프로젝트 관리
+              </button>
+              <button
+                onClick={() => setActiveTab('portal')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  activeTab === 'portal'
+                    ? 'bg-zinc-700 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                }`}
+              >
+                <BookMarked className="w-3.5 h-3.5" />
+                포털
+              </button>
+            </div>
+
+            {/* 포털 탭 전용 액션 버튼 (글로벌 위치) */}
+            {activeTab === 'portal' && (
+              <>
+                <div className="flex items-center rounded-lg border border-zinc-800 overflow-hidden">
+                  <button
+                    onClick={() => portalActionsRef.current?.push()}
+                    title="Supabase Push"
+                    className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-800 transition-all flex items-center gap-1"
+                  >
+                    <CloudUpload className="w-3.5 h-3.5 text-indigo-400" />
+                    <span className="text-xs font-medium">Push</span>
+                  </button>
+                  <button
+                    onClick={() => portalActionsRef.current?.pull()}
+                    title="Supabase Pull"
+                    className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm transition-all flex items-center gap-1"
+                  >
+                    <CloudDownload className="w-3.5 h-3.5 text-indigo-400" />
+                    <span className="text-xs font-medium">Pull</span>
+                  </button>
+                </div>
+                <button
+                  onClick={() => portalActionsRef.current?.exportData()}
+                  title="내보내기"
+                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => portalActionsRef.current?.importData()}
+                  title="불러오기"
+                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                >
+                  <Upload className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => portalActionsRef.current?.openSettings()}
+                  title="Supabase / 단말 설정"
+                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
+              </>
+            )}
+
+            {/* 포트 탭 전용 액션 버튼 (글로벌 위치) */}
+            {activeTab === 'ports' && (
+              <>
+                <button onClick={handleExportPorts} title="내보내기" className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all">
+                  <Download className="w-4 h-4" />
+                </button>
+                <button onClick={handleImportPorts} title="불러오기" className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all">
+                  <Upload className="w-4 h-4" />
+                </button>
+                <button onClick={handleRefresh} disabled={isRefreshing || isAiEnriching} title={isAiEnriching ? 'AI 분석 중…' : '새로고침'} className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                  <RefreshCw className={`w-4 h-4 ${isRefreshing || isAiEnriching ? 'animate-spin' : ''}`} />
+                </button>
+                <div className="flex items-center rounded-xl border border-zinc-800 overflow-hidden">
+                  <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-800 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
+                    <span className="text-xs font-medium">Push</span>
+                  </button>
+                  <button onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
+                    <span className="text-xs font-medium">Pull</span>
+                  </button>
+                </div>
+                <button
+                  onClick={() => { setActiveTab('portal'); setOpenPortalSettings(true); }}
+                  title="Supabase / 단말 설정"
+                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
+              </>
+            )}
+
+            {/* 설정 마법사 버튼 */}
             <button
-              onClick={() => setActiveTab('ports')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                activeTab === 'ports'
-                  ? 'bg-zinc-700 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-              }`}
+              onClick={() => setShowSetupWizard(true)}
+              title="초기 설정 마법사"
+              className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 text-xs rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all flex items-center gap-1"
             >
-              <Server className="w-3.5 h-3.5" />
-              프로젝트 관리
-            </button>
-            <button
-              onClick={() => setActiveTab('portal')}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                activeTab === 'portal'
-                  ? 'bg-zinc-700 text-white shadow-sm'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-              }`}
-            >
-              <BookMarked className="w-3.5 h-3.5" />
-              포털
+              <Rocket className="w-3.5 h-3.5" />
+              <span>세팅</span>
             </button>
           </div>
         </div>
 
         {/* 포털 탭 */}
         {activeTab === 'portal' && (
-          <PortalManager showToast={showToast} onClaudeBypass={API.openTmuxClaudeBypass} />
+          <PortalManager
+            showToast={showToast}
+            openSettings={openPortalSettings}
+            onSettingsClosed={() => setOpenPortalSettings(false)}
+            actionsRef={portalActionsRef}
+          />
+        )}
+
+        {/* 설정 마법사 오버레이 */}
+        {showSetupWizard && (
+          <SetupWizard
+            onComplete={async ({ supabaseUrl, supabaseAnonKey, deviceName }) => {
+              // portal.json에 저장
+              try {
+                const existing = isTauri()
+                  ? (await (async () => { const { invoke } = await import('@tauri-apps/api/core'); return invoke('load_portal'); })())
+                  : await getPortalCredentials();
+                const next = { ...(existing as any), supabaseUrl, supabaseAnonKey, deviceName };
+                if (isTauri()) {
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  await invoke('save_portal', { data: JSON.stringify(next) });
+                } else {
+                  await fetch('http://127.0.0.1:3001/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
+                }
+                portalConfigRef.current = next;
+                showToast(`${deviceName} 설정 완료! 동기화를 시작합니다.`, 'success');
+              } catch (e) {
+                showToast('설정 저장 실패: ' + e, 'error');
+              }
+              setShowSetupWizard(false);
+              setActiveTab('portal');
+            }}
+            onSkip={() => setShowSetupWizard(false)}
+          />
         )}
 
         {/* 포트 관리 탭 */}
@@ -2285,26 +2422,6 @@ function App() {
                 <Sparkles className="w-3.5 h-3.5" />
                 <span className="text-xs font-medium">AI이름 프롬프트</span>
               </button>
-              <button onClick={handleExportPorts} title="내보내기" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center">
-                <Download className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={handleImportPorts} title="불러오기" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center">
-                <Upload className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={handleRefresh} disabled={isRefreshing || isAiEnriching} title={isAiEnriching ? 'AI 분석 중…' : '새로고침'} className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
-                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing || isAiEnriching ? 'animate-spin' : ''}`} />
-                {isAiEnriching && <span className="text-xs text-zinc-400">AI</span>}
-              </button>
-              <div className="flex items-center rounded-lg border border-zinc-700 overflow-hidden">
-                <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-700 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
-                  <span className="text-xs font-medium">Push</span>
-                </button>
-                <button onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
-                  <span className="text-xs font-medium">Pull</span>
-                </button>
-              </div>
             </div>
           </div>
 
