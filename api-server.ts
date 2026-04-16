@@ -1248,7 +1248,7 @@ end tell`;
     if (url.pathname === "/api/git-pull" && req.method === "POST") {
       try {
         const { folderPath } = await req.json() as { folderPath: string };
-        if (!folderPath) return new Response(JSON.stringify({ success: false, error: "folderPath 필요" }), { headers: { "Content-Type": "application/json", ...headers } });
+        if (!folderPath) return new Response(JSON.stringify({ success: false, error: "folderPath 필요" }), { headers });
 
         const proc = Bun.spawn(["git", "pull"], {
           cwd: folderPath,
@@ -1260,11 +1260,11 @@ end tell`;
         const stderr = await new Response(proc.stderr).text();
         const output = (stdout + stderr).trim();
         if (proc.exitCode !== 0) {
-          return new Response(JSON.stringify({ success: false, error: output }), { headers: { "Content-Type": "application/json", ...headers } });
+          return new Response(JSON.stringify({ success: false, error: output }), { headers });
         }
-        return new Response(JSON.stringify({ success: true, output }), { headers: { "Content-Type": "application/json", ...headers } });
+        return new Response(JSON.stringify({ success: true, output }), { headers });
       } catch (e) {
-        return new Response(JSON.stringify({ success: false, error: String(e) }), { headers: { "Content-Type": "application/json", ...headers } });
+        return new Response(JSON.stringify({ success: false, error: String(e) }), { headers });
       }
     }
 
