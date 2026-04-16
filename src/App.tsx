@@ -1408,21 +1408,23 @@ function App() {
       await API.savePorts(merged);
 
       let rootsMsg = '';
-      if (pullDeviceId) {
+      // 다른 기기 Pull 시 작업루트는 건드리지 않음 (경로가 기기마다 다름)
+      if (pullDeviceId && !isOtherDevice) {
         let { data: rootData } = await supabase
           .from('workspace_roots').select('*').eq('device_id', pullDeviceId);
-        // pullDeviceId로 결과 없으면 전체에서 가져오기 (다른 기기 데이터)
         if (!rootData || rootData.length === 0) {
           const fallback = await supabase.from('workspace_roots').select('*');
           if (fallback.data && fallback.data.length > 0) rootData = fallback.data;
         }
         if (rootData && rootData.length > 0) {
-          const restoredRoots: WorkspaceRoot[] = rootData.map((r: any) => ({
-            id: r.id, name: r.name, path: r.path,
-          }));
-          setWorkspaceRoots(restoredRoots);
-          await API.saveWorkspaceRoots(restoredRoots);
-          rootsMsg = ` + ${restoredRoots.length}개 작업루트`;
+          const restoredRoots: WorkspaceRoot[] = rootData
+            .filter((r: any) => !r.path?.startsWith('__device__'))
+            .map((r: any) => ({ id: r.id, name: r.name, path: r.path }));
+          if (restoredRoots.length > 0) {
+            setWorkspaceRoots(restoredRoots);
+            await API.saveWorkspaceRoots(restoredRoots);
+            rootsMsg = ` + ${restoredRoots.length}개 작업루트`;
+          }
         }
       }
       const label = isOtherDevice ? '[다른 기기] ' : '';
