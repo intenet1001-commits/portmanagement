@@ -873,9 +873,9 @@ function App() {
                 const { data: rootData } = await supabase
                   .from('workspace_roots').select('*').eq('device_id', deviceId);
                 if (rootData && rootData.length > 0) {
-                  const restoredRoots: WorkspaceRoot[] = rootData.map((r: any) => ({
-                    id: r.id, name: r.name, path: r.path,
-                  }));
+                  const restoredRoots: WorkspaceRoot[] = rootData
+                    .filter((r: any) => r.path !== '__device__')
+                    .map((r: any) => ({ id: r.id, name: r.name, path: r.path }));
                   setWorkspaceRoots(restoredRoots);
                   await API.saveWorkspaceRoots(restoredRoots);
                 }
@@ -1486,18 +1486,21 @@ function App() {
 
       // workspace_roots 업로드
       let rootsMsg = '';
-      if (deviceId && workspaceRoots.length > 0) {
+      if (deviceId) {
         const rootRows = workspaceRoots.map(r => ({
-          id: r.id,
-          device_id: deviceId,
-          name: r.name,
-          path: r.path,
+          id: r.id, device_id: deviceId, name: r.name, path: r.path,
         }));
-        const { error: rootError } = await supabase.from('workspace_roots').upsert(rootRows, { onConflict: 'id' });
-        if (rootError) {
-          rootsMsg = ` (작업루트 업로드 실패: ${rootError.message})`;
-        } else {
-          rootsMsg = ` + ${workspaceRoots.length}개 작업루트`;
+        // 기기명 sentinel 행 — 스키마 변경 없이 device_name을 Supabase에 저장
+        if (deviceNameVal) {
+          rootRows.push({ id: `__device__${deviceId}`, device_id: deviceId, name: deviceNameVal, path: '__device__' });
+        }
+        if (rootRows.length > 0) {
+          const { error: rootError } = await supabase.from('workspace_roots').upsert(rootRows, { onConflict: 'id' });
+          if (rootError) {
+            rootsMsg = ` (작업루트 업로드 실패: ${rootError.message})`;
+          } else if (workspaceRoots.length > 0) {
+            rootsMsg = ` + ${workspaceRoots.length}개 작업루트`;
+          }
         }
       }
       showToast(`Supabase에 ${ports.length}개 포트${rootsMsg}를 업로드했습니다 ✓`, 'success');

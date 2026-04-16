@@ -922,13 +922,16 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         }
       }
 
-      // 2순위: workspace_roots — device_id + path에서 사용자명 추출
+      // 2순위: workspace_roots — sentinel 행(__device__)에서 기기명, 없으면 path에서 사용자명 추출
       const { data: rootRows } = await supabase
-        .from('workspace_roots').select('device_id, path').not('device_id', 'is', null);
+        .from('workspace_roots').select('device_id, name, path').not('device_id', 'is', null);
       for (const r of rootRows ?? []) {
         if (!r.device_id || r.device_id === '__shared__') continue;
         seen.add(r.device_id);
-        if (!nameMap.has(r.device_id) && r.path) {
+        // sentinel 행: Push 시 저장한 기기명 (최우선)
+        if (r.path === '__device__' && r.name) {
+          nameMap.set(r.device_id, r.name);
+        } else if (!nameMap.has(r.device_id) && r.path) {
           const m = r.path.match(/^\/(?:Users|home)\/([^/]+)\//);
           if (m) nameMap.set(r.device_id, `${m[1]}의 기기`);
         }
