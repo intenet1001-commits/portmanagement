@@ -1,0 +1,113 @@
+{
+  "timestamp": "2026-04-11T00:00:00.000Z",
+  "framework": "tauri2+react+vite+bun",
+  "grade": "C",
+  "summary": "Vite build passes cleanly (exit 0). No critical security vulnerabilities. 5 high + 3 moderate vulnerabilities in dev-only dependencies (vite, rollup, picomatch) — not shipped in the Tauri app bundle, but vite dev server CVEs are exploitable during local development. 7 source files modified and uncommitted (api-server.ts, lib.rs, App.tsx, tauri.conf.json, CLAUDE.md, README.md, .omc/project-memory.json) — Tauri builds from working tree so changes will be included but are unversioned. No TypeScript errors in source files. All essential config files committed.",
+  "checks": [
+    {
+      "name": "Security Audit (bun audit)",
+      "status": "warn",
+      "detail": "5 high + 3 moderate vulnerabilities. All in dev dependencies only — NOT shipped in Tauri bundle. HIGH: vite 7.2.6 (GHSA-v2wj-q39q-566r: server.fs.deny bypass; GHSA-p9ff-h696-f583: arbitrary file read via dev server WebSocket), rollup <4.59.0 (GHSA-mw96-cpmx-2vgc: arbitrary file write via path traversal), picomatch <2.3.2 (GHSA-c2c7-rcm5-vvqj: ReDoS). MODERATE: picomatch (GHSA-3v7f-55p6-f55p: method injection), vite (GHSA-4w7w-66w2-5vf9: optimized deps path traversal). Fix: bun update"
+    },
+    {
+      "name": "Vite Production Build (bun run build)",
+      "status": "pass",
+      "detail": "Build succeeded in 1.33s. Output: dist/assets/index-Ba5Rf4GB.js (482.96 kB / gzip 135.64 kB), dist/assets/index-DLBLpLCi.css (27.81 kB / gzip 5.80 kB). Two non-fatal Vite warnings about mixed static/dynamic imports of @tauri-apps/plugin-dialog and @tauri-apps/plugin-fs — do not affect functionality."
+    },
+    {
+      "name": "TypeScript Compilation",
+      "status": "pass",
+      "detail": "Zero TypeScript errors in source files (src/). tsc --noEmit reports errors only from src-tauri/target/release/build/*/tauri-codegen-assets/ which are Tauri-generated binary asset files outside the bundler scope. tsconfig.json: strict mode, skipLibCheck:true, moduleResolution:bundler — correct for Vite+React project."
+    },
+    {
+      "name": "Uncommitted Source Files",
+      "status": "warn",
+      "detail": "7 tracked files modified but not committed: api-server.ts, src-tauri/src/lib.rs, src-tauri/tauri.conf.json, src/App.tsx, CLAUDE.md, README.md, .omc/project-memory.json. Tauri CLI builds from working tree so next tauri:build WILL include these changes unversioned. Also: per project memory, DMG version date = last git commit date — commit before build to get today's date (2026-04-11) in DMG filename."
+    },
+    {
+      "name": "Essential Config Files Committed",
+      "status": "pass",
+      "detail": "All 4 essential config files are git-tracked and committed: vite.config.ts, tsconfig.json, tailwind.config.js, postcss.config.cjs."
+    },
+    {
+      "name": "Environment Variables",
+      "status": "pass",
+      "detail": "No .env files present or required. Supabase credentials stored at runtime in portal.json (not build-time env vars). Vite dev proxy: /api -> http://localhost:3001. No VITE_* env vars referenced in source. No build-time secrets needed."
+    },
+    {
+      "name": "Dependency Versions",
+      "status": "warn",
+      "detail": "vite ^7.2.6 installed (7.2.6) — vulnerable, safe version is >=7.3.2. tailwindcss pinned to v3 (correct — compatible with postcss.config.cjs using tailwindcss:{}). @tauri-apps/cli ^2.9.5, @tauri-apps/api ^2.9.1 (current). React 19.2.0, @supabase/supabase-js ^2.99.3 — all current."
+    },
+    {
+      "name": "Tauri Config",
+      "status": "pass",
+      "detail": "src-tauri/tauri.conf.json present. Bundle ID: com.portmanager.portmanager. Window: 1000x1050 (min 800x700). beforeBuildCommand is empty string (correct — avoids Bun/Node ESM conflict per project memory). Capabilities file: src-tauri/capabilities/default.json with fs:allow-write-text-file included."
+    }
+  ],
+  "critical_issues": [],
+  "warnings": [
+    {
+      "severity": "high",
+      "category": "security",
+      "package": "vite",
+      "installed_version": "7.2.6",
+      "affected_range": ">=7.0.0 <=7.3.1",
+      "cves": ["GHSA-v2wj-q39q-566r", "GHSA-p9ff-h696-f583"],
+      "description": "Vite dev server: server.fs.deny bypass + arbitrary file read via WebSocket. Dev-only risk, not in shipped Tauri bundle.",
+      "recommendation": "bun update vite"
+    },
+    {
+      "severity": "high",
+      "category": "security",
+      "package": "rollup",
+      "affected_range": ">=4.0.0 <4.59.0",
+      "cves": ["GHSA-mw96-cpmx-2vgc"],
+      "description": "Arbitrary File Write via Path Traversal. Indirect dep via vite. Dev-only risk.",
+      "recommendation": "bun update (resolves transitively when vite is updated)"
+    },
+    {
+      "severity": "high",
+      "category": "security",
+      "package": "picomatch",
+      "affected_range": "<2.3.2",
+      "cves": ["GHSA-c2c7-rcm5-vvqj"],
+      "description": "ReDoS vulnerability via extglob quantifiers. Indirect dep via vite and tailwindcss. Dev-only.",
+      "recommendation": "bun update"
+    },
+    {
+      "severity": "medium",
+      "category": "git",
+      "files": [
+        "api-server.ts",
+        "src-tauri/src/lib.rs",
+        "src-tauri/tauri.conf.json",
+        "src/App.tsx",
+        "CLAUDE.md",
+        "README.md",
+        ".omc/project-memory.json"
+      ],
+      "description": "7 modified source files uncommitted. Tauri builds from working tree — changes included in next build but unversioned. DMG version date will be wrong (last commit, not today).",
+      "recommendation": "git add api-server.ts src-tauri/src/lib.rs src-tauri/tauri.conf.json src/App.tsx && git commit -m 'chore: pre-build sync' before running tauri:build"
+    },
+    {
+      "severity": "low",
+      "category": "build",
+      "description": "Mixed static/dynamic import warnings for @tauri-apps/plugin-dialog and @tauri-apps/plugin-fs. App.tsx uses dynamic import() while PortalManager.tsx uses static import — Vite cannot split these into separate chunks.",
+      "recommendation": "Convert dynamic imports in App.tsx to static imports to match PortalManager.tsx pattern."
+    }
+  ],
+  "passed_checks": [
+    "Vite production build succeeds (exit 0, 1.33s)",
+    "Zero TypeScript errors in source files (src/)",
+    "No critical security vulnerabilities",
+    "vite.config.ts committed and correct (port 9000, /api proxy to 3001)",
+    "tsconfig.json committed (strict mode, bundler moduleResolution)",
+    "tailwind.config.js committed (v3, compatible with CJS postcss config)",
+    "postcss.config.cjs committed (CJS format correct — avoids ESM build error)",
+    "No missing build-time environment variables",
+    "Tauri 2 ACL config present with required fs permissions",
+    "beforeBuildCommand empty (correct — avoids Bun/Node ESM conflict)",
+    "No untracked critical config files missing from git"
+  ]
+}

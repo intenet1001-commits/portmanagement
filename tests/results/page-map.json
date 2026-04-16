@@ -1,0 +1,676 @@
+{
+  "url": "http://localhost:9000/",
+  "timestamp": "2026-04-11T00:00:00.000Z",
+  "framework": "react+vite",
+  "meta": {
+    "title": "포트 관리 프로그램",
+    "description": null,
+    "lang": "ko",
+    "viewport": "width=device-width, initial-scale=1.0"
+  },
+  "og_tags": {
+    "og:title": null,
+    "og:description": null,
+    "og:image": null,
+    "og:type": null,
+    "og:site_name": null,
+    "twitter:card": null
+  },
+  "pwa": {
+    "manifest": null,
+    "themeColor": null,
+    "appleCapable": null,
+    "appleTitle": null,
+    "appleStatusBar": null,
+    "appleIcon": null
+  },
+  "console_errors": [],
+  "tabs": [
+    {
+      "id": "ports",
+      "label": "프로젝트 관리",
+      "icon": "Server",
+      "default": true,
+      "description": "로컬 개발 프로젝트 포트 목록 관리, 실행/중지, 빌드, Supabase sync"
+    },
+    {
+      "id": "portal",
+      "label": "포털",
+      "icon": "BookMarked",
+      "default": false,
+      "description": "북마크/링크 포털 관리 (PortalManager 컴포넌트)"
+    }
+  ],
+  "sections": [
+    {
+      "tab": "ports",
+      "id": "header",
+      "title": "헤더 — 프로젝트 관리 프로그램",
+      "description": "앱 제목, 주요 액션 버튼 행 (AI이름 프롬프트, 내보내기, 불러오기, 새로고침, Supabase Push/Pull), 웹 모드 전용 빌드 버튼 행"
+    },
+    {
+      "tab": "ports",
+      "id": "add-form",
+      "title": "포트 추가 폼",
+      "description": "새 프로젝트를 등록하는 인라인 폼 (이름, 포트, command 경로, 터미널 명령어, 폴더 경로, 배포 URL, GitHub URL, 카테고리, 설명)"
+    },
+    {
+      "tab": "ports",
+      "id": "workspace-roots",
+      "title": "작업 루트",
+      "description": "워크스페이스 루트 폴더 목록. 루트 추가 버튼, 각 루트마다 '새 프로젝트' 및 삭제 버튼"
+    },
+    {
+      "tab": "ports",
+      "id": "port-list",
+      "title": "포트 목록",
+      "description": "등록된 포트/프로젝트 카드 목록. 검색, 필터(all/with-port/without-port), 카테고리 필터, 정렬(최근/이름/포트 + asc/desc), bypass permissions 토글 포함"
+    },
+    {
+      "tab": "portal",
+      "id": "portal-sidebar",
+      "title": "포털 카테고리 사이드바",
+      "description": "전체/카테고리별 필터. 카테고리 추가 버튼. 각 카테고리 삭제 버튼"
+    },
+    {
+      "tab": "portal",
+      "id": "portal-main",
+      "title": "포털 메인 콘텐츠",
+      "description": "검색바, 아이템 추가 버튼, Supabase Push/Pull, 내보내기/불러오기, 설정 버튼. 핀고정/비핀고정 아이템 카드 목록"
+    }
+  ],
+  "forms": [
+    {
+      "id": "add-port-form",
+      "tab": "ports",
+      "section": "add-form",
+      "fields": [
+        { "type": "text", "placeholder": "프로젝트 이름", "stateVar": "name", "required": true },
+        { "type": "number", "placeholder": "포트", "stateVar": "port", "required": true },
+        { "type": "text", "placeholder": ".command / .html 파일 경로 (선택사항)", "stateVar": "commandPath" },
+        { "type": "text", "placeholder": "터미널 명령어 (선택사항, 예: bunx cursor-talk-to-figma-socket)", "stateVar": "terminalCommand" },
+        { "type": "text", "placeholder": "프로젝트 폴더 경로 (선택사항)", "stateVar": "folderPath" },
+        { "type": "text", "placeholder": "배포 사이트 주소 (선택사항, 예: https://example.com)", "stateVar": "deployUrl" },
+        { "type": "text", "placeholder": "GitHub 주소 (선택사항, 예: https://github.com/user/repo)", "stateVar": "githubUrl" },
+        { "type": "select", "placeholder": "카테고리 (선택사항)", "stateVar": "category", "options": ["frontend", "backend", "AI", "tools", "infra", "mobile", "data", "fullstack"] },
+        { "type": "text", "placeholder": "프로젝트 설명 (선택사항)", "stateVar": "description" }
+      ],
+      "submitButton": "추가 (addPort)"
+    },
+    {
+      "id": "edit-port-form",
+      "tab": "ports",
+      "section": "port-list",
+      "description": "인라인 수정 폼 (editingId !== null일 때). 필드 구성은 add-port-form과 동일",
+      "fields": [
+        { "type": "text", "stateVar": "editName", "placeholder": "프로젝트 이름" },
+        { "type": "number", "stateVar": "editPort", "placeholder": "포트" },
+        { "type": "text", "stateVar": "editCommandPath" },
+        { "type": "text", "stateVar": "editTerminalCommand" },
+        { "type": "text", "stateVar": "editFolderPath" },
+        { "type": "text", "stateVar": "editDeployUrl" },
+        { "type": "text", "stateVar": "editGithubUrl" },
+        { "type": "select", "stateVar": "editCategory", "options": ["frontend", "backend", "AI", "tools", "infra", "mobile", "data", "fullstack"] },
+        { "type": "text", "stateVar": "editDescription" }
+      ],
+      "submitButton": "저장 (saveEdit, Check icon)",
+      "cancelButton": "취소 (cancelEdit, X icon)"
+    },
+    {
+      "id": "new-project-modal-form",
+      "tab": "ports",
+      "section": "workspace-roots",
+      "description": "새 프로젝트 폴더 생성 모달 (showNewProjectModal = true)",
+      "fields": [
+        { "type": "text", "stateVar": "newProjectName", "placeholder": "프로젝트 폴더 이름", "autoFocus": true },
+        { "type": "checkbox", "stateVar": "registerAsProject", "label": "포트 목록에 프로젝트로 등록" }
+      ],
+      "submitButton": "생성 (handleCreateProjectFolder)",
+      "cancelButton": "취소 (setShowNewProjectModal(false))"
+    },
+    {
+      "id": "portal-add-item-form",
+      "tab": "portal",
+      "description": "포털 아이템 추가/편집 모달",
+      "fields": [
+        { "type": "radio-buttons", "stateVar": "form.type", "options": ["link", "folder", "command"] },
+        { "type": "text", "stateVar": "form.name", "placeholder": "이름" },
+        { "type": "text", "stateVar": "form.url", "placeholder": "URL / 경로" },
+        { "type": "text", "stateVar": "form.description", "placeholder": "설명" },
+        { "type": "checkbox", "stateVar": "form.pinned", "label": "핀 고정" }
+      ]
+    },
+    {
+      "id": "portal-category-form",
+      "tab": "portal",
+      "description": "카테고리 추가 모달 (showCatModal = true)",
+      "fields": [
+        { "type": "text", "stateVar": "catForm.name", "placeholder": "카테고리 이름" },
+        { "type": "color-picker", "stateVar": "catForm.color", "options": ["blue", "green", "yellow", "red", "purple", "pink", "indigo", "orange", "teal", "gray"] }
+      ]
+    },
+    {
+      "id": "portal-search",
+      "tab": "portal",
+      "fields": [
+        { "type": "text", "stateVar": "search", "placeholder": "검색..." }
+      ]
+    },
+    {
+      "id": "port-list-search",
+      "tab": "ports",
+      "fields": [
+        { "type": "text", "stateVar": "searchQuery", "placeholder": "프로젝트 검색..." }
+      ]
+    }
+  ],
+  "buttons": [
+    {
+      "label": "프로젝트 관리",
+      "action": "setActiveTab('ports')",
+      "location": "tab-nav",
+      "icon": "Server"
+    },
+    {
+      "label": "포털",
+      "action": "setActiveTab('portal')",
+      "location": "tab-nav",
+      "icon": "BookMarked"
+    },
+    {
+      "label": "AI이름 프롬프트",
+      "action": "handleCopyAiNamePrompt",
+      "location": "header",
+      "tab": "ports",
+      "color": "emerald",
+      "icon": "Sparkles",
+      "title": "Claude Code에 붙여넣을 AI이름 생성 프롬프트를 클립보드에 복사"
+    },
+    {
+      "label": "내보내기",
+      "action": "handleExportPorts",
+      "location": "header",
+      "tab": "ports",
+      "icon": "Download",
+      "title": "포트 목록 JSON 내보내기"
+    },
+    {
+      "label": "불러오기",
+      "action": "handleImportPorts",
+      "location": "header",
+      "tab": "ports",
+      "icon": "Upload",
+      "title": "포트 목록 JSON 불러오기"
+    },
+    {
+      "label": "새로고침",
+      "action": "handleRefresh",
+      "location": "header",
+      "tab": "ports",
+      "icon": "RefreshCw",
+      "disabledWhen": "isRefreshing"
+    },
+    {
+      "label": "Push",
+      "action": "handlePushToSupabase",
+      "location": "header",
+      "tab": "ports",
+      "icon": "CloudUpload",
+      "color": "indigo",
+      "disabledWhen": "isPushingPorts"
+    },
+    {
+      "label": "Pull",
+      "action": "handleRestoreFromSupabase",
+      "location": "header",
+      "tab": "ports",
+      "icon": "CloudDownload",
+      "color": "indigo",
+      "disabledWhen": "isRestoring"
+    },
+    {
+      "label": "DMG 폴더",
+      "action": "API.openBuildFolder()",
+      "location": "header-row2",
+      "tab": "ports",
+      "condition": "!isTauri()",
+      "icon": "FolderOpen"
+    },
+    {
+      "label": "앱 빌드",
+      "action": "handleBuildApp",
+      "location": "header-row2",
+      "tab": "ports",
+      "condition": "!isTauri()",
+      "color": "green",
+      "icon": "Terminal",
+      "disabledWhen": "isBuilding"
+    },
+    {
+      "label": "DMG 빌드",
+      "action": "handleBuildDmg",
+      "location": "header-row2",
+      "tab": "ports",
+      "condition": "!isTauri()",
+      "color": "purple",
+      "icon": "Package",
+      "disabledWhen": "isBuilding"
+    },
+    {
+      "label": "DMG 출시하기",
+      "action": "handleExportDmg",
+      "location": "header-row2",
+      "tab": "ports",
+      "condition": "!isTauri()",
+      "color": "blue",
+      "icon": "Rocket"
+    },
+    {
+      "label": "Windows 빌드",
+      "action": "handleBuildWindows",
+      "location": "header-row2",
+      "tab": "ports",
+      "condition": "!isTauri()",
+      "color": "indigo",
+      "icon": "Monitor",
+      "disabledWhen": "isBuilding"
+    },
+    {
+      "label": "추가",
+      "action": "addPort",
+      "location": "add-form",
+      "tab": "ports",
+      "color": "blue",
+      "icon": "Plus"
+    },
+    {
+      "label": "루트 추가",
+      "action": "handleAddWorkspaceRoot",
+      "location": "workspace-roots",
+      "tab": "ports",
+      "icon": "Plus"
+    },
+    {
+      "label": "새 프로젝트",
+      "action": "setShowNewProjectModal(true)",
+      "location": "workspace-roots-item",
+      "tab": "ports",
+      "color": "green",
+      "icon": "FilePlus",
+      "perItem": true
+    },
+    {
+      "label": "삭제 (루트)",
+      "action": "handleRemoveWorkspaceRoot(root.id)",
+      "location": "workspace-roots-item",
+      "tab": "ports",
+      "color": "red",
+      "perItem": true
+    },
+    {
+      "label": "검색 초기화",
+      "action": "setSearchQuery('')",
+      "location": "port-list-search",
+      "tab": "ports",
+      "icon": "X",
+      "condition": "searchQuery !== ''"
+    },
+    {
+      "label": "bypass permissions",
+      "action": "setBypassPermissions(v => !v)",
+      "location": "port-list-toolbar",
+      "tab": "ports",
+      "toggle": true,
+      "color": "orange (active) / zinc (inactive)"
+    },
+    {
+      "label": "정렬 방향 토글 (↑오름 / ↓내림)",
+      "action": "setSortOrder",
+      "location": "port-list-toolbar",
+      "tab": "ports"
+    },
+    {
+      "label": "새로고침 (포트 상태)",
+      "action": "handleRefresh",
+      "location": "port-list-toolbar",
+      "tab": "ports",
+      "icon": "RefreshCw"
+    },
+    {
+      "label": "열기 (HTML 파일)",
+      "action": "executeCommand(item)",
+      "location": "port-card",
+      "tab": "ports",
+      "condition": "isHtmlFile(item.commandPath)",
+      "color": "blue",
+      "icon": "ExternalLink",
+      "perItem": true
+    },
+    {
+      "label": "중지",
+      "action": "stopCommand(item)",
+      "location": "port-card",
+      "tab": "ports",
+      "condition": "item.isRunning",
+      "color": "red",
+      "icon": "Square",
+      "perItem": true
+    },
+    {
+      "label": "강제재실행",
+      "action": "forceRestartCommand(item)",
+      "location": "port-card",
+      "tab": "ports",
+      "color": "orange",
+      "icon": "RotateCw",
+      "perItem": true
+    },
+    {
+      "label": "실행",
+      "action": "executeCommand(item)",
+      "location": "port-card",
+      "tab": "ports",
+      "condition": "!item.isRunning",
+      "color": "green",
+      "icon": "Play",
+      "perItem": true
+    },
+    {
+      "label": "로그",
+      "action": "API.openLog(item.id)",
+      "location": "port-card",
+      "tab": "ports",
+      "condition": "isTauri() && (item.commandPath || item.terminalCommand)",
+      "color": "amber",
+      "icon": "FileText",
+      "perItem": true
+    },
+    {
+      "label": "tmux",
+      "action": "openTmuxClaude(item)",
+      "location": "port-card",
+      "tab": "ports",
+      "color": "violet (normal) / orange (bypass)",
+      "icon": "SquareTerminal",
+      "perItem": true
+    },
+    {
+      "label": "↺ (tmux 새로 열기)",
+      "action": "openTmuxClaudeFresh(item)",
+      "location": "port-card",
+      "tab": "ports",
+      "color": "violet (normal) / orange (bypass)",
+      "perItem": true
+    },
+    {
+      "label": "Claude",
+      "action": "openTerminalClaude(item)",
+      "location": "port-card",
+      "tab": "ports",
+      "color": "indigo (normal) / orange (bypass)",
+      "icon": "Terminal",
+      "perItem": true
+    },
+    {
+      "label": "폴더",
+      "action": "API.openFolder(item.folderPath)",
+      "location": "port-card",
+      "tab": "ports",
+      "condition": "item.folderPath",
+      "color": "zinc",
+      "icon": "Folder",
+      "perItem": true
+    },
+    {
+      "label": "배포",
+      "action": "API.openInChrome(item.deployUrl) or <a> link",
+      "location": "port-card",
+      "tab": "ports",
+      "condition": "item.deployUrl",
+      "color": "purple",
+      "icon": "Globe",
+      "perItem": true
+    },
+    {
+      "label": "GitHub",
+      "action": "API.openInChrome(item.githubUrl) or <a> link",
+      "location": "port-card",
+      "tab": "ports",
+      "condition": "item.githubUrl",
+      "color": "zinc",
+      "icon": "Github",
+      "perItem": true
+    },
+    {
+      "label": "수정",
+      "action": "setEditingId(item.id)",
+      "location": "port-card",
+      "tab": "ports",
+      "icon": "Pencil",
+      "perItem": true
+    },
+    {
+      "label": "삭제",
+      "action": "deletePort(item.id)",
+      "location": "port-card",
+      "tab": "ports",
+      "icon": "Trash2",
+      "color": "red",
+      "perItem": true
+    },
+    {
+      "label": "저장 (수정)",
+      "action": "saveEdit",
+      "location": "port-card-edit",
+      "tab": "ports",
+      "icon": "Check",
+      "color": "green"
+    },
+    {
+      "label": "취소 (수정)",
+      "action": "cancelEdit",
+      "location": "port-card-edit",
+      "tab": "ports",
+      "icon": "X"
+    },
+    {
+      "label": "로그 복사",
+      "action": "navigator.clipboard.writeText(buildLogs.join('\\n'))",
+      "location": "build-log-modal",
+      "tab": "ports"
+    },
+    {
+      "label": "닫기 (빌드 로그 모달)",
+      "action": "setShowBuildLog(false)",
+      "location": "build-log-modal",
+      "icon": "X"
+    },
+    {
+      "label": "닫기 (토스트)",
+      "action": "setToasts(prev => prev.filter(...))",
+      "location": "toast",
+      "icon": "X"
+    },
+    {
+      "label": "추가 (포털 아이템)",
+      "action": "openAddModal",
+      "location": "portal-topbar",
+      "tab": "portal",
+      "color": "blue",
+      "icon": "Plus"
+    },
+    {
+      "label": "Push (포털)",
+      "action": "syncSupabase",
+      "location": "portal-topbar",
+      "tab": "portal",
+      "icon": "CloudUpload",
+      "disabledWhen": "isSyncing"
+    },
+    {
+      "label": "Pull (포털)",
+      "action": "pullFromSupabase",
+      "location": "portal-topbar",
+      "tab": "portal",
+      "icon": "CloudDownload",
+      "disabledWhen": "isRestoring"
+    },
+    {
+      "label": "내보내기 (포털)",
+      "action": "exportData",
+      "location": "portal-topbar",
+      "tab": "portal",
+      "icon": "Download"
+    },
+    {
+      "label": "불러오기 (포털)",
+      "action": "importData",
+      "location": "portal-topbar",
+      "tab": "portal",
+      "icon": "Upload"
+    },
+    {
+      "label": "설정 (포털)",
+      "action": "setShowSettings(true)",
+      "location": "portal-topbar",
+      "tab": "portal",
+      "icon": "Settings"
+    },
+    {
+      "label": "전체",
+      "action": "setSelectedCat('all')",
+      "location": "portal-sidebar",
+      "tab": "portal",
+      "icon": "BookMarked"
+    },
+    {
+      "label": "카테고리 추가",
+      "action": "setShowCatModal(true)",
+      "location": "portal-sidebar",
+      "tab": "portal",
+      "icon": "Plus"
+    },
+    {
+      "label": "카테고리 삭제",
+      "action": "deleteCategory(cat.id)",
+      "location": "portal-sidebar-item",
+      "tab": "portal",
+      "icon": "X",
+      "perItem": true
+    }
+  ],
+  "modals": [
+    {
+      "id": "build-log-modal",
+      "trigger": "handleBuildApp / handleBuildDmg / handleBuildWindows",
+      "stateVar": "showBuildLog",
+      "title": "{buildType} 빌드 진행 상황",
+      "description": "실시간 빌드 로그 표시. 색상 코딩: 빨강(에러), 초록(성공), 노랑(경고). 로그 복사 버튼 포함"
+    },
+    {
+      "id": "worktree-picker-modal",
+      "trigger": "executeCommand (tmux/claude mode with git worktrees)",
+      "stateVar": "worktreePickerState",
+      "title": "Git 워크트리 선택",
+      "description": "감지된 워크트리 목록 표시. 워크트리 없이 실행 / 실행 → 버튼"
+    },
+    {
+      "id": "new-project-modal",
+      "trigger": "작업 루트 → 새 프로젝트 버튼",
+      "stateVar": "showNewProjectModal",
+      "title": "새 프로젝트 생성",
+      "description": "프로젝트 이름 입력 + 포트 목록 등록 체크박스. Enter 키로 제출 가능"
+    },
+    {
+      "id": "portal-add-item-modal",
+      "trigger": "포털 → 추가 버튼",
+      "stateVar": "showAddModal (PortalManager)",
+      "description": "포털 아이템 추가/편집 (name, type, url/path, description, pinned)"
+    },
+    {
+      "id": "portal-category-modal",
+      "trigger": "포털 사이드바 → 카테고리 추가",
+      "stateVar": "showCatModal (PortalManager)",
+      "description": "카테고리 이름 + 색상 선택 (blue/green/yellow/red/purple/pink/indigo/orange/teal/gray)"
+    },
+    {
+      "id": "portal-settings-modal",
+      "trigger": "포털 → 설정 버튼",
+      "stateVar": "showSettings (PortalManager)",
+      "description": "Supabase URL + anon key 입력. SetupGuide (DDL 프롬프트 복사 아코디언) 포함"
+    }
+  ],
+  "features": {
+    "hasSPARouter": false,
+    "hasInfiniteScroll": false,
+    "hasLazyLoading": false,
+    "hasAuth": false,
+    "hasSPA": true,
+    "hasDualMode": true,
+    "dualModeNote": "Tauri 앱 모드와 웹 브라우저 모드를 isTauri()로 분기. 빌드 버튼은 웹 모드에서만 노출",
+    "hasSupabaseSync": true,
+    "supabaseNote": "ports 테이블 Push/Pull (프로젝트 관리 탭), portal_items + portal_categories 테이블 Push/Pull (포털 탭)",
+    "hasToastNotifications": true,
+    "hasBuildSystem": true,
+    "buildTypes": ["app (.app bundle)", "dmg (배포용)", "windows (GitHub Actions)"],
+    "hasTmuxIntegration": true,
+    "tmuxNote": "각 포트 카드에서 tmux 세션으로 Claude 실행. bypass permissions 토글로 --dangerously-skip-permissions 활성화",
+    "hasWorktreePicker": true,
+    "hasProcessManagement": true,
+    "processManagementNote": "SIGTERM → SIGKILL 자동 전환. lsof 기반 포트 상태 감지. 강제재실행 지원",
+    "hasRealtimeBuildLog": true,
+    "hasAiNameGeneration": true,
+    "aiNameNote": "Claude Code 프롬프트 복사 방식 (batch AI 이름 생성)",
+    "hasCategoryFilter": true,
+    "categories": ["frontend", "backend", "AI", "tools", "infra", "mobile", "data", "fullstack"]
+  },
+  "pages": [
+    {
+      "url": "http://localhost:9000/",
+      "title": "포트 관리 프로그램",
+      "path": "/",
+      "note": "단일 페이지 앱 — 탭 전환으로 콘텐츠 변경, URL 라우팅 없음"
+    }
+  ],
+  "navigation": {
+    "mainNav": [
+      { "label": "프로젝트 관리", "tabId": "ports" },
+      { "label": "포털", "tabId": "portal" }
+    ],
+    "footerNav": [],
+    "sideNav": [
+      { "note": "포털 탭 내 카테고리 사이드바 (왼쪽 w-48 패널)" }
+    ]
+  },
+  "dataStorage": {
+    "primary": "~/Library/Application Support/com.portmanager.portmanager/ports.json",
+    "logs": "~/Library/Application Support/com.portmanager.portmanager/logs/{portId}.log",
+    "portal": "portal.json (Supabase credentials 포함)",
+    "workspaceRoots": "workspace-roots.json (웹 모드)"
+  },
+  "apiEndpoints": [
+    "GET /api/ports",
+    "POST /api/ports",
+    "POST /api/detect-port",
+    "POST /api/execute-command",
+    "POST /api/stop-command",
+    "POST /api/force-restart-command",
+    "POST /api/check-port-status",
+    "POST /api/build",
+    "GET /api/build-status",
+    "POST /api/open-build-folder",
+    "POST /api/open-folder",
+    "POST /api/export-dmg",
+    "GET /api/pick-folder",
+    "POST /api/create-folder",
+    "GET /api/portal",
+    "POST /api/portal",
+    "POST /api/list-git-worktrees"
+  ],
+  "totalTabs": 2,
+  "totalForms": 7,
+  "totalButtonTypes": 45,
+  "totalModals": 6,
+  "screenshot": "tests/screenshots/homepage.png",
+  "summary": "포트 관리 프로그램은 Tauri 2 + React + Vite SPA입니다. 2개 탭(프로젝트 관리, 포털)으로 구성됩니다. 프로젝트 관리 탭은 로컬 개발 서버 포트를 등록/실행/중지/강제재실행하며, 앱 빌드(App/DMG/Windows), Supabase Push/Pull, tmux+Claude 통합을 제공합니다. 포털 탭은 북마크/링크 관리 UI입니다. OG 메타태그 없음, PWA 없음, 콘솔 에러 없음, 프레임워크 React+Vite 확인."
+}

@@ -1,0 +1,29 @@
+{
+  "timestamp": "2026-03-26T00:00:00Z",
+  "target_url": "http://localhost:9000",
+  "summary": {
+    "overall": "good",
+    "note": "Local dev server - timings reflect localhost performance"
+  },
+  "load_times": {
+    "frontend_html_load_ms": 14,
+    "api_ports_response_ms": 4.2,
+    "api_ports_response_size_bytes": 6812
+  },
+  "bundle_sizes": {
+    "js_bundle": "447KB (index-CtM8Q-d6.js)",
+    "css_bundle": "25KB (index-C-zz1JwV.css)",
+    "html": "387B",
+    "total_approx": "~472KB",
+    "note": "447KB JS is moderate for a React + Supabase + lucide-react app. No code splitting detected."
+  },
+  "observations": [
+    "Frontend load: ~14ms (excellent for localhost)",
+    "API response: ~4ms (excellent for localhost with JSON file storage)",
+    "No lazy loading or code splitting in Vite config",
+    "447KB JS bundle includes React 19, Supabase client, lucide-react icons, Tauri API",
+    "Single JS chunk - consider splitting Supabase client if bundle size becomes concern",
+    "No service worker or PWA caching (not applicable for desktop Tauri app)"
+  ],
+  "vitals_note": "FCP/LCP/CLS metrics not measurable without browser instrumentation (Playwright/Lighthouse). Load times measured via curl."
+}

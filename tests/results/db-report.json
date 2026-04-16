@@ -1,0 +1,85 @@
+{
+  "timestamp": "2026-04-11T00:00:00.000Z",
+  "baseUrl": "http://localhost:3001",
+  "database": "json-file (ports.json + portal.json)",
+  "grade": "B+",
+  "summary": "All 7 core API endpoints responded correctly. CRUD round-trip (POST then GET verify) passed. Error handling is solid (400 for missing field, 404 for missing file). Port status detection works correctly for both running and stopped ports. One minor issue: CORS Access-Control-Allow-Origin is locked to http://localhost:5173 only — requests from other origins (e.g. the Tauri webview or localhost:3000) will be blocked by browser CORS policy.",
+  "tests": [
+    {
+      "endpoint": "/api/ports",
+      "method": "GET",
+      "status": "pass",
+      "response_code": 200,
+      "detail": "Returns valid JSON array of 43 port entries. Each entry has id, name, port, commandPath, folderPath, isRunning fields. Array includes entries with null port (non-server projects) — expected behavior."
+    },
+    {
+      "endpoint": "/api/ports",
+      "method": "POST",
+      "status": "pass",
+      "response_code": 200,
+      "detail": "Accepted test payload [{id:'test-db-validator-001', name:'DB Validator Test', port:19998, ...}] and returned {success:true}. Subsequent GET confirmed the test entry was present — write-then-read round-trip verified. Original data restored successfully."
+    },
+    {
+      "endpoint": "/api/check-port-status",
+      "method": "POST",
+      "status": "pass",
+      "response_code": 200,
+      "detail": "Port 9000 (portmanagement app is running): returned {success:true, isRunning:true}. Correct positive detection."
+    },
+    {
+      "endpoint": "/api/check-port-status",
+      "method": "POST",
+      "status": "pass",
+      "response_code": 200,
+      "detail": "Port 19999 (nothing running): returned {success:true, isRunning:false}. Correct negative detection."
+    },
+    {
+      "endpoint": "/api/detect-port",
+      "method": "POST (empty filePath)",
+      "status": "pass",
+      "response_code": 400,
+      "detail": "Empty string filePath returned {error:'Missing filePath'} with HTTP 400. Correct validation."
+    },
+    {
+      "endpoint": "/api/detect-port",
+      "method": "POST (nonexistent path)",
+      "status": "pass",
+      "response_code": 404,
+      "detail": "Path '/nonexistent/path/test.command' returned {error:'File not found'} with HTTP 404. Correct error handling."
+    },
+    {
+      "endpoint": "/api/portal",
+      "method": "GET",
+      "status": "pass",
+      "response_code": 200,
+      "detail": "Returns valid JSON with categories (6 entries), items (2 entries), deviceId, lastSynced, supabaseUrl, supabaseAnonKey. Structure matches expected portal.json schema."
+    },
+    {
+      "endpoint": "/api/ports (CORS)",
+      "method": "GET + OPTIONS preflight",
+      "status": "warn",
+      "response_code": 200,
+      "detail": "CORS headers present: Access-Control-Allow-Origin: http://localhost:5173, Allow-Methods: GET, POST, OPTIONS, Allow-Headers: Content-Type. However origin is hardcoded to localhost:5173 only — Tauri webview or other origins will fail browser CORS check. Not a problem for current Tauri usage (Tauri bypasses CORS), but would block web clients on other ports."
+    }
+  ],
+  "environmentCheck": {
+    "serverRunning": true,
+    "dataFileAccessible": true,
+    "portalFileAccessible": true,
+    "lsofAvailable": true
+  },
+  "issues": [
+    {
+      "severity": "minor",
+      "issue": "CORS origin locked to http://localhost:5173",
+      "detail": "Access-Control-Allow-Origin is set to a single hardcoded origin. Any browser client not on port 5173 (e.g. localhost:3000, localhost:9000, or a deployed URL) will receive CORS errors. Consider using a configurable allowed-origins list or '*' for local-only servers.",
+      "affected_endpoints": "all"
+    },
+    {
+      "severity": "info",
+      "issue": "Two port entries have null port values with malformed folderPath",
+      "detail": "Entries id='fba998c9...' and id='7260e279...' have port:null and folderPath containing a quoted shell path artifact. These appear to be data entry errors from a previous drag-and-drop operation. No API bug — data integrity issue in ports.json.",
+      "affected_endpoints": "GET /api/ports"
+    }
+  ]
+}

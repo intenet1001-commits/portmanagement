@@ -1,0 +1,61 @@
+{
+  "timestamp": "2026-03-26T00:00:00Z",
+  "target_url": "http://localhost:9000",
+  "summary": {
+    "pass": 8,
+    "fail": 1,
+    "warn": 2
+  },
+  "tests": [
+    {
+      "name": "포트 목록 표시",
+      "status": "pass",
+      "detail": "API에서 24개 포트 항목 정상 로드 (null port 2개 포함)"
+    },
+    {
+      "name": "포트 카운트 검증",
+      "status": "warn",
+      "detail": "예상 23개 vs 실제 24개 - nhmuhtest1 신규 항목 추가됨. 2개 항목(nhmuhtest1, 글로벌열공v3)은 port=null"
+    },
+    {
+      "name": "API 서버 가용성",
+      "status": "pass",
+      "detail": "http://localhost:3001 응답 정상 (HTTP 200)"
+    },
+    {
+      "name": "포트 상태 확인 (check-port-status)",
+      "status": "pass",
+      "detail": "POST /api/check-port-status 정상 동작. port 3001 → isRunning: true"
+    },
+    {
+      "name": "포트관리기 자기 자신 실행 중",
+      "status": "pass",
+      "detail": "포트관리기 (port 3001) isRunning=true - 자기 자신이 실행 중임을 올바르게 감지"
+    },
+    {
+      "name": "detect-port 엔드포인트",
+      "status": "pass",
+      "detail": "POST /api/detect-port 정상 동작. .command 파일에서 포트/폴더/프로젝트명 추출 성공"
+    },
+    {
+      "name": "데이터 지속성",
+      "status": "pass",
+      "detail": "ports.json에서 24개 포트 데이터 로드 및 유지 중. 앱 재시작 후에도 데이터 복원됨"
+    },
+    {
+      "name": "실행 버튼 동작 (브라우저 모드)",
+      "status": "warn",
+      "detail": "브라우저 모드에서 execute-command API 호출 가능하나, Chrome 자동 오픈은 Tauri 앱 전용 기능 (invoke 기반)"
+    },
+    {
+      "name": "404 에러 처리",
+      "status": "pass",
+      "detail": "존재하지 않는 엔드포인트 → {error: 'Not found'} + HTTP 404 정상 반환"
+    },
+    {
+      "name": "null port 항목 처리",
+      "status": "fail",
+      "detail": "2개 항목(nhmuhtest1, 글로벌열공v3)이 port=null. check-port-status 호출 시 에러 가능성. UI에서 실행 버튼 비활성화 여부 확인 필요"
+    }
+  ]
+}

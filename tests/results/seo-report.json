@@ -1,0 +1,107 @@
+{
+  "url": "http://localhost:9000/",
+  "timestamp": "2026-04-11T00:00:00.000Z",
+  "context": "React 19 + Vite SPA, local dev tool (Tauri port manager), single route, no public indexing required",
+  "grade": "C",
+  "summary": "Local dev tool with minimal SEO setup. Title and lang are present. No meta description, no canonical, no robots.txt, no sitemap.xml, no structured data, no OG tags (expected). H1 exists and is unique. No noindex blocking. Grade C reflects missing basics — acceptable for a private local tool, but would need work if ever publicly deployed.",
+  "checks": [
+    {
+      "name": "Title tag",
+      "status": "warn",
+      "detail": "Present: '포트 관리 프로그램' (12 chars). Too short for public SEO (recommended 50-60 chars), but adequate for a local tool."
+    },
+    {
+      "name": "Meta description",
+      "status": "fail",
+      "detail": "Absent. No <meta name='description'> in index.html or injected at runtime."
+    },
+    {
+      "name": "H1 tag",
+      "status": "pass",
+      "detail": "Exactly one H1 in the app: '프로젝트 관리 프로그램' (rendered in App.tsx header). No duplicate H1 detected."
+    },
+    {
+      "name": "OG tags (og:title, og:description, og:image)",
+      "status": "pass",
+      "detail": "None present — expected for a local dev tool. Not a public shareable page."
+    },
+    {
+      "name": "robots.txt",
+      "status": "fail",
+      "detail": "No /robots.txt file. Request returns the SPA index.html fallback. If ever publicly deployed, crawlers will receive HTML instead of directives."
+    },
+    {
+      "name": "sitemap.xml",
+      "status": "fail",
+      "detail": "No /sitemap.xml file. Request returns the SPA index.html fallback. Single-route SPA, so a sitemap would only need one URL entry."
+    },
+    {
+      "name": "Canonical tag",
+      "status": "fail",
+      "detail": "No <link rel='canonical'> present. Not critical for a local single-route SPA."
+    },
+    {
+      "name": "Lang attribute on <html>",
+      "status": "pass",
+      "detail": "<html lang='ko'> — correct, matches the Korean UI language."
+    },
+    {
+      "name": "Structured data (JSON-LD)",
+      "status": "fail",
+      "detail": "No <script type='application/ld+json'> found. Appropriate schema would be SoftwareApplication or WebApplication if publicly deployed."
+    },
+    {
+      "name": "noindex / crawl blocking",
+      "status": "pass",
+      "detail": "No <meta name='robots' content='noindex'> set. No crawl block in robots.txt (file absent). Safe — will not accidentally block indexing if deployed."
+    },
+    {
+      "name": "Duplicate H1 tags",
+      "status": "pass",
+      "detail": "Single H1 found across the entire SPA. No duplicates."
+    },
+    {
+      "name": "Viewport meta tag",
+      "status": "pass",
+      "detail": "<meta name='viewport' content='width=device-width, initial-scale=1.0'> present."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "low",
+      "check": "meta description",
+      "issue": "Meta description absent. Add one to index.html if the app is ever publicly deployed.",
+      "recommendation": "<meta name='description' content='로컬 개발 서버의 포트와 프로젝트를 관리하는 데스크탑 도구.'>"
+    },
+    {
+      "severity": "low",
+      "check": "robots.txt",
+      "issue": "No robots.txt. For a local-only tool this is fine; add one before any public deployment.",
+      "recommendation": "Create public/robots.txt with 'User-agent: *\\nDisallow: /' to block indexing, or 'Allow: /' to permit."
+    },
+    {
+      "severity": "low",
+      "check": "sitemap.xml",
+      "issue": "No sitemap.xml. Not needed for a local tool.",
+      "recommendation": "If publicly deployed: create a single-URL sitemap referencing the root URL."
+    },
+    {
+      "severity": "low",
+      "check": "canonical",
+      "issue": "No canonical tag. Not critical for a single-route SPA.",
+      "recommendation": "<link rel='canonical' href='http://localhost:9000/'> or the production URL."
+    },
+    {
+      "severity": "low",
+      "check": "title length",
+      "issue": "Title '포트 관리 프로그램' is 12 characters — below the 50-60 char recommendation for public SEO.",
+      "recommendation": "For local use this is fine. For public deployment expand to e.g. '포트 관리 프로그램 — 로컬 개발 서버 포트 & 프로젝트 관리 도구'."
+    },
+    {
+      "severity": "info",
+      "check": "structured data",
+      "issue": "No JSON-LD schema. Optional for a local tool.",
+      "recommendation": "If publicly deployed, add SoftwareApplication schema with name, operatingSystem, applicationCategory."
+    }
+  ]
+}
