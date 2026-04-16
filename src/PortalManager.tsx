@@ -3,7 +3,7 @@ import {
   Globe, Folder, Plus, Trash2, Pencil, X, Check, Search,
   ExternalLink, FolderOpen, Star, Download, Upload,
   Cloud, CloudOff, CloudUpload, CloudDownload, Settings, Settings2, RefreshCw, Link2, Pin,
-  BookMarked, ChevronDown, Database
+  BookMarked, ChevronDown, Database, Terminal
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
@@ -368,6 +368,15 @@ function SetupGuide() {
   const [open, setOpen] = React.useState(false);
   const [step, setStep] = React.useState(0);
   const [copied, setCopied] = React.useState(false);
+  const [loginLoading, setLoginLoading] = React.useState(false);
+
+  const handleSupabaseLogin = async () => {
+    setLoginLoading(true);
+    try {
+      await fetch('/api/supabase-login', { method: 'POST' });
+    } catch {}
+    setTimeout(() => setLoginLoading(false), 2000);
+  };
 
   const CLI_FIRST_SETUP = `# 최초 세팅 (Supabase CLI + MCP 방식)
 
@@ -425,13 +434,23 @@ bun run start
         <div className="space-y-2">
           <p className="text-zinc-300 text-[11px]">Supabase CLI + MCP 방식으로 처음 설정하는 경우</p>
           <pre className="bg-black/40 rounded p-2 text-zinc-400 whitespace-pre-wrap text-[10px] max-h-52 overflow-y-auto leading-relaxed">{CLI_FIRST_SETUP}</pre>
-          <button
-            onClick={() => { navigator.clipboard.writeText(CLI_FIRST_SETUP); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-            className="w-full py-1 rounded-lg border text-[10px] font-medium transition-all flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-zinc-600"
-          >
-            <Database className="w-3 h-3" />
-            가이드 복사
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { navigator.clipboard.writeText(CLI_FIRST_SETUP); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+              className="flex-1 py-1 rounded-lg border text-[10px] font-medium transition-all flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-zinc-600"
+            >
+              <Database className="w-3 h-3" />
+              가이드 복사
+            </button>
+            <button
+              onClick={handleSupabaseLogin}
+              disabled={loginLoading}
+              className="flex-1 py-1 rounded-lg border text-[10px] font-medium transition-all flex items-center justify-center gap-1.5 bg-indigo-900/40 hover:bg-indigo-900/60 text-indigo-300 border-indigo-700/50 disabled:opacity-50"
+            >
+              <Terminal className="w-3 h-3" />
+              {loginLoading ? '터미널 열는 중...' : 'supabase login 실행'}
+            </button>
+          </div>
         </div>
       ),
     },

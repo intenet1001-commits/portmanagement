@@ -941,6 +941,29 @@ end tell`;
       }
     }
 
+    if (url.pathname === "/api/supabase-login" && req.method === "POST") {
+      try {
+        const isWindows = process.platform === "win32";
+        if (isWindows) {
+          // Windows: PowerShell 창 열고 supabase login 실행
+          const supabaseBin = join(homedir(), ".bun/install/global/node_modules/supabase/bin/supabase.exe");
+          const cmd = existsSync(supabaseBin) ? `& "${supabaseBin}" login` : "supabase login";
+          spawn({
+            cmd: ["powershell.exe", "-NoExit", "-Command", cmd],
+            stdout: "inherit",
+            stderr: "inherit",
+          });
+        } else {
+          // macOS: Terminal 창 열고 supabase login 실행
+          const script = `tell application "Terminal"\n  activate\n  do script "supabase login"\nend tell`;
+          spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        }
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
     if (url.pathname === "/api/install-app" && req.method === "POST") {
       try {
         // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
