@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
@@ -3275,6 +3275,36 @@ function App() {
                               <span>GitHub</span>
                             </a>
                           )
+                        )}
+                        {item.folderPath && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                const output = await API.gitPull(item.folderPath!);
+                                showToast(`git pull 완료: ${output.slice(0, 60)}`, 'success');
+                              } catch (error) {
+                                showToast('git pull 실패: ' + error, 'error');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-medium rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all duration-200"
+                          >
+                            <GitPullRequest className="w-3 h-3" />
+                            <span>풀</span>
+                          </button>
+                        )}
+                        {item.folderPath && (
+                          <button
+                            onClick={() => {
+                              const prompt = `cd "${item.folderPath}" && git pull`;
+                              navigator.clipboard.writeText(prompt);
+                              showToast('프롬프트 복사됨', 'success');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 text-xs font-medium rounded-lg border border-zinc-700/50 hover:border-zinc-600/50 transition-all duration-200"
+                            title={`cd "${item.folderPath}" && git pull`}
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>복사</span>
+                          </button>
                         )}
                         {(item.commandPath || item.terminalCommand) && item.port && (
                           isTauri() ? (
