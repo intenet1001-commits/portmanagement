@@ -1,0 +1,164 @@
+{
+  "url": "http://localhost:9000/",
+  "apiUrl": "http://localhost:3001",
+  "timestamp": "2026-04-11T04:20:00.000Z",
+  "summary": {
+    "grade": "C",
+    "criticalIssues": 1,
+    "highIssues": 2,
+    "mediumIssues": 3,
+    "lowIssues": 2,
+    "passed": 5
+  },
+  "headers": {
+    "frontend": {
+      "hsts": { "present": false, "status": "warn", "note": "HTTP-only local app, HSTS not applicable but absent" },
+      "csp": { "present": false, "status": "fail", "risk": "No Content-Security-Policy — XSS risk increased" },
+      "xFrameOptions": { "present": false, "status": "fail", "risk": "Clickjacking possible" },
+      "xContentTypeOptions": { "present": false, "status": "fail", "risk": "MIME sniffing possible" },
+      "xXssProtection": { "present": false, "status": "warn" },
+      "referrerPolicy": { "present": false, "status": "warn" },
+      "permissionsPolicy": { "present": false, "status": "warn" },
+      "cacheControl": { "present": true, "value": "no-cache", "status": "pass" }
+    },
+    "api": {
+      "hsts": { "present": false, "status": "warn" },
+      "csp": { "present": false, "status": "fail" },
+      "xFrameOptions": { "present": false, "status": "fail" },
+      "xContentTypeOptions": { "present": false, "status": "fail" },
+      "xXssProtection": { "present": false, "status": "warn" },
+      "referrerPolicy": { "present": false, "status": "warn" },
+      "permissionsPolicy": { "present": false, "status": "warn" },
+      "contentType": { "present": true, "value": "application/json", "status": "pass" }
+    }
+  },
+  "cors": {
+    "value": "http://localhost:5173",
+    "isWildcard": false,
+    "status": "pass",
+    "note": "CORS is NOT wildcard (*). Restricted to http://localhost:5173 (Vite dev server). Context stated wildcard but actual server config uses a specific origin — this is correct behavior."
+  },
+  "cookies": {
+    "found": [],
+    "status": "pass",
+    "note": "No Set-Cookie headers observed on either frontend or API. No session cookies in use."
+  },
+  "mixedContent": {
+    "found": 0,
+    "status": "pass",
+    "note": "No HTTP resources loaded from HTTPS context. App runs on HTTP locally."
+  },
+  "sensitiveDataExposure": {
+    "sourceCodeHardcoded": { "found": 0, "status": "pass" },
+    "envInPublic": { "found": 0, "status": "pass" },
+    "apiEndpointExposure": {
+      "status": "critical",
+      "detail": "GET /api/portal returns portal.json contents including supabaseUrl and supabaseAnonKey in plaintext. Any process/browser with network access to port 3001 can retrieve Supabase credentials without authentication."
+    },
+    "portListExposure": {
+      "status": "high",
+      "detail": "GET /api/ports returns full local filesystem paths for all registered projects (commandPath, folderPath) with no authentication. Exposes directory structure, Google Drive paths, home directory layout, and internal project names for 40+ entries."
+    }
+  },
+  "inputSanitization": {
+    "portNumberField": {
+      "type": "number",
+      "status": "pass",
+      "note": "Port field is <input type=number> in HTML. Server accepts numeric strings via JSON."
+    },
+    "commandPathTraversal": {
+      "status": "high",
+      "detail": "POST /api/execute-command accepts any commandPath value and passes it directly to bash: [\"bash\", commandPath] or [\"bash\", \"-c\", commandPath]. No path sanitization, no allowlist check, no restriction to .command files. An attacker with local network access can execute arbitrary shell commands by passing a malicious path or inline shell string."
+    },
+    "portInjection": {
+      "status": "pass",
+      "detail": "POST /api/check-port-status passes port as template literal to lsof cmd array [\"lsof\", \"-ti\", `:${port}`]. Bun spawn with cmd array (not shell: true) prevents shell injection. Non-numeric value treated as no match — safe."
+    },
+    "xssReflection": {
+      "status": "medium",
+      "detail": "POST /api/execute-command reflects the portId value verbatim in JSON response: {\"portId\": \"<script>alert(1)</script>\"}. No output encoding applied. In a browser context consuming this API, if the response is rendered as HTML, XSS is possible. Risk is low in practice since Content-Type is application/json, but the lack of sanitization is a code quality issue."
+    }
+  },
+  "errorHandling": {
+    "stackTraces": { "exposed": false, "status": "pass", "note": "Invalid JSON returns {\"error\":\"Failed to parse JSON\"} with no stack trace." },
+    "missingFields": { "status": "pass", "note": "Missing required fields return structured {\"error\": \"...\"} messages, not raw exceptions." },
+    "verboseErrors": { "status": "pass" }
+  },
+  "httpsRedirect": {
+    "status": "na",
+    "note": "Local development HTTP-only app. HTTPS redirect not applicable."
+  },
+  "authentication": {
+    "status": "fail",
+    "detail": "No authentication on any API endpoint. All endpoints (ports list, portal credentials, command execution, file system access) are open to any process on the local network with access to port 3001. This is the most significant systemic gap."
+  },
+  "issues": [
+    {
+      "severity": "critical",
+      "category": "sensitive-data-exposure",
+      "item": "GET /api/portal exposes Supabase credentials",
+      "detail": "The /api/portal endpoint returns portal.json including supabaseUrl and supabaseAnonKey in the response body with no authentication required. Anyone with network access to port 3001 can extract the Supabase anon key.",
+      "recommendation": "Do not store credentials in a flat JSON file served over an unauthenticated API. Use environment variables or the OS keychain. If credentials must persist to disk, serve only non-sensitive portal data from this endpoint and require the frontend to send credentials only when needed."
+    },
+    {
+      "severity": "high",
+      "category": "command-injection",
+      "item": "POST /api/execute-command — arbitrary command execution",
+      "detail": "commandPath is passed directly to bash without any validation. When commandPath does not start with '/' or '~', the server executes [\"bash\", \"-c\", commandPath], allowing any shell string to run. Even for file paths, no check verifies the path points to a .command file or is within a safe directory.",
+      "recommendation": "Validate that commandPath is an absolute path ending in .command or .html. Reject relative paths and non-file-extension inputs. Do not accept inline shell strings via this endpoint. Maintain a server-side allowlist of permitted executables keyed by portId."
+    },
+    {
+      "severity": "high",
+      "category": "sensitive-data-exposure",
+      "item": "GET /api/ports exposes full filesystem paths without authentication",
+      "detail": "The ports list response includes absolute filesystem paths for 40+ projects including Google Drive paths, home directory structure, and internal project names. No authentication is required.",
+      "recommendation": "Add a shared-secret or localhost-only binding check before serving this data. Consider stripping sensitive path segments from the response, or confirming the server only binds to 127.0.0.1."
+    },
+    {
+      "severity": "medium",
+      "category": "headers",
+      "item": "Missing security headers on both frontend and API",
+      "detail": "Neither the Vite dev server (port 9000) nor the Bun API server (port 3001) set X-Frame-Options, X-Content-Type-Options, Content-Security-Policy, or Referrer-Policy.",
+      "recommendation": "Add a response header middleware to api-server.ts. For the Vite dev server, add headers in vite.config.ts server.headers. Minimum: X-Content-Type-Options: nosniff, X-Frame-Options: DENY, Referrer-Policy: same-origin."
+    },
+    {
+      "severity": "medium",
+      "category": "authentication",
+      "item": "No authentication on any API endpoint",
+      "detail": "All 17 API endpoints are publicly accessible to any client that can reach port 3001. The API server binds to 0.0.0.0:3001 by default (Bun.serve default), not just 127.0.0.1.",
+      "recommendation": "Bind the server explicitly to 127.0.0.1 (add hostname: '127.0.0.1' to Bun.serve options). Add a static shared secret in Authorization header checked on all mutating endpoints."
+    },
+    {
+      "severity": "medium",
+      "category": "xss",
+      "item": "portId reflected unsanitized in execute-command response",
+      "detail": "The portId field from the request body is returned verbatim in the JSON response without encoding. Sending <script>alert(1)</script> as portId results in that string in the response.",
+      "recommendation": "Sanitize or validate portId as a UUID/numeric string before reflecting it in responses. Reject inputs that do not match expected ID format."
+    },
+    {
+      "severity": "low",
+      "category": "cors",
+      "item": "CORS origin hardcoded to http://localhost:5173 (Vite default port)",
+      "detail": "The CORS origin is hardcoded to the Vite dev port rather than read from environment configuration. If the frontend dev port changes, CORS will silently break. Not a security risk but a maintenance issue.",
+      "recommendation": "Read CORS origin from an environment variable (e.g. CORS_ORIGIN=http://localhost:9000). Add the actual frontend port (9000) to the allowed origins list."
+    },
+    {
+      "severity": "low",
+      "category": "information-disclosure",
+      "item": "API server binds to all interfaces (0.0.0.0) by default",
+      "detail": "Bun.serve without an explicit hostname binds to 0.0.0.0, making the API accessible from other machines on the same network. Combined with no authentication, this increases exposure.",
+      "recommendation": "Add hostname: '127.0.0.1' to Bun.serve({ port: 3001, hostname: '127.0.0.1', ... }) to restrict to loopback only."
+    }
+  ],
+  "passed": [
+    "No cookies set — no HttpOnly/Secure/SameSite issues",
+    "No hardcoded API keys or secrets in source code (src/)",
+    "No .env files exposed in public/ directory",
+    "No mixed content (HTTP resources in HTTPS context)",
+    "Error responses do not leak stack traces",
+    "CORS is not wildcard — set to specific origin http://localhost:5173",
+    "Port injection in lsof call is safe (spawn with cmd array, no shell: true)",
+    "Invalid JSON body handled gracefully with structured error response"
+  ],
+  "grade_rationale": "Grade C. One critical issue (Supabase credentials served unauthenticated via /api/portal), two high issues (arbitrary command execution via commandPath, full filesystem path exposure via /api/ports), three medium issues (missing security headers, no API authentication, XSS reflection). The CORS finding is better than described in context — it is NOT a wildcard. Positive: no hardcoded secrets in source, no stack traces, no mixed content, no cookies to misconfigure."
+}

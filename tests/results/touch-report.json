@@ -1,0 +1,46 @@
+{
+  "timestamp": "2026-03-21T14:53:20.433455",
+  "agent": "touch-interaction-validator",
+  "summary": {
+    "pass": 7,
+    "fail": 0,
+    "skip": 0
+  },
+  "checks": [
+    {
+      "test": "button hover state",
+      "status": "pass",
+      "detail": "hover bg: rgb(39, 39, 42)"
+    },
+    {
+      "test": "button click response",
+      "status": "pass",
+      "detail": "clicked: 내보내기"
+    },
+    {
+      "test": "page scroll",
+      "status": "pass",
+      "detail": "scrolled to 300px, total height: 2874px"
+    },
+    {
+      "test": "keyboard tab navigation",
+      "status": "pass",
+      "detail": "focused: BUTTON:불러오기"
+    },
+    {
+      "test": "toast container in DOM",
+      "status": "pass",
+      "detail": "fixed elements: ['fixed top-4 right-4 z-50 space-y-2']"
+    },
+    {
+      "test": "mobile tap interaction",
+      "status": "pass",
+      "detail": "tap on first button succeeded"
+    },
+    {
+      "test": "build modal overlay",
+      "status": "pass",
+      "detail": "overlay elements: 1"
+    }
+  ]
+}

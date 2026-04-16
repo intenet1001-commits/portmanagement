@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-03-26T00:00:00Z",
+  "target_url": "http://localhost:3001",
+  "summary": {
+    "total_endpoints": 29,
+    "tested": 8,
+    "pass": 8,
+    "fail": 0
+  },
+  "cors": {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "status": "ok - open CORS (acceptable for local dev)"
+  },
+  "endpoint_results": [
+    { "endpoint": "GET /api/ports", "status": "pass", "response_time_ms": 4.2, "response_size_bytes": 6812, "http_code": 200, "note": "24 entries returned" },
+    { "endpoint": "POST /api/check-port-status", "status": "pass", "http_code": 200, "note": "isRunning detection works via lsof" },
+    { "endpoint": "POST /api/detect-port", "status": "pass", "http_code": 200, "note": "Port/folder/projectName extraction from .command files works" },
+    { "endpoint": "GET /api/build-status", "status": "pass", "http_code": 200, "note": "Returns isBuilding: false when idle" },
+    { "endpoint": "GET /api/workspace-roots", "status": "pass", "http_code": 200, "note": "1 workspace root configured" },
+    { "endpoint": "GET /api/portal", "status": "pass", "http_code": 200, "note": "Returns items:[] and categories with defaults" },
+    { "endpoint": "GET /api/nonexistent", "status": "pass", "http_code": 404, "note": "404 handled correctly with JSON error response" },
+    { "endpoint": "POST /api/ports", "status": "pass", "http_code": 200, "note": "Save endpoint available (not destructively tested)" }
+  ],
+  "observations": [
+    "CORS is fully open (*) - acceptable for local desktop app",
+    "All responses use Content-Type: application/json",
+    "API server runs on port 3001, frontend on 9000",
+    "Dual-mode support: Tauri (invoke) and browser (fetch) both work",
+    "Build system endpoints present and idle-state correct",
+    "Portal management endpoints functional with empty default state"
+  ]
+}

@@ -1,0 +1,183 @@
+{
+  "url": "http://localhost:9000",
+  "timestamp": "2026-04-11T00:00:00.000Z",
+  "summary": {
+    "grade": "D",
+    "totalTests": 12,
+    "passed": 4,
+    "failed": 8,
+    "has404Page": false,
+    "notFoundBehavior": "SPA with Vite dev server — serves identical index.html for both / and /nonexistent. React crashes on load (useMemo not imported), so BOTH routes render a blank screen.",
+    "consoleErrors": 1,
+    "consoleWarnings": 1,
+    "hasErrorBoundary": false,
+    "brokenExternalLinks": 0,
+    "offlineCapable": false,
+    "offlineBannerImplemented": true
+  },
+  "criticalBug": {
+    "type": "runtime-crash",
+    "description": "useMemo is used at App.tsx:1933 but is NOT in the React import at line 1. Import only includes: useState, useEffect, useRef, useCallback.",
+    "effect": "ReferenceError: useMemo is not defined — crashes the entire <App> component on every page load. React 19 internal warning fires: 'An error occurred in the <App> component. Consider adding an error boundary.'",
+    "confirmed_by": "Playwright headless browser PAGEERROR: useMemo is not defined",
+    "fix": "Add useMemo to the React import: import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';"
+  },
+  "notFoundPage": {
+    "customPage": false,
+    "behavior": "Vite dev server serves index.html for all routes (SPA fallback). No React Router configured (hasSPARouter: false per page-map). Since the app crashes due to useMemo error, /nonexistent also shows a blank screen — same as /.",
+    "hasHomeLink": false,
+    "hasNavigation": false,
+    "quality": "blank-screen"
+  },
+  "consoleIssues": [
+    {
+      "level": "error",
+      "type": "PAGEERROR",
+      "message": "useMemo is not defined",
+      "page": "http://localhost:9000/",
+      "source": "App.tsx:1933 — const displayedPorts = useMemo(() => { ... })",
+      "severity": "critical"
+    },
+    {
+      "level": "warning",
+      "message": "An error occurred in the <App> component. Consider adding an error boundary to your tree to customize error handling behavior. Visit https://react.dev/link/error-boundaries to learn more about error boundaries.",
+      "page": "http://localhost:9000/",
+      "note": "React 19 internal warning triggered by the useMemo crash"
+    }
+  ],
+  "errorBoundary": {
+    "react": false,
+    "nextjsErrorPage": false,
+    "note": "No ErrorBoundary class component (componentDidCatch) found anywhere in src/. No error.tsx (Vite SPA, not Next.js). Because there is no ErrorBoundary, the useMemo crash causes the entire app to render as a blank white screen with no user-facing error message or recovery UI.",
+    "recommendation": "Wrap <App /> in main.tsx with an ErrorBoundary component to show a recovery message instead of a blank screen"
+  },
+  "inputValidation": {
+    "tested": false,
+    "reason": "Could not test live — app crashes on load due to useMemo ReferenceError before any form is rendered",
+    "staticAnalysis": {
+      "portFieldType": "input type=number (HTML input)",
+      "portAlphaInput": "HTML number type blocks non-numeric at browser level, but addPort() uses parseInt(port) with no NaN guard — if port is somehow non-numeric, parseInt returns NaN which gets stored as the port value",
+      "portRangeValidation": "MISSING — addPort() has no check for valid port range (1-65535). Port 99999 or 0 would be accepted.",
+      "nameLengthValidation": "MISSING — no maxLength attribute on name input, no length check in addPort(). 500-char names accepted.",
+      "nameRequired": "addPort() has if(name) guard — empty name is blocked. Port is optional."
+    }
+  },
+  "externalLinks": {
+    "checked": 0,
+    "broken": 0,
+    "note": "App could not render due to crash. Static source analysis shows no hardcoded external hrefs in App.tsx or PortalManager.tsx. All links (deployUrl, githubUrl, localhost:port) are user-provided dynamic data."
+  },
+  "offline": {
+    "serviceWorker": false,
+    "cacheAPI": false,
+    "offlineBanner": {
+      "implemented": true,
+      "condition": "!isTauri() && apiServerOnline === false",
+      "style": "fixed top-0 left-0 right-0 z-50 bg-amber-500/90 text-black text-sm px-4 py-2",
+      "message": "API 서버에 연결할 수 없습니다 — bun run start로 서버를 시작하세요",
+      "healthCheckInterval": "30000ms (setInterval every 30s)",
+      "healthCheckEndpoint": "/api/ports with 2000ms timeout via Promise.race",
+      "retryButton": true,
+      "retryAction": "fetch('/api/ports').then(() => setApiServerOnline(true))",
+      "sourceLocation": "App.tsx:629-646 (health check), App.tsx:1970-1973 (banner render)",
+      "tauri_guard": "Hidden in Tauri mode (isTauri() returns true)",
+      "note": "Implementation is correct and well-designed. Currently hidden because API server is online."
+    }
+  },
+  "tests": [
+    {
+      "name": "nonexistent-route-404",
+      "status": "fail",
+      "detail": "Blank page on /nonexistent — Vite serves index.html but app crashes (useMemo not defined), rendering blank screen. No custom 404 UI exists."
+    },
+    {
+      "name": "console-errors-main-page",
+      "status": "fail",
+      "detail": "PAGEERROR: useMemo is not defined — crashes <App> component on every load"
+    },
+    {
+      "name": "console-warnings-main-page",
+      "status": "fail",
+      "detail": "React 19 warning: 'An error occurred in the <App> component. Consider adding an error boundary.' — triggered by useMemo crash"
+    },
+    {
+      "name": "offline-amber-banner-hidden-when-online",
+      "status": "pass",
+      "detail": "Amber offline banner correctly absent when API server is reachable (confirmed via source: condition is apiServerOnline===false)"
+    },
+    {
+      "name": "offline-banner-implementation",
+      "status": "pass",
+      "detail": "Offline amber banner fully implemented at App.tsx:1970-1973. Polls /api/ports every 30s with 2s timeout. Retry button present. Web-mode only (isTauri() guard)."
+    },
+    {
+      "name": "react-error-boundary",
+      "status": "fail",
+      "detail": "No React ErrorBoundary found in src/. The current useMemo crash proves this gap — blank white screen with no recovery path. React 19 itself warns about this."
+    },
+    {
+      "name": "invalid-port-abc",
+      "status": "fail",
+      "detail": "Could not test live — app crashes before rendering. Static analysis: addPort() uses parseInt(port) without NaN guard. HTML number input blocks 'abc' at browser level but no range validation."
+    },
+    {
+      "name": "invalid-port-99999",
+      "status": "fail",
+      "detail": "Could not test live — app crashes before rendering. Static analysis: no port range validation in addPort(). Values outside 1-65535 would be accepted."
+    },
+    {
+      "name": "invalid-port-no-crash",
+      "status": "fail",
+      "detail": "Could not test live — app crashes before rendering due to useMemo error"
+    },
+    {
+      "name": "long-name-500-chars",
+      "status": "fail",
+      "detail": "Could not test live — app crashes before rendering. Static analysis: no maxLength on name input, no length guard in addPort()."
+    },
+    {
+      "name": "broken-links-check",
+      "status": "pass",
+      "detail": "No hardcoded external links in App.tsx or PortalManager.tsx. All href links (deployUrl, githubUrl, localhost:port) are dynamic user-provided data."
+    },
+    {
+      "name": "amber-banner-implementation-quality",
+      "status": "pass",
+      "detail": "Amber banner design is correct and complete: fixed positioning, 30s health poll with 2s timeout guard, retry button, isTauri() guard. Well implemented."
+    }
+  ],
+  "issues": [
+    {
+      "severity": "critical",
+      "issue": "useMemo not imported — ReferenceError crashes <App> on every page load, rendering a blank screen",
+      "location": "App.tsx line 1 (import) and line 1933 (usage)",
+      "fix": "Change line 1: import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';",
+      "effort": "1 minute"
+    },
+    {
+      "severity": "high",
+      "issue": "No React ErrorBoundary — any uncaught JS error (like the current useMemo crash) produces a blank white screen with zero user feedback or recovery option",
+      "fix": "Add an ErrorBoundary wrapper in main.tsx around <App />",
+      "effort": "15 minutes"
+    },
+    {
+      "severity": "medium",
+      "issue": "No port range validation in addPort() — out-of-range values (0, 99999, negative) are silently accepted",
+      "location": "App.tsx:1018-1056",
+      "fix": "Add: const portNum = parseInt(port); if (port && (isNaN(portNum) || portNum < 1 || portNum > 65535)) { showToast('포트는 1-65535 범위여야 합니다', 'error'); return; }",
+      "effort": "5 minutes"
+    },
+    {
+      "severity": "low",
+      "issue": "No maxLength on project name/description fields — 500+ character names are accepted and stored",
+      "fix": "Add maxLength={100} to name input, maxLength={500} to description input",
+      "effort": "2 minutes"
+    },
+    {
+      "severity": "low",
+      "issue": "No custom 404 page — Vite serves index.html for unknown paths. When app works, /nonexistent shows the full app rather than a 404 message",
+      "fix": "Add a catch-all check on mount or configure Vite to return a 404 status for unknown paths",
+      "effort": "20 minutes"
+    }
+  ]
+}

@@ -1,0 +1,162 @@
+{
+  "url": "http://localhost:9000",
+  "timestamp": "2026-04-11T04:20:30.000Z",
+  "context": "local-dev-tool",
+  "summary": {
+    "ogCompleteness": "0/9",
+    "ogImageStatus": "missing",
+    "ogImageContentLength": null,
+    "kakaoShareReady": false,
+    "pwaEnabled": false,
+    "grade": "N/A"
+  },
+  "ogTags": {
+    "og:title": null,
+    "og:description": null,
+    "og:url": null,
+    "og:image": null,
+    "og:image:width": null,
+    "og:image:height": null,
+    "og:image:alt": null,
+    "og:type": null,
+    "og:site_name": null,
+    "twitter:card": null,
+    "twitter:title": null,
+    "twitter:description": null,
+    "twitter:image": null,
+    "theme-color": null,
+    "manifest": null
+  },
+  "ogImage": {
+    "url": null,
+    "type": null,
+    "httpStatus": null,
+    "contentType": null,
+    "contentLength": null,
+    "cacheControl": null,
+    "vercelCache": null,
+    "isValid": false,
+    "issues": ["og:image tag absent — expected for a local dev tool"]
+  },
+  "checks": [
+    {
+      "name": "og:title",
+      "status": "na",
+      "detail": "Not present. N/A for local dev tool. If made public: add <meta property=\"og:title\" content=\"포트 관리 프로그램\" />."
+    },
+    {
+      "name": "og:description",
+      "status": "na",
+      "detail": "Not present. N/A for local dev tool. If made public: add a short description."
+    },
+    {
+      "name": "og:image",
+      "status": "na",
+      "detail": "Not present. N/A for local dev tool. If made public: create public/og-image.png (1200x630) and reference it with an absolute URL."
+    },
+    {
+      "name": "og:url",
+      "status": "na",
+      "detail": "Not present. N/A for local dev tool. If made public: add the canonical public URL."
+    },
+    {
+      "name": "twitter:card",
+      "status": "na",
+      "detail": "Not present. N/A for local dev tool. If made public: add <meta name=\"twitter:card\" content=\"summary_large_image\" />."
+    },
+    {
+      "name": "PWA manifest.json",
+      "status": "na",
+      "detail": "GET /manifest.json returns HTML fallback (no public/ directory exists — Vite SPA fallback). N/A for a Tauri desktop app. If a web version were published: create public/manifest.json with name, icons, display:standalone."
+    },
+    {
+      "name": "Service worker",
+      "status": "na",
+      "detail": "No service worker registration in index.html. N/A for local Tauri dev tool."
+    },
+    {
+      "name": "Apple touch icon",
+      "status": "na",
+      "detail": "GET /apple-touch-icon.png returns HTML fallback — asset does not exist. No <link rel=\"apple-touch-icon\"> in HTML. N/A for local dev tool. If made public: add a 180x180 PNG to public/ and reference it in <head>."
+    },
+    {
+      "name": "theme-color meta tag",
+      "status": "warn",
+      "detail": "theme-color meta tag absent. Low-effort improvement even for local use: add <meta name=\"theme-color\" content=\"#0a0a0b\" /> to index.html to match the app dark background."
+    },
+    {
+      "name": "Favicon",
+      "status": "warn",
+      "detail": "GET /favicon.ico returns 404. GET /favicon.png returns HTML fallback (no real file). No <link rel=\"icon\"> in <head>. A favicon is useful even for local tools — add public/favicon.ico or public/favicon.svg and link it in index.html."
+    }
+  ],
+  "kakaoChecklist": [
+    { "item": "og:image 존재", "status": "na", "value": "absent — local tool" },
+    { "item": "og:image content-length > 0", "status": "na", "value": "n/a" },
+    { "item": "og:image HTTPS", "status": "na", "value": "n/a" },
+    { "item": "og:image 크기 (1200x630 권장)", "status": "na", "value": "n/a" },
+    { "item": "og:title 존재", "status": "na", "value": "absent — local tool" },
+    { "item": "og:description 존재", "status": "na", "value": "absent — local tool" }
+  ],
+  "pwa": {
+    "hasManifest": false,
+    "manifestUrl": null,
+    "name": null,
+    "display": null,
+    "themeColor": null,
+    "icons": [],
+    "issues": [
+      {
+        "severity": "na",
+        "issue": "No PWA manifest or service worker",
+        "recommendation": "Expected for a Tauri desktop app. If a web-hosted version is ever created: add manifest.json, 192x192 and 512x512 icons (purpose 'any' and 'maskable' as separate entries), display:standalone, and register a service worker."
+      }
+    ]
+  },
+  "htmlMeta": {
+    "charset": "UTF-8",
+    "viewport": "width=device-width, initial-scale=1.0",
+    "title": "포트 관리 프로그램",
+    "lang": "ko"
+  },
+  "grade": "N/A",
+  "gradeRationale": "Local Tauri desktop dev tool — not a public website. All social-sharing and PWA checks are non-applicable by design. Grade is N/A rather than F. Two low-severity items (favicon, theme-color) are actionable regardless of deployment context.",
+  "recommendations": [
+    {
+      "priority": "low",
+      "applies": "now (local tool)",
+      "action": "Add favicon",
+      "detail": "Place favicon.ico or favicon.svg in portmanagement/public/ and add <link rel=\"icon\" href=\"/favicon.ico\" /> to index.html. Improves browser tab appearance during dev."
+    },
+    {
+      "priority": "low",
+      "applies": "now (local tool)",
+      "action": "Add theme-color",
+      "detail": "Add <meta name=\"theme-color\" content=\"#0a0a0b\" /> to index.html. Matches the dark UI and improves browser chrome appearance on mobile or when pinned."
+    },
+    {
+      "priority": "medium",
+      "applies": "if made public",
+      "action": "Add Open Graph tags",
+      "detail": "Add og:title, og:description, og:url, og:image (1200x630 static PNG in public/), og:type, og:site_name to index.html. Required for KakaoTalk and SNS sharing thumbnails. Use a static PNG in public/ rather than a dynamic edge route to avoid content-length:0 caching bugs."
+    },
+    {
+      "priority": "medium",
+      "applies": "if made public",
+      "action": "Add Twitter Card tags",
+      "detail": "Add twitter:card=summary_large_image, twitter:title, twitter:description, twitter:image."
+    },
+    {
+      "priority": "medium",
+      "applies": "if made public",
+      "action": "Add Apple touch icon",
+      "detail": "Create a 180x180 PNG at public/apple-touch-icon.png and add <link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\" /> to <head>."
+    },
+    {
+      "priority": "low",
+      "applies": "if web version published",
+      "action": "Add PWA manifest and service worker",
+      "detail": "Create public/manifest.json with name, short_name, icons (192x192 + 512x512, purpose as separate 'any' and 'maskable' entries), display:standalone, theme_color, background_color. Register a service worker for offline support."
+    }
+  ]
+}

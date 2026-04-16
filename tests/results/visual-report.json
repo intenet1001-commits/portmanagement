@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-03-26T00:00:00Z",
+  "target_url": "http://localhost:9000",
+  "summary": {
+    "responsive_issues": 1,
+    "accessibility_violations": 3,
+    "ui_consistency": "good"
+  },
+  "theme": {
+    "style": "Dark tech / US startup aesthetic",
+    "background": "#0a0a0b",
+    "card_background": "#18181b",
+    "dark_theme_classes_used": 44,
+    "design_system": "Tailwind CSS v3 + custom inline styles"
+  },
+  "responsive": {
+    "responsive_breakpoint_classes": 0,
+    "note": "App.tsx uses 0 responsive breakpoints (sm:/md:/lg:/xl:). Fixed-width layout optimized for 1000x1050 Tauri window. May not render well on very small browser viewports.",
+    "issues": [
+      "No responsive breakpoints - fixed layout only suitable for desktop width (1000px+)"
+    ]
+  },
+  "accessibility": {
+    "aria_labels": 0,
+    "role_attributes": 0,
+    "violations": [
+      "No aria-label attributes found on interactive elements",
+      "No role attributes for custom interactive components",
+      "Icon-only buttons (lucide-react) have no accessible text labels"
+    ],
+    "positive": [
+      "Color contrast appears adequate (white text on dark zinc/gray backgrounds)",
+      "Toast notification system provides user feedback"
+    ]
+  },
+  "toast_system": {
+    "implemented": true,
+    "usage_count": 50,
+    "types": ["success", "error"],
+    "behavior": "Slides in from top-right, auto-dismisses after 3s, manual close available",
+    "note": "Toast system present but 19 legacy alert()/prompt() calls still remain in App.tsx"
+  },
+  "window_config": {
+    "width": 1000,
+    "height": 1050,
+    "min_width": 800,
+    "min_height": 700,
+    "resizable": true
+  }
+}
