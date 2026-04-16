@@ -145,15 +145,45 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 - **프로젝트 관리 탭**: `ports` 테이블에 Push(upsert) / Pull(복원)
 - **포털 탭**: `portal_items` + `portal_categories` 테이블에 Push / Pull
 - Supabase URL + anon key는 `portal.json`에 저장 — 두 탭이 공유
+- `portal.json`에 `deviceId` (UUID) + **`deviceName`** (사람이 읽을 수 있는 기기명) 함께 저장
 - Push: `upsert(rows, { onConflict: 'id' })` — 멱등 동작
-- Pull: `device_id` 기준 필터링 (포털), 전체 select (프로젝트 관리)
+- Pull: `device_id` 기준 필터링 (기기별 데이터), `'__shared__'` sentinel로 공유 데이터 병합
 - 테이블 스키마 (DDL):
-  - `ports` (id, name, port, command_path, folder_path, terminal_command, deploy_url, github_url)
+  - `ports` (id, **device_id**, name, port, command_path, folder_path, terminal_command, deploy_url, github_url) — **device_id 추가됨**
   - `workspace_roots` (id, device_id, name, path) — 프로젝트 관리 탭 Push/Pull
   - `portal_items` (id, device_id, name, type, url, path, category, description, pinned, visit_count, last_visited, created_at)
   - `portal_categories` (id, device_id, name, color, order)
 - RLS: anon key 읽기/쓰기 허용 또는 비활성화 필요
 - SetupGuide 컴포넌트: 설정 모달 내 접이식 Claude 프롬프트 복사 가이드 (`PortalManager.tsx`)
+
+#### 기기별 격리 정책 (Per-device isolation)
+
+| 테이블 / 조건 | 격리 단위 | device_id 값 |
+|---|---|---|
+| `ports` | 기기별 | 해당 기기 UUID |
+| `portal_items` where `type = 'folder'` | 기기별 | 해당 기기 UUID |
+| `portal_items` where `type != 'folder'` | 공유 (전 기기) | `'__shared__'` |
+| `portal_categories` | 공유 (전 기기) | `'__shared__'` |
+
+- Pull 시 `device_id = <내 UUID>` AND `device_id = '__shared__'` 두 결과를 합산
+- Push 시 공유 항목은 `device_id = '__shared__'`로 upsert
+
+#### 기존 Supabase 데이터 마이그레이션 SQL
+
+```sql
+-- ports 테이블에 device_id 컬럼 추가
+ALTER TABLE ports ADD COLUMN device_id text;
+UPDATE ports SET device_id = '<YOUR_DEVICE_UUID>' WHERE device_id IS NULL;
+
+-- portal_items 공유 항목 sentinel 값 설정
+UPDATE portal_items SET device_id = '__shared__' WHERE type != 'folder';
+
+-- portal_categories 공유 sentinel 값 설정
+UPDATE portal_categories SET device_id = '__shared__';
+
+-- 인덱스 추가 (성능)
+CREATE INDEX IF NOT EXISTS idx_ports_device_id ON ports(device_id);
+```
 
 ### 자동화
 - .command 파일에서 포트 번호 자동 감지 (`localhost:포트` 또는 `PORT=포트` 패턴)

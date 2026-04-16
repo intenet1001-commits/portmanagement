@@ -39,6 +39,8 @@ export interface PortalData {
   supabaseUrl?: string;
   supabaseAnonKey?: string;
   deviceId?: string;
+  deviceName?: string;
+  viewingDeviceId?: string; // if set, Pull shows this device's data
   lastSynced?: string;
 }
 
@@ -304,6 +306,10 @@ export default function PortalManager({ showToast, onClaudeBypass }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [sbUrl, setSbUrl] = useState('');
   const [sbKey, setSbKey] = useState('');
+  const [deviceName, setDeviceName] = useState('');
+  const [viewingDeviceId, setViewingDeviceId] = useState('');
+  const [knownDevices, setKnownDevices] = useState<{device_id: string; device_name?: string}[]>([]);
+  const [isFetchingDevices, setIsFetchingDevices] = useState(false);
   const [isUpdatingCategories, setIsUpdatingCategories] = useState(false);
 
   // ── Load ──────────────────────────────────────────────────────────────────
@@ -316,6 +322,8 @@ export default function PortalManager({ showToast, onClaudeBypass }: Props) {
       setData(loaded);
       setSbUrl(loaded.supabaseUrl ?? '');
       setSbKey(loaded.supabaseAnonKey ?? '');
+      setDeviceName(loaded.deviceName ?? '');
+      setViewingDeviceId(loaded.viewingDeviceId ?? '');
       setIsLoading(false);
     })();
   }, []);
@@ -530,10 +538,10 @@ export default function PortalManager({ showToast, onClaudeBypass }: Props) {
       const supabase = createClient(sbUrl, sbKey);
       const deviceId = data.deviceId ?? getOrCreateDeviceId();
 
-      // Upsert items
+      // Upsert items — folders are per-device, all others are shared
       const itemRows = data.items.map(item => ({
         id: item.id,
-        device_id: deviceId,
+        device_id: item.type === 'folder' ? deviceId : '__shared__',
         name: item.name,
         type: item.type,
         url: item.url ?? null,
@@ -546,10 +554,10 @@ export default function PortalManager({ showToast, onClaudeBypass }: Props) {
         created_at: item.createdAt,
       }));
 
-      // Upsert categories
+      // Upsert categories — always shared across devices
       const catRows = data.categories.map(cat => ({
         id: cat.id,
-        device_id: deviceId,
+        device_id: '__shared__',
         name: cat.name,
         color: cat.color,
         "order": cat.order,
@@ -584,10 +592,11 @@ export default function PortalManager({ showToast, onClaudeBypass }: Props) {
     setIsRestoring(true);
     try {
       const supabase = createClient(sbUrl, sbKey);
-      const deviceId = data.deviceId ?? getOrCreateDeviceId();
+      const ownDeviceId = data.deviceId ?? getOrCreateDeviceId();
+      const targetDeviceId = viewingDeviceId || ownDeviceId;
       const [itemsRes, catsRes] = await Promise.all([
-        supabase.from('portal_items').select('*').eq('device_id', deviceId),
-        supabase.from('portal_categories').select('*').eq('device_id', deviceId),
+        supabase.from('portal_items').select('*').or(`device_id.eq.${targetDeviceId},device_id.eq.__shared__`),
+        supabase.from('portal_categories').select('*').eq('device_id', '__shared__'),
       ]);
       if (itemsRes.error) throw new Error(itemsRes.error.message);
       if (catsRes.error) throw new Error(catsRes.error.message);
@@ -633,8 +642,41 @@ export default function PortalManager({ showToast, onClaudeBypass }: Props) {
     }
   }
 
+  async function fetchKnownDevices() {
+    if (!sbUrl || !sbKey) { showToast('Supabase 설정을 먼저 입력하세요', 'error'); return; }
+    setIsFetchingDevices(true);
+    try {
+      const supabase = createClient(sbUrl, sbKey);
+      // Try with device_name column first; fall back if column doesn't exist
+      let rows: any[] = [];
+      const { data: withName, error: nameErr } = await supabase
+        .from('ports').select('device_id, device_name').not('device_id', 'is', null);
+      if (nameErr) {
+        const { data: withoutName } = await supabase
+          .from('ports').select('device_id').not('device_id', 'is', null);
+        rows = withoutName ?? [];
+      } else {
+        rows = withName ?? [];
+      }
+      const seen = new Set<string>();
+      const devices: {device_id: string; device_name?: string}[] = [];
+      for (const r of rows) {
+        if (r.device_id && !seen.has(r.device_id)) {
+          seen.add(r.device_id);
+          devices.push({ device_id: r.device_id, device_name: r.device_name ?? undefined });
+        }
+      }
+      setKnownDevices(devices);
+      if (devices.length === 0) showToast('등록된 단말이 없습니다 (Push 먼저 실행)', 'error');
+    } catch (e: any) {
+      showToast('단말 목록 오류: ' + e.message, 'error');
+    } finally {
+      setIsFetchingDevices(false);
+    }
+  }
+
   async function saveSettings() {
-    const next: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey };
+    const next: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceName: deviceName || undefined, viewingDeviceId: viewingDeviceId || undefined };
     await persist(next);
     setShowSettings(false);
     showToast('설정 저장됨', 'success');
@@ -745,6 +787,18 @@ export default function PortalManager({ showToast, onClaudeBypass }: Props) {
               className="w-full pl-8 pr-3 py-1.5 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
             />
           </div>
+          {viewingDeviceId && viewingDeviceId !== data.deviceId && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-lg shrink-0">
+              <span className="text-amber-400 text-[10px] font-medium whitespace-nowrap">
+                📱 {knownDevices.find(d => d.device_id === viewingDeviceId)?.device_name ?? viewingDeviceId.slice(0, 6) + '…'}
+              </span>
+              <button
+                onClick={() => { setViewingDeviceId(''); setData(d => ({ ...d, viewingDeviceId: undefined })); }}
+                className="text-amber-500 hover:text-amber-300 text-xs leading-none"
+                title="내 기기로 복귀"
+              >✕</button>
+            </div>
+          )}
           <button
             onClick={() => openAddModal(selectedCat !== 'all' ? selectedCat : undefined)}
             className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-sm rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all flex items-center gap-1.5"
@@ -1021,9 +1075,87 @@ export default function PortalManager({ showToast, onClaudeBypass }: Props) {
             type="password"
             value={sbKey}
             onChange={e => setSbKey(e.target.value)}
-            className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+            className="w-full mb-4 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
             placeholder="eyJ..."
           />
+
+          {/* ── Device Settings ────────────────────────────────────────────── */}
+          <div className="border-t border-zinc-700/50 pt-4 mb-4">
+            <p className="text-xs font-medium text-zinc-300 mb-3">단말 설정 (Device Settings)</p>
+            <label className="block text-xs text-zinc-400 mb-1">Device ID</label>
+            <div className="flex items-center gap-2 mb-3">
+              <input
+                type="text"
+                readOnly
+                value={data.deviceId ? `${data.deviceId.slice(0, 8)}...` : '—'}
+                className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-zinc-500 rounded-lg cursor-default select-none"
+              />
+              <button
+                onClick={() => {
+                  if (data.deviceId) {
+                    navigator.clipboard.writeText(data.deviceId);
+                    showToast('Device ID 복사됨', 'success');
+                  }
+                }}
+                className="px-3 py-2 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-300 border border-zinc-700 rounded-lg transition-all"
+                title="전체 UUID 복사"
+              >
+                복사
+              </button>
+            </div>
+            <label className="block text-xs text-zinc-400 mb-1">Device Name</label>
+            <input
+              type="text"
+              value={deviceName}
+              onChange={e => setDeviceName(e.target.value)}
+              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              placeholder="예: MacBook Pro, Windows PC"
+            />
+          </div>
+
+          {/* ── Device Selector ─────────────────────────────────────────────── */}
+          <div className="border-t border-zinc-700/50 pt-4 mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-zinc-300">단말 선택 (Pull 대상)</p>
+              <button
+                onClick={fetchKnownDevices}
+                disabled={isFetchingDevices}
+                className="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-300 border border-zinc-700 rounded-lg transition-all disabled:opacity-50"
+              >
+                {isFetchingDevices ? '조회 중…' : '단말 조회'}
+              </button>
+            </div>
+            {knownDevices.length > 0 ? (
+              <select
+                value={viewingDeviceId || data.deviceId || ''}
+                onChange={e => setViewingDeviceId(e.target.value === data.deviceId ? '' : e.target.value)}
+                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              >
+                {knownDevices.map(d => (
+                  <option key={d.device_id} value={d.device_id}>
+                    {d.device_name
+                      ? `${d.device_name} (${d.device_id.slice(0, 6)}…)`
+                      : d.device_id.slice(0, 8) + '…'}
+                    {d.device_id === data.deviceId ? ' ← 이 기기' : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="text-xs text-zinc-600 italic">"단말 조회" 버튼을 눌러 등록된 기기 목록을 불러오세요</p>
+            )}
+            {viewingDeviceId && viewingDeviceId !== data.deviceId && (
+              <div className="mt-2 flex items-center justify-between">
+                <p className="text-[11px] text-amber-400">⚠ 다른 기기 데이터 조회 중 — Pull 시 해당 기기 데이터 적용</p>
+                <button
+                  onClick={() => setViewingDeviceId('')}
+                  className="text-[11px] text-zinc-500 hover:text-zinc-300 underline"
+                >
+                  내 기기로 복귀
+                </button>
+              </div>
+            )}
+          </div>
+
           <button
             onClick={() => { saveSettings(); setTimeout(syncSupabase, 300); }}
             className="w-full mt-1 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-sm rounded-lg border border-purple-500/30 transition-all flex items-center justify-center gap-2"

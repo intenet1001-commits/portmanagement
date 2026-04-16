@@ -965,6 +965,7 @@ function App() {
       if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) return;
       try {
         const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+        const deviceId = cfg.deviceId ?? null;
         const rows = ports.map(p => ({
           id: p.id,
           name: p.name,
@@ -974,13 +975,17 @@ function App() {
           folder_path: p.folderPath ?? null,
           deploy_url: p.deployUrl ?? null,
           github_url: p.githubUrl ?? null,
+          device_id: deviceId,
         }));
         await supabase.from('ports').upsert(rows, { onConflict: 'id' });
         // Fix P2: delete remote rows whose IDs are no longer in local list
         // Fix P2g: skip delete pass if auto-pull never succeeded — local state may be incomplete
+        // Step 4: scope stale-delete to this device only to avoid clobbering other devices
         if (autopullSucceeded.current) {
           const localIds = ports.map(p => p.id);
-          const { data: remoteRows } = await supabase.from('ports').select('id');
+          let remoteQuery = supabase.from('ports').select('id');
+          if (deviceId) remoteQuery = remoteQuery.eq('device_id', deviceId);
+          const { data: remoteRows } = await remoteQuery;
           const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
           if (staleIds.length > 0) {
             await supabase.from('ports').delete().in('id', staleIds);
@@ -1348,10 +1353,14 @@ function App() {
       }
 
       const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
+      const deviceId = portalData?.deviceId ?? null;
 
       // 30s timeout — manual pull
+      // Step 5: filter by device_id so each device only restores its own ports
+      let portsQuery = supabase.from('ports').select('*');
+      if (deviceId) portsQuery = portsQuery.eq('device_id', deviceId);
       const { data, error } = await withTimeout(
-        supabase.from('ports').select('*'),
+        portsQuery,
         30_000
       );
       if (error) throw new Error(error.message);
@@ -1382,7 +1391,7 @@ function App() {
       await API.savePorts(merged);
 
       // workspace_roots 복원 (Fix #7: disk에도 저장, 빈 결과면 덮어쓰기 방지)
-      const deviceId = portalData.deviceId;
+      // deviceId already declared above (used for ports query scope)
       let rootsMsg = '';
       if (deviceId) {
         const { data: rootData } = await supabase
@@ -1433,14 +1442,18 @@ function App() {
         folder_path: p.folderPath ?? null,
         deploy_url: p.deployUrl ?? null,
         github_url: p.githubUrl ?? null,
+        device_id: deviceId,
       }));
       const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error) throw new Error(error.message);
       // Fix P2: delete remote rows whose IDs are no longer in local list
       // Fix P2g: skip delete pass if auto-pull never succeeded — pull first before deleting
+      // Step 4: scope stale-delete to this device only to avoid clobbering other devices
       if (autopullSucceeded.current) {
         const localIds = ports.map(p => p.id);
-        const { data: remoteRows } = await supabase.from('ports').select('id');
+        let remoteQuery = supabase.from('ports').select('id');
+        if (deviceId) remoteQuery = remoteQuery.eq('device_id', deviceId);
+        const { data: remoteRows } = await remoteQuery;
         const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
         if (staleIds.length > 0) {
           await supabase.from('ports').delete().in('id', staleIds);
@@ -2766,45 +2779,41 @@ function App() {
                     </div>
                   ) : (
                     // 일반 모드
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4 flex-1 min-w-0">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <h3 className="text-sm font-medium text-white group-hover:text-white transition-colors">
-                              {item.name}
-                            </h3>
-                            {item.aiName && (
-                              <span
-                                className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium rounded border border-emerald-500/30"
-                                title="AI 추천 이름 (검색용 별칭)"
-                              >
-                                {item.aiName}
-                              </span>
-                            )}
-                            {item.category && (
-                              <span className="px-1.5 py-0.5 bg-violet-500/15 text-violet-400 text-[10px] font-medium rounded border border-violet-500/30">
-                                {item.category}
-                              </span>
-                            )}
-                          </div>
-                          {item.description && (
-                            <p className="text-[11px] text-zinc-500 mt-0.5 truncate max-w-xs">{item.description}</p>
+                    <div className="flex flex-col gap-2">
+                      {/* 정보 행 */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm font-medium text-white whitespace-nowrap">
+                          {item.name}
+                        </h3>
+                        {item.aiName && (
+                          <span
+                            className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium rounded border border-emerald-500/30 whitespace-nowrap"
+                            title="AI 추천 이름 (검색용 별칭)"
+                          >
+                            {item.aiName}
+                          </span>
+                        )}
+                        {item.category && (
+                          <span className="px-1.5 py-0.5 bg-violet-500/15 text-violet-400 text-[10px] font-medium rounded border border-violet-500/30 whitespace-nowrap">
+                            {item.category}
+                          </span>
+                        )}
+                        <div className="flex items-center gap-1">
+                          <Server className="w-3 h-3 text-zinc-600" />
+                          {item.port ? (
+                            <span className="font-mono text-xs text-zinc-400">
+                              Port: <span className="text-zinc-200 font-semibold">{item.port}</span>
+                            </span>
+                          ) : (
+                            <span className="font-mono text-xs text-zinc-600">No port</span>
                           )}
-                          <div className="flex items-center gap-2 mt-1">
-                            <div className="w-5 h-5 rounded-md bg-zinc-900 flex items-center justify-center border border-zinc-700">
-                              <Server className="w-3 h-3 text-zinc-400" />
-                            </div>
-                            {item.port ? (
-                              <span className="font-mono text-xs text-zinc-400">
-                                Port: <span className="text-zinc-200 font-semibold">{item.port}</span>
-                              </span>
-                            ) : (
-                              <span className="font-mono text-xs text-zinc-600">No port</span>
-                            )}
-                          </div>
                         </div>
+                        {item.description && (
+                          <p className="text-[11px] text-zinc-500 truncate max-w-sm">{item.description}</p>
+                        )}
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      {/* 버튼 행 */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {(item.commandPath || item.terminalCommand) && (
                           isHtmlFile(item.commandPath) ? (
                             <button
