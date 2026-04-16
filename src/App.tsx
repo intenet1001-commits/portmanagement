@@ -561,7 +561,7 @@ const getSupabaseClient = (url: string, key: string): ReturnType<typeof createCl
 };
 
 // localStorage credential fallback helper — works even when API server is offline
-const getPortalCredentials = async (): Promise<{ supabaseUrl?: string; supabaseAnonKey?: string; deviceId?: string }> => {
+const getPortalCredentials = async (): Promise<{ supabaseUrl?: string; supabaseAnonKey?: string; deviceId?: string; deviceName?: string }> => {
   try {
     const res = await Promise.race([
       fetch('/api/portal'),
@@ -569,12 +569,13 @@ const getPortalCredentials = async (): Promise<{ supabaseUrl?: string; supabaseA
     ]) as Response;
     if (res.ok) {
       const data = await res.json();
-      // Cache only credential fields (not full portal items to avoid localStorage size limits)
+      // Cache credential fields including deviceName
       if (data.supabaseUrl) {
         localStorage.setItem('portalCreds', JSON.stringify({
           supabaseUrl: data.supabaseUrl,
           supabaseAnonKey: data.supabaseAnonKey,
           deviceId: data.deviceId,
+          deviceName: data.deviceName,
         }));
       }
       return data;
@@ -974,6 +975,7 @@ function App() {
       try {
         const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
         const deviceId = cfg.deviceId ?? null;
+        const deviceNameVal = cfg.deviceName ?? null;
         const rows = ports.map(p => ({
           id: p.id,
           name: p.name,
@@ -984,10 +986,11 @@ function App() {
           deploy_url: p.deployUrl ?? null,
           github_url: p.githubUrl ?? null,
           device_id: deviceId,
+          device_name: deviceNameVal,
         }));
         let upsertErr = (await supabase.from('ports').upsert(rows, { onConflict: 'id' })).error;
         if (upsertErr?.message?.includes('device_id') || upsertErr?.message?.includes('device_name')) {
-          const rowsWithout = rows.map(({ device_id, ...rest }: any) => rest);
+          const rowsWithout = rows.map(({ device_id, device_name, ...rest }: any) => rest);
           upsertErr = (await supabase.from('ports').upsert(rowsWithout, { onConflict: 'id' })).error;
         }
         if (upsertErr) throw new Error(upsertErr.message);
@@ -1449,7 +1452,15 @@ function App() {
         return;
       }
       const deviceId = portalData.deviceId ?? null;
+      const deviceNameVal = portalData.deviceName ?? null;
       const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
+
+      // 새 기기에서 포트 목록이 비어있으면 Pull 먼저 하도록 안내
+      if (ports.length === 0) {
+        showToast('포트 목록이 비어있습니다. Pull 먼저 실행하세요.', 'error');
+        return;
+      }
+
       const rows = ports.map(p => ({
         id: p.id,
         name: p.name,
@@ -1460,11 +1471,12 @@ function App() {
         deploy_url: p.deployUrl ?? null,
         github_url: p.githubUrl ?? null,
         device_id: deviceId,
+        device_name: deviceNameVal,
       }));
       let { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error?.message?.includes('device_id') || error?.message?.includes('device_name')) {
         // device_id/device_name column not yet migrated — retry without it
-        const rowsWithout = rows.map(({ device_id, ...rest }: any) => rest);
+        const rowsWithout = rows.map(({ device_id, device_name, ...rest }: any) => rest);
         const { error: e2 } = await supabase.from('ports').upsert(rowsWithout, { onConflict: 'id' });
         error = e2 ?? null;
         if (!e2) showToast('⚠ device_id 컬럼 없음 — 초기설정 가이드의 AI 프롬프트로 마이그레이션 후 재Push 권장', 'error');
