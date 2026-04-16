@@ -75,7 +75,7 @@ API 서버(포트 3001) + 개발 서버(포트 9000) 동시 시작.
 
 **Windows 간편 실행 (더블클릭)**
 ```
-실행.bat   ← 탐색기에서 더블클릭
+start.bat   ← 탐색기에서 더블클릭
 ```
 또는 PowerShell에서:
 ```powershell
@@ -276,7 +276,7 @@ src-tauri\target\release\bundle\nsis\포트관리기_x.x.x_x64-setup.exe
 
 | 항목 | macOS | Windows |
 |---|---|---|
-| 간편 실행 | `실행.command` 더블클릭 | `실행.bat` 더블클릭 |
+| 간편 실행 | `실행.command` 더블클릭 | `start.bat` 더블클릭 |
 | 포트 상태 감지 | `lsof` 기반 | `netstat` 기반 (자동 처리) |
 | 프로세스 강제 종료 | `SIGKILL` | `taskkill /F` (자동 처리) |
 | `.command` 파일 | ✅ 지원 | ❌ `.bat` 또는 `.ps1` 파일 사용 |
