@@ -4,17 +4,17 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun api-server.ts & vite",
-    "api": "bun api-server.ts",
-    "start": "bun api-server.ts & vite",
+    "dev": "bun --watch api-server.ts & vite",
+    "api": "bun --watch api-server.ts",
+    "start": "bun --watch api-server.ts & vite",
     "build": "vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "update-version": "bun update-version.ts",
     "fix-dmg": "bun fix-dmg.ts",
-    "tauri:build": "bun update-version.ts && tauri build",
-    "tauri:build:dmg": "bun update-version.ts && tauri build --bundles dmg; bun fix-dmg.ts"
+    "tauri:build": "bun update-version.ts && bun run build && tauri build",
+    "tauri:build:dmg": "bun update-version.ts && bun run build && tauri build --bundles dmg; bun fix-dmg.ts"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.5",

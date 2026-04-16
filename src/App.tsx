@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
-import PortalManager from './PortalManager';
+import PortalManager, { type PortalActions } from './PortalManager';
+import SetupWizard from './SetupWizard';
 
 // Tauri API 체크
 const isTauri = () => {
@@ -369,7 +370,79 @@ const API = {
       });
     }
   },
+
+  async suggestNameAndCategory(folderPath: string, name: string): Promise<{ name: string | null; category: string | null }> {
+    try {
+      const res = await fetch('/api/suggest-name-and-category', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath, name }),
+      });
+      if (!res.ok) return { name: null, category: null };
+      return res.json();
+    } catch { return { name: null, category: null }; }
+  },
+
+  async suggestBatch(ports: Array<{ id: string; folderPath: string; name: string; aiName?: string }>): Promise<Array<{ id: string; name: string | null; category: string | null }>> {
+    try {
+      const res = await fetch('/api/suggest-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ports }),
+      });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return data.results ?? [];
+    } catch { return []; }
+  },
 };
+
+const CLAUDE_AI_NAME_PROMPT = `포트관리기의 프로젝트 목록에 "AI 추천 이름(aiName)"을 채워줘.
+
+## 대상 파일
+~/Library/Application Support/com.portmanager.portmanager/ports.json
+
+## 절차
+
+1. **백업 먼저**: 쓰기 전에 반드시 백업 생성 (코드 한 줄로 충분).
+   \`cp "$HOME/Library/Application Support/com.portmanager.portmanager/ports.json" "$HOME/Library/Application Support/com.portmanager.portmanager/ports.json.bak"\`
+
+2. **읽기**: JSON을 파싱해서 배열을 메모리에 로드.
+
+3. **각 항목에 aiName 설정**:
+   - 이미 \`aiName\`이 있으면 건드리지 말 것 (idempotent — 재실행해도 기존 별칭 유지)
+   - \`aiName\`이 없는 항목에만 새 별칭 생성
+   - 참고 필드: name, folderPath(basename), description, githubUrl, deployUrl, commandPath, terminalCommand
+
+4. **별칭 규칙**:
+   - 2~4 단어의 짧은 영어 (공백 구분, 예: "port manager", "tax calculator", "link page generator")
+   - 프로젝트의 핵심 기능을 드러내는 키워드
+   - 한국어 프로젝트는 의미를 영어로 번역
+   - 이미 영어 이름이면 더 검색 친화적인 키워드 한 개로 압축
+   - 모두 소문자
+
+5. **필드 보존 규칙 (매우 중요)**:
+   - 다음 필드는 **원본 값 그대로 유지**해야 함 — 존재한다면 삭제/수정 금지:
+     id, name, port, commandPath, terminalCommand, folderPath, deployUrl, githubUrl, worktreePath, category, description, isRunning
+   - \`worktreePath: null\` 같은 명시적 null 값도 그대로 유지 (삭제 금지)
+   - \`isRunning: false\` 같은 boolean도 그대로 유지
+   - 원래 없던 필드를 새로 추가하지 말 것 (aiName 제외)
+
+6. **원자적 쓰기 (atomic write)**:
+   - 임시 파일에 먼저 쓴 후 rename으로 교체 (중간 인터럽트 시 원본 손상 방지)
+   - 예시 절차:
+     a. \`ports.json.tmp\`에 전체 JSON 직렬화 (2-space indent)
+     b. fs.rename(\`ports.json.tmp\`, \`ports.json\`)
+   - 들여쓰기는 원본과 동일하게 2-space
+
+7. **검증**:
+   - 쓰기 후 다시 읽어서 파싱 가능한지 확인
+   - 항목 수가 원본과 동일한지 확인
+   - 파싱 실패 시 백업(\`.bak\`)에서 복원
+
+8. **보고**: 완료 후 한 줄로 "N개 항목에 aiName 추가, M개 기존 유지, 총 K개 검증 완료" 형식으로 보고.
+
+완료되면 포트관리기에서 "새로고침" 버튼을 누르면 별칭이 에메랄드 배지로 표시되고 검색에서 매칭됩니다.`;
 
 interface PortInfo {
   id: string;
@@ -381,6 +454,9 @@ interface PortInfo {
   deployUrl?: string;
   githubUrl?: string;
   worktreePath?: string;
+  category?: string;
+  description?: string;
+  aiName?: string;  // AI-generated English alias for search
   isRunning?: boolean;
 }
 
@@ -444,9 +520,112 @@ const getSessionName = (item: PortInfo): string => {
   return item.name.replace(/\s+/g, '-');
 };
 
+/** Race a promise against a timeout. Rejects with Error if ms elapses first. */
+const withTimeout = <T,>(promise: PromiseLike<T>, ms: number): Promise<T> =>
+  Promise.race([
+    Promise.resolve(promise),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)
+    ),
+  ]);
+
+/**
+ * Model B merge: remote wins for known IDs, local-only rows survive.
+ * isRunning is preserved from the local copy.
+ */
+const mergePorts = (local: PortInfo[], remote: PortInfo[]): PortInfo[] => {
+  const remoteById = new Map(remote.map(p => [p.id, p]));
+  const merged = local.map(p => {
+    const r = remoteById.get(p.id);
+    if (!r) return p;
+    return { ...p, ...r, isRunning: p.isRunning, aiName: r.aiName ?? p.aiName };
+  });
+  const localIds = new Set(local.map(p => p.id));
+  const newFromRemote = remote.filter(p => !localIds.has(p.id));
+  return [...merged, ...newFromRemote];
+};
+
+// 다른 기기 Pull 전용 병합: name 기준으로 매칭, 새 항목만 새 ID로 추가
+// 경로(folderPath, commandPath)는 기기마다 다르므로 기존 로컬 것 유지
+const mergePortsFromOtherDevice = (local: PortInfo[], remote: PortInfo[]): PortInfo[] => {
+  const result = new Map(local.map(p => [p.id, p]));
+  const localByName = new Map(local.map(p => [p.name?.toLowerCase(), p.id]));
+
+  for (const r of remote) {
+    const key = r.name?.toLowerCase();
+    if (!key) continue;
+    const existingId = localByName.get(key);
+    if (existingId) {
+      // 이미 있는 프로젝트 → 공유 메타만 업데이트, 경로는 로컬 유지
+      const existing = result.get(existingId)!;
+      result.set(existingId, {
+        ...existing,
+        port: r.port ?? existing.port,
+        deployUrl: r.deployUrl ?? existing.deployUrl,
+        githubUrl: r.githubUrl ?? existing.githubUrl,
+        description: r.description ?? existing.description,
+        category: r.category ?? existing.category,
+      });
+    } else {
+      // 새 프로젝트 → 새 ID 발급, 경로는 비워둠 (이 기기에서 직접 설정 필요)
+      const newId = crypto.randomUUID();
+      const newPort: PortInfo = {
+        ...r,
+        id: newId,
+        folderPath: undefined,
+        commandPath: undefined,
+        isRunning: false,
+      };
+      result.set(newId, newPort);
+      localByName.set(key, newId);
+    }
+  }
+  return Array.from(result.values());
+};
+
+// Supabase client cache — one instance per credential pair (Fix P2b)
+const _supabaseCache = new Map<string, ReturnType<typeof createClient>>();
+const getSupabaseClient = (url: string, key: string): ReturnType<typeof createClient> => {
+  const cacheKey = `${url}::${key}`;
+  if (!_supabaseCache.has(cacheKey)) {
+    _supabaseCache.set(cacheKey, createClient(url, key));
+  }
+  return _supabaseCache.get(cacheKey)!;
+};
+
+// localStorage credential fallback helper — works even when API server is offline
+const getPortalCredentials = async (): Promise<{ supabaseUrl?: string; supabaseAnonKey?: string; deviceId?: string; deviceName?: string }> => {
+  try {
+    const res = await Promise.race([
+      fetch('/api/portal'),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+    ]) as Response;
+    if (res.ok) {
+      const data = await res.json();
+      // Cache credential fields including deviceName
+      if (data.supabaseUrl) {
+        localStorage.setItem('portalCreds', JSON.stringify({
+          supabaseUrl: data.supabaseUrl,
+          supabaseAnonKey: data.supabaseAnonKey,
+          deviceId: data.deviceId,
+          deviceName: data.deviceName,
+        }));
+      }
+      return data;
+    }
+  } catch {}
+  // Fallback to localStorage cache
+  try {
+    const cached = localStorage.getItem('portalCreds');
+    if (cached) return JSON.parse(cached);
+  } catch {}
+  return {};
+};
+
 function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [apiServerOnline, setApiServerOnline] = useState<boolean | null>(null);
   const hasInitiallyLoaded = useRef(false);
   const hasWorkspaceRootsLoaded = useRef(false);
   const skipNextSave = useRef(false); // 서버 리로드(focus 등)로 인한 불필요한 덮어쓰기 방지
@@ -459,9 +638,17 @@ function App() {
   const [githubUrl, setGithubUrl] = useState('');
   const [worktreePath, setWorktreePath] = useState('');
   const [activeTab, setActiveTab] = useState<'ports' | 'portal'>('ports');
-  const [sortBy, setSortBy] = useState<SortType>('recent');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [openPortalSettings, setOpenPortalSettings] = useState(false);
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const [sortBy, setSortBy] = useState<SortType>(
+    () => (localStorage.getItem('portmanager-sortBy') as SortType) || 'recent'
+  );
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(
+    () => (localStorage.getItem('portmanager-sortOrder') as 'asc' | 'desc') || 'desc'
+  );
   const [filterType, setFilterType] = useState<'all' | 'with-port' | 'without-port'>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [bypassPermissions, setBypassPermissions] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -472,13 +659,21 @@ function App() {
   const [editDeployUrl, setEditDeployUrl] = useState('');
   const [editGithubUrl, setEditGithubUrl] = useState('');
   const [editWorktreePath, setEditWorktreePath] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [category, setCategory] = useState('');
+  const [description, setDescription] = useState('');
+  const [filterCategory, setFilterCategory] = useState<string>('all');
   const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
   const [worktreePickerValue, setWorktreePickerValue] = useState('');
   const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isAiEnriching, setIsAiEnriching] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isPushingPorts, setIsPushingPorts] = useState(false);
+  const [remappingPorts, setRemappingPorts] = useState<PortInfo[]>([]);
+  const [remappingPaths, setRemappingPaths] = useState<Record<string, string>>({});
   const [isBuilding, setIsBuilding] = useState(false);
   const [showBuildLog, setShowBuildLog] = useState(false);
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
@@ -490,6 +685,31 @@ function App() {
   const [newProjectName, setNewProjectName] = useState('');
   const [activeRootId, setActiveRootId] = useState<string | null>(null);
   const [registerAsProject, setRegisterAsProject] = useState(true);
+  const portalConfigRef = useRef<any>(null);
+  const portalActionsRef = useRef<PortalActions | null>(null);
+  const autoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Fix P2g: gate delete pass — only safe to delete remote rows after a successful auto-pull
+  // (otherwise local state has only this Mac's rows and would delete other Macs' remote data)
+  const autopullSucceeded = useRef(false);
+
+  // API 서버 헬스 체크 (웹 모드 전용)
+  useEffect(() => {
+    if (isTauri()) return;
+    const check = async () => {
+      try {
+        const res = await Promise.race([
+          fetch('/api/ports'),
+          new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 2000)),
+        ]) as Response;
+        setApiServerOnline(res.ok);
+      } catch {
+        setApiServerOnline(false);
+      }
+    };
+    check();
+    const interval = setInterval(check, 30_000);
+    return () => clearInterval(interval);
+  }, []);
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -501,6 +721,16 @@ function App() {
       setToasts(prev => prev.filter(toast => toast.id !== id));
     }, 3000);
   };
+
+  // AI이름 적용 프롬프트 — ports.json 경로와 함께 클립보드에 복사
+  const handleCopyAiNamePrompt = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(CLAUDE_AI_NAME_PROMPT);
+      showToast('AI이름 프롬프트 복사됨 — Claude Code에 붙여넣기 하세요', 'success');
+    } catch {
+      showToast('클립보드 복사 실패', 'error');
+    }
+  }, []);
 
   const openTmuxClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'tmux' });
@@ -516,8 +746,13 @@ function App() {
   const openTmuxClaudeFresh = async (item: PortInfo) => {
     const sessionName = getSessionName(item);
     try {
-      await API.openTmuxClaudeFresh(sessionName, item.folderPath, item.worktreePath);
-      showToast(`tmux 새 세션 시작 (기록 초기화) ↺`, 'success');
+      if (bypassPermissions) {
+        await API.openTmuxClaudeBypass(sessionName, item.folderPath, item.worktreePath);
+        showToast(`tmux 새 세션 시작 (↺ ⚡ bypass)`, 'success');
+      } else {
+        await API.openTmuxClaudeFresh(sessionName, item.folderPath, item.worktreePath);
+        showToast(`tmux 새 세션 시작 (기록 초기화) ↺`, 'success');
+      }
     } catch (e) {
       showToast(`tmux 새 세션 실패: ${e}`, 'error');
     }
@@ -619,7 +854,82 @@ function App() {
         });
 
         setPorts(updatedData);
-        hasInitiallyLoaded.current = true;
+        // NOTE: hasInitiallyLoaded is set AFTER auto-pull completes (Fix P2c)
+        // Setting it here would let the 3s auto-push debounce fire on stale data.
+
+        // 포털 설정 로드 및 캐시 (자동 push/pull에서 재사용)
+        try {
+          let portalData: any;
+          if (isTauri()) {
+            portalData = await invoke('load_portal');
+          } else {
+            const res = await fetch('/api/portal');
+            if (res.ok) portalData = await res.json();
+          }
+          portalConfigRef.current = portalData ?? null;
+
+          // Supabase 자동 Pull (10s timeout, Model B merge)
+          if (portalData?.supabaseUrl && portalData?.supabaseAnonKey) {
+            try {
+              const supabase = getSupabaseClient(portalData.supabaseUrl, portalData.supabaseAnonKey);
+              let portsQuery = supabase.from('ports').select('*');
+              if (portalData.deviceId) portsQuery = portsQuery.eq('device_id', portalData.deviceId);
+              let { data: remoteData, error } = await withTimeout(portsQuery, 10_000);
+              // device_id 필터 결과 없으면 전체 재시도 (마이그레이션 전 호환)
+              if (!error && (!remoteData || remoteData.length === 0) && portalData.deviceId) {
+                const retry = await withTimeout(supabase.from('ports').select('*'), 10_000);
+                if (!retry.error && retry.data && retry.data.length > 0) remoteData = retry.data;
+              }
+              if (!error && remoteData && remoteData.length > 0) {
+                const remoteRows: PortInfo[] = remoteData.map((row: any) => ({
+                  id: row.id,
+                  name: row.name,
+                  port: row.port ?? undefined,
+                  commandPath: row.command_path ?? undefined,
+                  terminalCommand: row.terminal_command ?? undefined,
+                  folderPath: row.folder_path ?? undefined,
+                  deployUrl: row.deploy_url ?? undefined,
+                  githubUrl: row.github_url ?? undefined,
+                  category: row.category ?? undefined,
+                  description: row.description ?? undefined,
+                  aiName: row.ai_name ?? undefined,
+                  isRunning: false,
+                }));
+                const merged = mergePorts(updatedData, remoteRows);
+                setPorts(merged);
+                await API.savePorts(merged);
+              }
+
+              hasInitiallyLoaded.current = true; // Fix P2c: set after pull completes
+              autopullSucceeded.current = true;  // Fix P2g: mark pull succeeded → delete pass is now safe
+
+              // workspace_roots 자동 Pull (빈 결과면 로컬 덮어쓰기 방지)
+              const deviceId = portalData.deviceId;
+              if (deviceId) {
+                const { data: rootData } = await supabase
+                  .from('workspace_roots').select('*').eq('device_id', deviceId);
+                if (rootData && rootData.length > 0) {
+                  const restoredRoots: WorkspaceRoot[] = rootData
+                    .filter((r: any) => !r.path?.startsWith('__device__'))
+                    .map((r: any) => ({ id: r.id, name: r.name, path: r.path }));
+                  setWorkspaceRoots(restoredRoots);
+                  await API.saveWorkspaceRoots(restoredRoots);
+                }
+                // guard: rootData.length === 0 → skip, keep local roots intact
+              }
+            } catch (pullErr) {
+              console.warn('[App] Auto-pull Supabase failed:', pullErr);
+              showToast('Supabase 자동 동기화 실패 (네트워크 확인)', 'error');
+              hasInitiallyLoaded.current = true; // Fix P2c: still enable auto-push on pull failure
+            }
+          } else {
+            // No credentials at startup → still enable auto-push so it fires once credentials are added
+            hasInitiallyLoaded.current = true;
+          }
+        } catch (portalErr) {
+          console.warn('[App] Failed to load portal config:', portalErr);
+          hasInitiallyLoaded.current = true; // Fix P2c: still enable auto-push if portal load fails
+        }
 
         // 앱 시작 시 포트 상태 자동 확인 (병렬)
         const withPorts = updatedData.filter((p: PortInfo) => p.port);
@@ -668,6 +978,82 @@ function App() {
     );
   }, [workspaceRoots]);
 
+  // 정렬 설정 localStorage 저장
+  useEffect(() => { localStorage.setItem('portmanager-sortBy', sortBy); }, [sortBy]);
+  useEffect(() => { localStorage.setItem('portmanager-sortOrder', sortOrder); }, [sortOrder]);
+
+  // Cmd+F: 검색 포커스 / Esc: 검색 초기화
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      } else if (e.key === 'Escape' && document.activeElement === searchInputRef.current) {
+        setSearchQuery('');
+        searchInputRef.current?.blur();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  // 자동 Push: 포트 목록 변경 후 3초 debounce (Supabase 설정된 경우만)
+  useEffect(() => {
+    if (!hasInitiallyLoaded.current) return;
+    const config = portalConfigRef.current;
+    if (!config?.supabaseUrl || !config?.supabaseAnonKey) return;
+
+    if (autoPushTimerRef.current) clearTimeout(autoPushTimerRef.current);
+    autoPushTimerRef.current = setTimeout(async () => {
+      const cfg = portalConfigRef.current;
+      if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) return;
+      if (ports.length === 0) return; // 빈 배열로 stale-delete 방지
+      try {
+        const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+        const deviceId = cfg.deviceId ?? null;
+        const deviceNameVal = cfg.deviceName ?? null;
+        const rows = ports.map(p => ({
+          id: p.id,
+          name: p.name,
+          port: p.port ?? null,
+          command_path: p.commandPath ?? null,
+          terminal_command: p.terminalCommand ?? null,
+          folder_path: p.folderPath ?? null,
+          deploy_url: p.deployUrl ?? null,
+          github_url: p.githubUrl ?? null,
+          device_id: deviceId,
+          device_name: deviceNameVal,
+        }));
+        let upsertErr = (await supabase.from('ports').upsert(rows, { onConflict: 'id' })).error;
+        if (upsertErr?.message?.includes('device_id') || upsertErr?.message?.includes('device_name')) {
+          const rowsWithout = rows.map(({ device_id, device_name, ...rest }: any) => rest);
+          upsertErr = (await supabase.from('ports').upsert(rowsWithout, { onConflict: 'id' })).error;
+        }
+        if (upsertErr) throw new Error(upsertErr.message);
+        // Fix P2: delete remote rows whose IDs are no longer in local list
+        // Fix P2g: skip delete pass if auto-pull never succeeded — local state may be incomplete
+        // Step 4: scope stale-delete to this device only to avoid clobbering other devices
+        if (autopullSucceeded.current) {
+          const localIds = ports.map(p => p.id);
+          let remoteQuery = supabase.from('ports').select('id');
+          if (deviceId) remoteQuery = remoteQuery.eq('device_id', deviceId);
+          const { data: remoteRows } = await remoteQuery;
+          const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
+          if (staleIds.length > 0) {
+            await supabase.from('ports').delete().in('id', staleIds);
+          }
+        }
+      } catch (e) {
+        console.warn('[App] Auto-push failed:', e);
+      }
+    }, 3000);
+
+    return () => {
+      if (autoPushTimerRef.current) clearTimeout(autoPushTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ports]);
+
   // 포트 목록이 변경될 때마다 파일에 저장 (초기 로드 완료 후에만)
   useEffect(() => {
     if (!isLoading && hasInitiallyLoaded.current) {
@@ -714,6 +1100,16 @@ function App() {
 
   const addPort = () => {
     if (name) {
+      const portNum = port ? parseInt(port) : undefined;
+      if (portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
+        showToast('포트 번호는 1~65535 사이여야 합니다', 'error');
+        return;
+      }
+      const duplicatePort = portNum && ports.find(p => p.port === portNum);
+      if (duplicatePort) {
+        showToast(`포트 ${portNum}은 이미 "${duplicatePort.name}"에서 사용 중입니다`, 'error');
+        return;
+      }
       // commandPath가 있으면 자동으로 폴더 경로 추출
       let autoFolderPath = folderPath;
       if (commandPath && !folderPath) {
@@ -734,6 +1130,8 @@ function App() {
         deployUrl: deployUrl || undefined,
         githubUrl: githubUrl || undefined,
         worktreePath: worktreePath || undefined,
+        category: category || undefined,
+        description: description || undefined,
         isRunning: false,
       };
       setPorts([...ports, newPort]);
@@ -745,6 +1143,8 @@ function App() {
       setDeployUrl('');
       setGithubUrl('');
       setWorktreePath('');
+      setCategory('');
+      setDescription('');
     }
   };
 
@@ -762,6 +1162,8 @@ function App() {
     setEditDeployUrl(item.deployUrl || '');
     setEditGithubUrl(item.githubUrl || '');
     setEditWorktreePath(item.worktreePath || '');
+    setEditCategory(item.category || '');
+    setEditDescription(item.description || '');
   };
 
   const cancelEdit = () => {
@@ -774,6 +1176,8 @@ function App() {
     setEditDeployUrl('');
     setEditGithubUrl('');
     setEditWorktreePath('');
+    setEditCategory('');
+    setEditDescription('');
   };
 
   const saveEdit = () => {
@@ -789,7 +1193,7 @@ function App() {
 
       setPorts(ports.map(p =>
         p.id === editingId
-          ? { ...p, name: editName, port: editPort ? parseInt(editPort) : undefined, commandPath: editCommandPath || undefined, terminalCommand: editTerminalCommand || undefined, folderPath: autoFolderPath || undefined, deployUrl: editDeployUrl || undefined, githubUrl: editGithubUrl || undefined, worktreePath: editWorktreePath || undefined }
+          ? { ...p, name: editName, port: editPort ? parseInt(editPort) : undefined, commandPath: editCommandPath || undefined, terminalCommand: editTerminalCommand || undefined, folderPath: autoFolderPath || undefined, deployUrl: editDeployUrl || undefined, githubUrl: editGithubUrl || undefined, worktreePath: editWorktreePath || undefined, category: editCategory || undefined, description: editDescription || undefined }
           : p
       ));
       cancelEdit();
@@ -994,15 +1398,13 @@ function App() {
     if (isRestoring) return;
     setIsRestoring(true);
     try {
-      // portal.json에서 Supabase 자격 증명 로드
       let portalData: any;
       if (isTauri()) {
         portalData = await invoke('load_portal');
       } else {
-        const res = await fetch('/api/portal');
-        if (!res.ok) throw new Error('portal.json 로드 실패');
-        portalData = await res.json();
+        portalData = await getPortalCredentials();
       }
+      if (portalData?.supabaseUrl) portalConfigRef.current = portalData;
 
       const { supabaseUrl, supabaseAnonKey } = portalData ?? {};
       if (!supabaseUrl || !supabaseAnonKey) {
@@ -1010,16 +1412,29 @@ function App() {
         return;
       }
 
-      const supabase = createClient(supabaseUrl, supabaseAnonKey);
-      const { data, error } = await supabase.from('ports').select('*');
+      const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
+      // 설정의 "다른 기기 보기"가 선택돼 있으면 그 기기 기준으로 Pull
+      const pullDeviceId = portalData?.viewingDeviceId || portalData?.deviceId || null;
+      const isOtherDevice = portalData?.viewingDeviceId && portalData.viewingDeviceId !== portalData?.deviceId;
+
+      let portsQuery = supabase.from('ports').select('*');
+      if (pullDeviceId) portsQuery = portsQuery.eq('device_id', pullDeviceId);
+      let { data, error } = await withTimeout(portsQuery, 30_000);
+
+      // device_id 필터 결과가 비어있으면(컬럼 없거나 해당 기기 데이터 없음) 전체 재시도
+      if (!error && (!data || data.length === 0) && pullDeviceId) {
+        const retry = await withTimeout(supabase.from('ports').select('*'), 30_000);
+        data = retry.data;
+        error = retry.error;
+      }
+
       if (error) throw new Error(error.message);
       if (!data || data.length === 0) {
         showToast('Supabase에 저장된 포트가 없습니다', 'error');
         return;
       }
 
-      // snake_case → camelCase 매핑
-      const restored: PortInfo[] = data.map((row: any) => ({
+      const remoteRows: PortInfo[] = data.map((row: any) => ({
         id: row.id,
         name: row.name,
         port: row.port ?? undefined,
@@ -1028,29 +1443,50 @@ function App() {
         folderPath: row.folder_path ?? undefined,
         deployUrl: row.deploy_url ?? undefined,
         githubUrl: row.github_url ?? undefined,
+        category: row.category ?? undefined,
+        description: row.description ?? undefined,
+        aiName: row.ai_name ?? undefined,
         isRunning: false,
       }));
 
-      setPorts(restored);
-      await API.savePorts(restored);
+      // 다른 기기 Pull → name 기준 병합 + 새 ID 발급 (ID 충돌 방지)
+      // 내 기기 Pull → ID 기준 병합 (기존 동작 유지)
+      const merged = isOtherDevice
+        ? mergePortsFromOtherDevice(ports, remoteRows)
+        : mergePorts(ports, remoteRows);
+      setPorts(merged);
+      await API.savePorts(merged);
 
-      // workspace_roots 복원
-      const deviceId = portalData.deviceId;
-      if (deviceId) {
-        const { data: rootData } = await supabase.from('workspace_roots').select('*').eq('device_id', deviceId);
-        if (rootData && rootData.length > 0) {
-          const restoredRoots: WorkspaceRoot[] = rootData.map((r: any) => ({
-            id: r.id,
-            name: r.name,
-            path: r.path,
-          }));
-          setWorkspaceRoots(restoredRoots);
-          showToast(`Supabase에서 ${restored.length}개 포트 + ${restoredRoots.length}개 작업루트를 복원했습니다 ✓`, 'success');
-        } else {
-          showToast(`Supabase에서 ${restored.length}개 포트를 복원했습니다 ✓`, 'success');
+      let rootsMsg = '';
+      // 다른 기기 Pull 시 작업루트는 건드리지 않음 (경로가 기기마다 다름)
+      if (pullDeviceId && !isOtherDevice) {
+        let { data: rootData } = await supabase
+          .from('workspace_roots').select('*').eq('device_id', pullDeviceId);
+        if (!rootData || rootData.length === 0) {
+          const fallback = await supabase.from('workspace_roots').select('*');
+          if (fallback.data && fallback.data.length > 0) rootData = fallback.data;
         }
-      } else {
-        showToast(`Supabase에서 ${restored.length}개 포트를 복원했습니다 ✓`, 'success');
+        if (rootData && rootData.length > 0) {
+          const restoredRoots: WorkspaceRoot[] = rootData
+            .filter((r: any) => !r.path?.startsWith('__device__'))
+            .map((r: any) => ({ id: r.id, name: r.name, path: r.path }));
+          if (restoredRoots.length > 0) {
+            setWorkspaceRoots(restoredRoots);
+            await API.saveWorkspaceRoots(restoredRoots);
+            rootsMsg = ` + ${restoredRoots.length}개 작업루트`;
+          }
+        }
+      }
+      const label = isOtherDevice ? '[다른 기기] ' : '';
+      showToast(`${label}Supabase에서 ${merged.length}개 포트${rootsMsg}를 복원했습니다 ✓`, 'success');
+
+      // 다른 기기 Pull 후 경로 없는 포트가 있으면 remapping 모달 표시
+      if (isOtherDevice) {
+        const needsPath = merged.filter(p => !p.folderPath && !p.commandPath && !p.terminalCommand);
+        if (needsPath.length > 0) {
+          setRemappingPorts(needsPath);
+          setRemappingPaths({});
+        }
       }
     } catch (e) {
       showToast('Supabase 복원 실패: ' + e, 'error');
@@ -1067,44 +1503,77 @@ function App() {
       if (isTauri()) {
         portalData = await invoke('load_portal');
       } else {
-        const res = await fetch('/api/portal');
-        if (!res.ok) throw new Error('portal.json 로드 실패');
-        portalData = await res.json();
+        portalData = await getPortalCredentials();
       }
+      // Keep portalConfigRef in sync so auto-push fires after credentials are set
+      if (portalData?.supabaseUrl) portalConfigRef.current = portalData;
       const { supabaseUrl, supabaseAnonKey } = portalData ?? {};
       if (!supabaseUrl || !supabaseAnonKey) {
         showToast('Supabase 설정이 없습니다. 포털 탭에서 먼저 설정하세요', 'error');
         return;
       }
-      const supabase = createClient(supabaseUrl, supabaseAnonKey);
+      const deviceId = portalData.deviceId ?? null;
+      const deviceNameVal = portalData.deviceName ?? null;
+      const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
+
+      // 새 기기에서 포트 목록이 비어있으면 Pull 먼저 하도록 안내
+      if (ports.length === 0) {
+        showToast('포트 목록이 비어있습니다. Pull 먼저 실행하세요.', 'error');
+        return;
+      }
+
       const rows = ports.map(p => ({
         id: p.id,
         name: p.name,
         port: p.port ?? null,
-        command_path: (p as any).commandPath ?? null,
-        terminal_command: (p as any).terminalCommand ?? null,
-        folder_path: (p as any).folderPath ?? null,
-        deploy_url: (p as any).deployUrl ?? null,
-        github_url: (p as any).githubUrl ?? null,
+        command_path: p.commandPath ?? null,
+        terminal_command: p.terminalCommand ?? null,
+        folder_path: p.folderPath ?? null,
+        deploy_url: p.deployUrl ?? null,
+        github_url: p.githubUrl ?? null,
+        device_id: deviceId,
+        device_name: deviceNameVal,
       }));
-      const { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+      let { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+      if (error?.message?.includes('device_id') || error?.message?.includes('device_name')) {
+        // device_id/device_name column not yet migrated — retry without it
+        const rowsWithout = rows.map(({ device_id, device_name, ...rest }: any) => rest);
+        const { error: e2 } = await supabase.from('ports').upsert(rowsWithout, { onConflict: 'id' });
+        error = e2 ?? null;
+        if (!e2) showToast('⚠ device_id 컬럼 없음 — 초기설정 가이드의 AI 프롬프트로 마이그레이션 후 재Push 권장', 'error');
+      }
       if (error) throw new Error(error.message);
+      // Fix P2: delete remote rows whose IDs are no longer in local list
+      // Fix P2g: skip delete pass if auto-pull never succeeded — pull first before deleting
+      // Step 4: scope stale-delete to this device only to avoid clobbering other devices
+      if (autopullSucceeded.current) {
+        const localIds = ports.map(p => p.id);
+        let remoteQuery = supabase.from('ports').select('id');
+        if (deviceId) remoteQuery = remoteQuery.eq('device_id', deviceId);
+        const { data: remoteRows } = await remoteQuery;
+        const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
+        if (staleIds.length > 0) {
+          await supabase.from('ports').delete().in('id', staleIds);
+        }
+      }
 
       // workspace_roots 업로드
-      const deviceId = portalData.deviceId;
       let rootsMsg = '';
-      if (deviceId && workspaceRoots.length > 0) {
+      if (deviceId) {
         const rootRows = workspaceRoots.map(r => ({
-          id: r.id,
-          device_id: deviceId,
-          name: r.name,
-          path: r.path,
+          id: r.id, device_id: deviceId, name: r.name, path: r.path,
         }));
-        const { error: rootError } = await supabase.from('workspace_roots').upsert(rootRows, { onConflict: 'id' });
-        if (rootError) {
-          rootsMsg = ` (작업루트 업로드 실패: ${rootError.message})`;
-        } else {
-          rootsMsg = ` + ${workspaceRoots.length}개 작업루트`;
+        // 기기명 sentinel 행 — 스키마 변경 없이 device_name을 Supabase에 저장
+        if (deviceNameVal) {
+          rootRows.push({ id: `__device__${deviceId}`, device_id: deviceId, name: deviceNameVal, path: `__device__${deviceId}` });
+        }
+        if (rootRows.length > 0) {
+          const { error: rootError } = await supabase.from('workspace_roots').upsert(rootRows, { onConflict: 'id' });
+          if (rootError) {
+            rootsMsg = ` (작업루트 업로드 실패: ${rootError.message})`;
+          } else if (workspaceRoots.length > 0) {
+            rootsMsg = ` + ${workspaceRoots.length}개 작업루트`;
+          }
         }
       }
       showToast(`Supabase에 ${ports.length}개 포트${rootsMsg}를 업로드했습니다 ✓`, 'success');
@@ -1115,10 +1584,20 @@ function App() {
     }
   };
 
+  // 동시 실행 수 제한 풀 (AI 일괄 요청용)
+  async function runWithLimit<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+    const queue = [...items];
+    const slots = Array.from({ length: Math.min(limit, queue.length) }, () =>
+      (async () => { while (queue.length > 0) await worker(queue.shift()!); })()
+    );
+    await Promise.all(slots);
+  }
+
   const handleRefresh = async () => {
-    if (isRefreshing) return;
+    if (isRefreshing || isAiEnriching) return;
 
     setIsRefreshing(true);
+    let _refreshed: PortInfo[] = [];
     try {
       const data = await API.loadPorts();
 
@@ -1200,6 +1679,7 @@ function App() {
 
       const updatedData = await Promise.all(updatedDataPromises);
 
+      _refreshed = updatedData;
       setPorts(updatedData);
       showToast('포트 목록을 새로고침했습니다', 'success');
     } catch (error) {
@@ -1207,6 +1687,30 @@ function App() {
     } finally {
       setIsRefreshing(false);
     }
+
+    // Phase 2: AI 이름/카테고리 배치 생성 (missing 항목만, 단 1회 Claude 호출)
+    const targets = _refreshed.filter(p => p.folderPath && (!p.aiName || !p.category));
+    if (targets.length === 0) return;
+    setIsAiEnriching(true);
+    showToast(`AI 이름/카테고리 생성 중… (${targets.length}개)`, 'success');
+    let nameCount = 0, catCount = 0;
+    try {
+      const batchInput = targets.map(p => ({ id: p.id, folderPath: p.folderPath!, name: p.name, aiName: p.aiName }));
+      const results = await API.suggestBatch(batchInput);
+      const resultMap = new Map(results.map(r => [r.id, r]));
+      setPorts(prev => prev.map(p => {
+        const r = resultMap.get(p.id);
+        if (!r) return p;
+        const newName = !p.aiName && r.name ? r.name : undefined;
+        const newCat = !p.category && r.category ? r.category : undefined;
+        if (newName) nameCount++;
+        if (newCat) catCount++;
+        return (newName || newCat) ? { ...p, aiName: newName ?? p.aiName, category: newCat ?? p.category } : p;
+      }));
+    } catch {}
+    setPorts(prev => { API.savePorts(prev); return prev; });
+    setIsAiEnriching(false);
+    showToast(`AI 업데이트 완료: 이름 ${nameCount}개, 카테고리 ${catCount}개`, 'success');
   };
 
   const handleBuildApp = async () => {
@@ -1590,14 +2094,35 @@ function App() {
     }
   };
 
-  const getSortedPorts = () => {
-    let filtered = [...ports];
+  const matchesSearch = (p: PortInfo, q: string): boolean => {
+    const folderBasename = p.folderPath?.split('/').pop()?.toLowerCase() ?? '';
+    const aiName = p.aiName?.toLowerCase() ?? '';
+    return (
+      p.name.toLowerCase().includes(q) ||
+      aiName.includes(q) ||
+      (p.port?.toString() ?? '').includes(q) ||
+      folderBasename.includes(q)
+    );
+  };
+
+  const displayedPorts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    let filtered = q ? ports.filter(p => matchesSearch(p, q)) : ports;
 
     // Apply filter
     if (filterType === 'with-port') {
       filtered = filtered.filter(p => p.port != null && p.port > 0);
     } else if (filterType === 'without-port') {
       filtered = filtered.filter(p => p.port == null || p.port === 0);
+    }
+
+    // Apply category filter
+    if (filterCategory !== 'all') {
+      if (filterCategory === 'uncategorized') {
+        filtered = filtered.filter(p => !p.category);
+      } else {
+        filtered = filtered.filter(p => p.category === filterCategory);
+      }
     }
 
     // Apply sort
@@ -1610,14 +2135,24 @@ function App() {
         break;
       case 'recent':
       default:
-        // recent: 배열 순서 유지 (기본 등록 순)
         break;
     }
-    return sortOrder === 'desc' ? filtered.reverse() : filtered;
-  };
+    return sortOrder === 'desc' ? [...filtered].reverse() : filtered;
+  }, [ports, searchQuery, filterType, filterCategory, sortBy, sortOrder]);
+
+  const searchFilteredPorts = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return q ? ports.filter(p => matchesSearch(p, q)) : ports;
+  }, [ports, searchQuery]);
 
   return (
     <div className="min-h-screen bg-[#0a0a0b] p-8">
+      {!isTauri() && apiServerOnline === false && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-amber-500/90 text-black text-sm px-4 py-2 flex items-center justify-between">
+          <span>⚠️ API 서버가 꺼져 있습니다. <code className="bg-black/10 px-1 rounded">bun run start</code> 로 실행하세요. Supabase는 캐시된 인증 정보로 동작합니다.</span>
+          <button onClick={() => { fetch('/api/ports').then(() => setApiServerOnline(true)).catch(() => {}); }} className="ml-4 px-2 py-0.5 bg-black/20 rounded hover:bg-black/30 text-xs">재확인</button>
+        </div>
+      )}
       {/* 워크트리 경로 피커 모달 */}
       {worktreePickerState && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
@@ -1791,34 +2326,228 @@ function App() {
 
       <div className="max-w-4xl mx-auto">
         {/* 탭 네비게이션 */}
-        <div className="flex gap-1 mb-4 bg-[#18181b] border border-zinc-800 rounded-xl p-1 w-fit">
-          <button
-            onClick={() => setActiveTab('ports')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-              activeTab === 'ports'
-                ? 'bg-zinc-700 text-white shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-            }`}
-          >
-            <Server className="w-3.5 h-3.5" />
-            프로젝트 관리
-          </button>
-          <button
-            onClick={() => setActiveTab('portal')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-              activeTab === 'portal'
-                ? 'bg-zinc-700 text-white shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-            }`}
-          >
-            <BookMarked className="w-3.5 h-3.5" />
-            포털
-          </button>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1 bg-[#18181b] border border-zinc-800 rounded-xl p-1 w-fit">
+              <button
+                onClick={() => setActiveTab('ports')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  activeTab === 'ports'
+                    ? 'bg-zinc-700 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                }`}
+              >
+                <Server className="w-3.5 h-3.5" />
+                프로젝트 관리
+              </button>
+              <button
+                onClick={() => setActiveTab('portal')}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                  activeTab === 'portal'
+                    ? 'bg-zinc-700 text-white shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                }`}
+              >
+                <BookMarked className="w-3.5 h-3.5" />
+                포털
+              </button>
+            </div>
+
+            {/* 포털 탭 전용 액션 버튼 (글로벌 위치) */}
+            {activeTab === 'portal' && (
+              <>
+                <div className="flex items-center rounded-lg border border-zinc-800 overflow-hidden">
+                  <button
+                    onClick={() => portalActionsRef.current?.push()}
+                    title="Supabase Push"
+                    className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-800 transition-all flex items-center gap-1"
+                  >
+                    <CloudUpload className="w-3.5 h-3.5 text-indigo-400" />
+                    <span className="text-xs font-medium">Push</span>
+                  </button>
+                  <button
+                    onClick={() => portalActionsRef.current?.pull()}
+                    title="Supabase Pull"
+                    className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm transition-all flex items-center gap-1"
+                  >
+                    <CloudDownload className="w-3.5 h-3.5 text-indigo-400" />
+                    <span className="text-xs font-medium">Pull</span>
+                  </button>
+                </div>
+                <button
+                  onClick={() => portalActionsRef.current?.exportData()}
+                  title="내보내기"
+                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => portalActionsRef.current?.importData()}
+                  title="불러오기"
+                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                >
+                  <Upload className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => portalActionsRef.current?.openSettings()}
+                  title="Supabase / 단말 설정"
+                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
+              </>
+            )}
+
+            {/* 포트 탭 전용 액션 버튼 (글로벌 위치) */}
+            {activeTab === 'ports' && (
+              <>
+                <button onClick={handleExportPorts} title="내보내기" className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all">
+                  <Download className="w-4 h-4" />
+                </button>
+                <button onClick={handleImportPorts} title="불러오기" className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all">
+                  <Upload className="w-4 h-4" />
+                </button>
+                <button onClick={handleRefresh} disabled={isRefreshing || isAiEnriching} title={isAiEnriching ? 'AI 분석 중…' : '새로고침'} className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                  <RefreshCw className={`w-4 h-4 ${isRefreshing || isAiEnriching ? 'animate-spin' : ''}`} />
+                </button>
+                <div className="flex items-center rounded-xl border border-zinc-800 overflow-hidden">
+                  <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-800 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
+                    <span className="text-xs font-medium">Push</span>
+                  </button>
+                  <button onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
+                    <span className="text-xs font-medium">Pull</span>
+                  </button>
+                </div>
+                <button
+                  onClick={() => setOpenPortalSettings(true)}
+                  title="Supabase / 단말 설정"
+                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
+              </>
+            )}
+
+            {/* 설정 마법사 버튼 */}
+            <button
+              onClick={() => setShowSetupWizard(true)}
+              title="초기 설정 마법사"
+              className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 text-xs rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all flex items-center gap-1"
+            >
+              <Rocket className="w-3.5 h-3.5" />
+              <span>세팅</span>
+            </button>
+          </div>
         </div>
 
-        {/* 포털 탭 */}
-        {activeTab === 'portal' && (
-          <PortalManager showToast={showToast} />
+        {/* 포털 탭 — 항상 마운트, isVisible로 UI 표시 제어 (설정 모달은 탭 무관하게 동작) */}
+        <PortalManager
+          showToast={showToast}
+          openSettings={openPortalSettings}
+          onSettingsClosed={() => setOpenPortalSettings(false)}
+          actionsRef={portalActionsRef}
+          isVisible={activeTab === 'portal'}
+        />
+
+        {/* 경로 remapping 모달 — 다른 기기 Pull 후 경로 없는 포트 설정 */}
+        {remappingPorts.length > 0 && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[90] flex items-center justify-center p-6">
+            <div className="bg-[#0a0a0b] border border-zinc-700/80 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
+              <div className="px-5 py-4 border-b border-zinc-800 shrink-0">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <FolderOpen className="w-4 h-4 text-amber-400" />
+                  경로 설정 필요 — {remappingPorts.length}개 프로젝트
+                </h2>
+                <p className="text-xs text-zinc-500 mt-1">다른 기기에서 가져온 프로젝트에 이 기기의 폴더 경로를 설정하세요. 나중에 개별 설정도 가능합니다.</p>
+              </div>
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {remappingPorts.map(p => (
+                  <div key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-white">{p.name}</span>
+                      {p.port && <span className="text-xs text-zinc-500 font-mono">:{p.port}</span>}
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={remappingPaths[p.id] ?? ''}
+                        onChange={e => setRemappingPaths(prev => ({ ...prev, [p.id]: e.target.value }))}
+                        placeholder="/Users/nhis/..."
+                        className="flex-1 px-3 py-1.5 text-xs bg-black/40 border border-zinc-700 text-white placeholder-zinc-600 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+                      />
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await fetch('/api/pick-folder');
+                            const { path } = await res.json();
+                            if (path) setRemappingPaths(prev => ({ ...prev, [p.id]: path }));
+                          } catch {}
+                        }}
+                        className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs rounded-lg border border-zinc-700 transition-all"
+                        title="폴더 선택"
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-zinc-800 px-5 py-4 flex justify-between shrink-0">
+                <button
+                  onClick={() => setRemappingPorts([])}
+                  className="px-4 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  나중에 설정
+                </button>
+                <button
+                  onClick={() => {
+                    const updated = ports.map(p => {
+                      const newPath = remappingPaths[p.id];
+                      return newPath ? { ...p, folderPath: newPath } : p;
+                    });
+                    setPorts(updated);
+                    API.savePorts(updated);
+                    setRemappingPorts([]);
+                    const count = Object.values(remappingPaths).filter(Boolean).length;
+                    if (count > 0) showToast(`${count}개 경로 저장됨 ✓`, 'success');
+                  }}
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-black text-sm font-semibold rounded-lg transition-all"
+                >
+                  저장
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 설정 마법사 오버레이 */}
+        {showSetupWizard && (
+          <SetupWizard
+            onComplete={async ({ supabaseUrl, supabaseAnonKey, deviceName }) => {
+              // portal.json에 저장
+              try {
+                const existing = isTauri()
+                  ? (await (async () => { const { invoke } = await import('@tauri-apps/api/core'); return invoke('load_portal'); })())
+                  : await getPortalCredentials();
+                const next = { ...(existing as any), supabaseUrl, supabaseAnonKey, deviceName };
+                if (isTauri()) {
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  await invoke('save_portal', { data: JSON.stringify(next) });
+                } else {
+                  await fetch('http://127.0.0.1:3001/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
+                }
+                portalConfigRef.current = next;
+                showToast(`${deviceName} 설정 완료! 동기화를 시작합니다.`, 'success');
+              } catch (e) {
+                showToast('설정 저장 실패: ' + e, 'error');
+              }
+              setShowSetupWizard(false);
+              setActiveTab('portal');
+            }}
+            onSkip={() => setShowSetupWizard(false)}
+          />
         )}
 
         {/* 포트 관리 탭 */}
@@ -1834,38 +2563,20 @@ function App() {
               </div>
               <div className="min-w-0">
                 <h1 className="text-xl font-semibold text-white whitespace-nowrap">프로젝트 관리 프로그램</h1>
-                <p className="text-xs text-zinc-400 mt-0.5 whitespace-nowrap">로컬 개발 프로젝트를 관리하세요</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <p className="text-xs text-zinc-400 whitespace-nowrap">로컬 개발 프로젝트를 관리하세요</p>
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0 ml-4">
               <button
-                onClick={() => isTauri()
-                  ? API.openInChrome('https://vibe2-navy.vercel.app/')
-                  : window.open('https://vibe2-navy.vercel.app/', '_blank')}
-                className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/35 text-blue-400 text-sm rounded-lg border border-blue-500/50 hover:border-blue-400/70 transition-all duration-200 flex items-center gap-1.5"
+                onClick={handleCopyAiNamePrompt}
+                title="Claude Code에 붙여넣을 AI이름 생성 프롬프트를 클립보드에 복사합니다"
+                className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-sm rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all flex items-center gap-1"
               >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span className="font-medium">AI 오케스트레이터</span>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span className="text-xs font-medium">AI이름 프롬프트</span>
               </button>
-              <button onClick={handleExportPorts} title="내보내기" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center">
-                <Download className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={handleImportPorts} title="불러오기" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center">
-                <Upload className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={handleRefresh} disabled={isRefreshing} title="새로고침" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center disabled:opacity-50 disabled:cursor-not-allowed">
-                <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-              </button>
-              <div className="flex items-center rounded-lg border border-zinc-700 overflow-hidden">
-                <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-700 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
-                  <span className="text-xs font-medium">Push</span>
-                </button>
-                <button onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
-                  <span className="text-xs font-medium">Pull</span>
-                </button>
-              </div>
             </div>
           </div>
 
@@ -1963,6 +2674,24 @@ function App() {
                 onKeyPress={handleKeyPress}
                 className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
               />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="카테고리 (AI 자동)"
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+                <input
+                  type="text"
+                  placeholder="프로젝트 설명 (선택사항)"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+              </div>
               <div className="flex items-start gap-2 px-1">
                 <div className="text-base">💡</div>
                 <p className="text-[11px] text-zinc-500 leading-relaxed">
@@ -2095,12 +2824,33 @@ function App() {
         {ports.length > 0 ? (
           <div className="bg-[#18181b] rounded-xl border border-zinc-800 overflow-hidden">
             <div className="bg-zinc-900/50 px-6 py-4 border-b border-zinc-800">
-              {/* Row 1: Filter tabs */}
+              {/* Row 1: Search input */}
+              <div className="relative mb-3">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="프로젝트 검색... (Cmd+F)"
+                  className="w-full pl-8 pr-8 py-1.5 bg-black/30 border border-zinc-700 text-zinc-200 text-xs rounded-lg placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                  >
+                    <XIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+              {/* Row 2: Filter tabs (counts reflect search results) */}
               <div className="flex gap-1 mb-3">
                 {(['all', 'with-port', 'without-port'] as const).map(f => {
-                  const count = f === 'all' ? ports.length
-                    : f === 'with-port' ? ports.filter(p => p.port != null && p.port > 0).length
-                    : ports.filter(p => p.port == null || p.port === 0).length;
+                  const searchFiltered = searchFilteredPorts;
+                  const count = f === 'all' ? searchFiltered.length
+                    : f === 'with-port' ? searchFiltered.filter(p => p.port != null && p.port > 0).length
+                    : searchFiltered.filter(p => p.port == null || p.port === 0).length;
                   const label = f === 'all' ? '전체' : f === 'with-port' ? '포트 있음' : '포트 없음';
                   return (
                     <button key={f} onClick={() => setFilterType(f)}
@@ -2112,19 +2862,44 @@ function App() {
                   );
                 })}
               </div>
-              {/* Row 2: Title + Sort + Bypass Toggle */}
+              {/* Row 2b: Category filter (only shown when categories exist) */}
+              {(() => {
+                const usedCategories = [...new Set(ports.map(p => p.category).filter(Boolean))] as string[];
+                if (usedCategories.length === 0) return null;
+                return (
+                  <div className="flex gap-1 mb-3 flex-wrap">
+                    <button onClick={() => setFilterCategory('all')}
+                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${filterCategory === 'all' ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
+                      전체 카테고리
+                    </button>
+                    {usedCategories.map(cat => (
+                      <button key={cat} onClick={() => setFilterCategory(cat)}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${filterCategory === cat ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
+                        {cat} <span className="opacity-70">({ports.filter(p => p.category === cat).length})</span>
+                      </button>
+                    ))}
+                    {ports.some(p => !p.category) && (
+                      <button onClick={() => setFilterCategory('uncategorized')}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${filterCategory === 'uncategorized' ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
+                        미분류 <span className="opacity-70">({ports.filter(p => !p.category).length})</span>
+                      </button>
+                    )}
+                  </div>
+                );
+              })()}
+              {/* Row 3: Title + Sort + Bypass Toggle */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <Terminal className="w-4 h-4 text-zinc-400" />
                   <h2 className="text-sm font-semibold text-zinc-200">등록된 프로젝트</h2>
                   <span className="bg-zinc-800 px-2 py-0.5 rounded-md text-xs text-zinc-300 font-medium border border-zinc-700">
-                    {ports.length}
+                    {searchQuery.trim() ? `${searchFilteredPorts.length}/${ports.length}` : ports.length}
                   </span>
                   <button
                     onClick={handleRefresh}
-                    disabled={isRefreshing}
+                    disabled={isRefreshing || isAiEnriching}
                     className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-all disabled:opacity-40"
-                    title="새로고침 (실행파일 자동 감지)"
+                    title={isAiEnriching ? 'AI 분석 중…' : '새로고침 (실행파일 자동 감지)'}
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                   </button>
@@ -2166,12 +2941,17 @@ function App() {
               </div>
             </div>
             <div className="divide-y divide-zinc-800">
-              {getSortedPorts().length === 0 ? (
-                <div className="p-8 text-center text-sm text-zinc-500">
-                  이 필터에 해당하는 프로젝트가 없습니다
-                </div>
-              ) : null}
-              {getSortedPorts().map((item) => (
+              {(() => {
+                if (displayedPorts.length === 0) {
+                  return (
+                    <div className="p-8 text-center text-sm text-zinc-500">
+                      {searchQuery.trim()
+                        ? `"${searchQuery.trim()}"에 대한 검색 결과가 없습니다`
+                        : '이 필터에 해당하는 프로젝트가 없습니다'}
+                    </div>
+                  );
+                }
+                return displayedPorts.map((item) => (
                 <div
                   key={item.id}
                   className="group p-4 hover:bg-zinc-900/30 transition-all duration-200"
@@ -2250,30 +3030,62 @@ function App() {
                         className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
                         placeholder="GitHub 주소 (선택사항)"
                       />
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={editCategory}
+                          onChange={(e) => setEditCategory(e.target.value)}
+                          onKeyDown={handleEditKeyPress}
+                          placeholder="카테고리 (AI 자동)"
+                          className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                        />
+                        <input
+                          type="text"
+                          value={editDescription}
+                          onChange={(e) => setEditDescription(e.target.value)}
+                          onKeyDown={handleEditKeyPress}
+                          className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                          placeholder="프로젝트 설명 (선택사항)"
+                        />
+                      </div>
                     </div>
                   ) : (
                     // 일반 모드
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-4 flex-1">
-                        <div>
-                          <h3 className="text-sm font-medium text-white group-hover:text-white transition-colors">
-                            {item.name}
-                          </h3>
-                          <div className="flex items-center gap-2 mt-1">
-                            <div className="w-5 h-5 rounded-md bg-zinc-900 flex items-center justify-center border border-zinc-700">
-                              <Server className="w-3 h-3 text-zinc-400" />
-                            </div>
-                            {item.port ? (
-                              <span className="font-mono text-xs text-zinc-400">
-                                Port: <span className="text-zinc-200 font-semibold">{item.port}</span>
-                              </span>
-                            ) : (
-                              <span className="font-mono text-xs text-zinc-600">No port</span>
-                            )}
-                          </div>
+                    <div className="flex flex-col gap-2">
+                      {/* 정보 행 */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-sm font-medium text-white whitespace-nowrap">
+                          {item.name}
+                        </h3>
+                        {item.aiName && (
+                          <span
+                            className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium rounded border border-emerald-500/30 whitespace-nowrap"
+                            title="AI 추천 이름 (검색용 별칭)"
+                          >
+                            {item.aiName}
+                          </span>
+                        )}
+                        {item.category && (
+                          <span className="px-1.5 py-0.5 bg-violet-500/15 text-violet-400 text-[10px] font-medium rounded border border-violet-500/30 whitespace-nowrap">
+                            {item.category}
+                          </span>
+                        )}
+                        <div className="flex items-center gap-1">
+                          <Server className="w-3 h-3 text-zinc-600" />
+                          {item.port ? (
+                            <span className="font-mono text-xs text-zinc-400">
+                              Port: <span className="text-zinc-200 font-semibold">{item.port}</span>
+                            </span>
+                          ) : (
+                            <span className="font-mono text-xs text-zinc-600">No port</span>
+                          )}
                         </div>
+                        {item.description && (
+                          <p className="text-[11px] text-zinc-500 truncate max-w-sm">{item.description}</p>
+                        )}
                       </div>
-                      <div className="flex items-center gap-1.5">
+                      {/* 버튼 행 */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {(item.commandPath || item.terminalCommand) && (
                           isHtmlFile(item.commandPath) ? (
                             <button
@@ -2481,6 +3293,7 @@ function App() {
                             </a>
                           )
                         )}
+                        {/* AI buttons (web mode only, folderPath required) */}
                         <button
                           onClick={() => startEdit(item)}
                           className="p-1.5 hover:bg-zinc-800/60 rounded-lg transition-colors border border-transparent hover:border-zinc-700/50"
@@ -2497,7 +3310,8 @@ function App() {
                     </div>
                   )}
                 </div>
-              ))}
+              ));
+              })()}
             </div>
           </div>
         ) : (

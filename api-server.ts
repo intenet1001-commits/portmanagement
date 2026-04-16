@@ -3,6 +3,21 @@ import { join } from "node:path";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
+/** Escape single quotes for use inside single-quoted shell strings: ' → '\'' */
+const escapeSq = (s: string): string => s.replace(/'/g, "'\\''");
+
+// Resolve claude binary path once at startup (Homebrew first, then PATH fallback)
+function resolveClaudePath(): string | null {
+  if (existsSync('/opt/homebrew/bin/claude')) return '/opt/homebrew/bin/claude';
+  if (existsSync('/usr/local/bin/claude')) return '/usr/local/bin/claude';
+  const result = Bun.spawnSync(['which', 'claude'], {
+    env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
+  });
+  const resolved = result.stdout.toString().trim();
+  return resolved || null;
+}
+const CLAUDE_PATH = resolveClaudePath();
+
 const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
 let buildStatus = { isBuilding: false, type: '', output: [] as string[], exitCode: null as number | null };
@@ -73,6 +88,7 @@ async function saveWorkspaceRootsData(data: any) {
 
 const server = Bun.serve({
   port: 3001,
+  hostname: "127.0.0.1",
   async fetch(req) {
     const url = new URL(req.url);
 
@@ -233,6 +249,13 @@ const server = Bun.serve({
 
         // 파일 경로 vs raw 커맨드 판별
         const isFilePath = commandPath.startsWith('/') || commandPath.startsWith('~');
+        // 파일 경로인 경우 존재 여부 확인
+        if (isFilePath && !existsSync(commandPath)) {
+          return new Response(
+            JSON.stringify({ error: `파일을 찾을 수 없습니다: ${commandPath}` }),
+            { status: 400, headers }
+          );
+        }
         const cmd = isFilePath ? ["bash", commandPath] : ["bash", "-c", commandPath];
         console.log(`[Execute] Starting process: ${cmd.join(' ')}`);
 
@@ -688,6 +711,10 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/project-path" && req.method === "GET") {
+      return new Response(JSON.stringify({ path: process.cwd() }), { headers });
+    }
+
     if (url.pathname === "/api/pick-folder" && req.method === "GET") {
       try {
         const proc = Bun.spawn({
@@ -765,12 +792,14 @@ const server = Bun.serve({
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
 
+        const escSession = escapeSq(sessionName);
+        const escFolder = folderPath ? escapeSq(folderPath) : null;
         const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const title = `[tmux] ${escapedSessionName}`;
-        const claudeCmd = worktreePath ? `claude -w '${worktreePath}'` : 'claude';
-        const cmd = folderPath
-          ? `cd '${folderPath}' && printf '\\033]0;${title}\\007'; tmux new-session -A -s '${sessionName}' '${claudeCmd}'`
-          : `printf '\\033]0;${title}\\007'; tmux new-session -A -s '${sessionName}' '${claudeCmd}'`;
+        const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
+        const cmd = escFolder
+          ? `cd '${escFolder}' && printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`
+          : `printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`;
 
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -788,13 +817,15 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude-fresh" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
+        const escSession = escapeSq(sessionName);
+        const escFolder = folderPath ? escapeSq(folderPath) : null;
         const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const title = `[tmux-fresh] ${escapedSessionName}`;
-        const claudeCmd = worktreePath ? `claude -w '${worktreePath}'` : 'claude';
-        const killCmd = `tmux kill-session -t '${sessionName}' 2>/dev/null || true`;
-        const newCmd = folderPath
-          ? `cd '${folderPath}' && printf '\\033]0;${title}\\007'; tmux new-session -s '${sessionName}' '${claudeCmd}'`
-          : `printf '\\033]0;${title}\\007'; tmux new-session -s '${sessionName}' '${claudeCmd}'`;
+        const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
+        const killCmd = `tmux kill-session -t '${escSession}' 2>/dev/null || true`;
+        const newCmd = escFolder
+          ? `cd '${escFolder}' && printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' '${claudeCmd}'`
+          : `printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' '${claudeCmd}'`;
         const cmd = `${killCmd}; ${newCmd}`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -812,14 +843,16 @@ const server = Bun.serve({
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
 
+        const escSession = escapeSq(sessionName);
+        const escFolder = folderPath ? escapeSq(folderPath) : null;
         const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const title = `[tmux-bypass] ${escapedSessionName}`;
         const claudeCmd = worktreePath
-          ? `claude --dangerously-skip-permissions -w '${worktreePath}'`
+          ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`
           : 'claude --dangerously-skip-permissions';
-        const cmd = folderPath
-          ? `cd '${folderPath}' && printf '\\033]0;${title}\\007'; tmux new-session -A -s '${sessionName}-bypass' '${claudeCmd}'`
-          : `printf '\\033]0;${title}\\007'; tmux new-session -A -s '${sessionName}-bypass' '${claudeCmd}'`;
+        const cmd = escFolder
+          ? `cd '${escFolder}' && printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' '${claudeCmd}'`
+          : `printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' '${claudeCmd}'`;
 
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -834,13 +867,51 @@ const server = Bun.serve({
       }
     }
 
+    // 카테고리 최신화: iTerm 새 창 열기 + 자동 프롬프트 전송
+    if (url.pathname === "/api/run-claude-with-prompt" && req.method === "POST") {
+      try {
+        const { folderPath, prompt } = await req.json();
+
+        // Escape for AppleScript double-quoted string
+        const escAS = (s: string) => s
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"')
+          .replace(/\n/g, ' ');  // newlines → spaces (single-line input to Claude)
+
+        const escapedFolder = folderPath ? escAS(escapeSq(folderPath)) : null;
+        const escapedPrompt = escAS(prompt as string);
+
+        const lines: string[] = [];
+        if (escapedFolder) lines.push(`write text "cd \\"${escapedFolder}\\""`);
+        lines.push(`write text "claude"`);
+        lines.push(`delay 4`);
+        lines.push(`write text "${escapedPrompt}"`);
+
+        const script = `tell application "iTerm"
+  activate
+  set newWindow to create window with default profile
+  tell current session of newWindow
+    ${lines.join('\n    ')}
+  end tell
+end tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+
+        return new Response(
+          JSON.stringify({ success: true, message: "Claude 실행 + 프롬프트 자동 전송" }),
+          { headers }
+        );
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
     if (url.pathname === "/api/open-terminal-claude" && req.method === "POST") {
       try {
         const { folderPath, name, worktreePath } = await req.json();
         const escapedName = (name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const claudeCmd = worktreePath ? `claude -w '${worktreePath}'` : 'claude';
+        const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
         const cmd = folderPath
-          ? `cd '${folderPath}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
+          ? `cd '${escapeSq(folderPath)}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
           : `printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escapedName}"\n  end tell\nend tell`;
@@ -856,10 +927,10 @@ const server = Bun.serve({
         const { folderPath, name, worktreePath } = await req.json();
         const escapedName = `[bypass] ${(name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}`;
         const claudeCmd = worktreePath
-          ? `claude --dangerously-skip-permissions -w '${worktreePath}'`
+          ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`
           : 'claude --dangerously-skip-permissions';
         const cmd = folderPath
-          ? `cd '${folderPath}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
+          ? `cd '${escapeSq(folderPath)}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
           : `printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escapedName}"\n  end tell\nend tell`;
@@ -1052,6 +1123,9 @@ const server = Bun.serve({
         if (!folderPath) {
           return new Response(JSON.stringify({ success: false, error: "Missing folderPath" }), { status: 400, headers });
         }
+        if (!folderPath.startsWith('/')) {
+          return new Response(JSON.stringify({ success: false, error: "절대경로가 필요합니다" }), { status: 400, headers });
+        }
         const { mkdirSync, existsSync } = await import("node:fs");
         if (existsSync(folderPath)) {
           return new Response(JSON.stringify({ success: false, error: "이미 존재하는 폴더입니다" }), { status: 400, headers });
@@ -1234,6 +1308,248 @@ const server = Bun.serve({
         }
         await Bun.write(PORTAL_DATA_FILE, JSON.stringify(data, null, 2));
         return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // AI: suggest category for a single project
+    // AI: batch name + category for multiple ports in ONE claude call
+    if (url.pathname === "/api/suggest-batch" && req.method === "POST") {
+      try {
+        const { ports: batchPorts } = await req.json() as { ports: Array<{ id: string; folderPath: string; name: string }> };
+        if (!CLAUDE_PATH) {
+          return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
+        }
+        if (!Array.isArray(batchPorts) || batchPorts.length === 0) {
+          return new Response(JSON.stringify({ results: [] }), { headers });
+        }
+        const { readdirSync, readFileSync } = await import("node:fs");
+
+        // Build project summaries for prompt
+        const summaries = (batchPorts as Array<{ id: string; folderPath: string; name: string; aiName?: string }>).map((p, i) => {
+          let files = '', pkg = '';
+          try {
+            if (existsSync(p.folderPath)) {
+              files = readdirSync(p.folderPath).slice(0, 15).join(', ');
+              const pkgPath = join(p.folderPath, 'package.json');
+              if (existsSync(pkgPath)) pkg = readFileSync(pkgPath, 'utf-8').slice(0, 200);
+            }
+          } catch {}
+          const displayName = p.aiName || p.name;
+          return `${i + 1}. id="${p.id}" display_name="${displayName}" raw_name="${p.name}" files=[${files}]${pkg ? ` pkg=${pkg.replace(/\n/g, ' ')}` : ''}`;
+        }).join('\n');
+
+        const prompt = `Analyze these ${batchPorts.length} projects and return a JSON array ONLY (no markdown, no explanation).
+IMPORTANT: derive the "name" and "category" primarily from display_name (the human-readable name), not from raw file listings.
+category must be a single lowercase word that describes WHAT this project does (e.g. converter, dashboard, manager, tracker, bot, guide, calculator, automation, monitor, generator, etc.)
+
+Return format:
+[{"id":"...","name":"2-4 word English alias","category":"single lowercase word"},...]
+
+Projects:
+${summaries}`;
+
+        const proc = Bun.spawn(
+          [CLAUDE_PATH!, '-p', prompt],
+          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, stdout: 'pipe', stderr: 'pipe' }
+        );
+        const timeoutId = setTimeout(() => proc.kill(), 60_000);
+        await proc.exited;
+        clearTimeout(timeoutId);
+        const raw = (await new Response(proc.stdout).text()).trim();
+        const match = raw.match(/\[[\s\S]*\]/);
+        if (!match) return new Response(JSON.stringify({ results: [] }), { headers });
+        const parsed: Array<{ id: string; name: string; category: string }> = JSON.parse(match[0]);
+        return new Response(JSON.stringify({ results: parsed }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // AI: suggest-category (legacy, kept for backward compat)
+    if (url.pathname === "/api/suggest-category" && req.method === "POST") {
+      const { folderPath, name } = await req.json();
+      const res = await fetch(`http://localhost:${server.port}/api/suggest-name-and-category`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath, name }),
+      });
+      const d = await res.json() as any;
+      return new Response(JSON.stringify({ category: d.category ?? null }), { headers });
+    }
+
+    // AI: suggest-name (legacy, kept for backward compat)
+    if (url.pathname === "/api/suggest-name" && req.method === "POST") {
+      const { folderPath } = await req.json();
+      const res = await fetch(`http://localhost:${server.port}/api/suggest-name-and-category`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath }),
+      });
+      const d = await res.json() as any;
+      return new Response(JSON.stringify({ suggestions: d.name ? [d.name] : [] }), { headers });
+    }
+
+    // AI: name + category in ONE claude call (fast path)
+    if (url.pathname === "/api/suggest-name-and-category" && req.method === "POST") {
+      try {
+        const { folderPath, name } = await req.json();
+        if (!CLAUDE_PATH) {
+          return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
+        }
+        if (!folderPath || !existsSync(folderPath)) {
+          return new Response(JSON.stringify({ error: 'invalid_folder' }), { status: 400, headers });
+        }
+        const { readdirSync, readFileSync } = await import("node:fs");
+        const files = readdirSync(folderPath).slice(0, 30).join(', ');
+        let pkgJson = '';
+        const pkgPath = join(folderPath, 'package.json');
+        if (existsSync(pkgPath)) {
+          try { pkgJson = readFileSync(pkgPath, 'utf-8').slice(0, 400); } catch {}
+        }
+        const prompt = `Project name hint: ${name || 'unknown'}
+Files: ${files}
+package.json excerpt: ${pkgJson}
+
+Analyze this project and reply with JSON only (no markdown, no explanation):
+{"name":"2-4 word English alias","category":"one short topic word that best describes this project (e.g. converter, dashboard, automation, chatbot, portfolio, tracker, etc.)"}`;
+        const proc = Bun.spawn(
+          [CLAUDE_PATH!, '-p', prompt],
+          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, stdout: 'pipe', stderr: 'pipe' }
+        );
+        const timeoutId = setTimeout(() => proc.kill(), 30_000);
+        await proc.exited;
+        clearTimeout(timeoutId);
+        const raw = (await new Response(proc.stdout).text()).trim();
+        const match = raw.match(/\{[\s\S]*\}/);
+        if (!match) return new Response(JSON.stringify({ name: null, category: null }), { headers });
+        const parsed = JSON.parse(match[0]);
+        return new Response(JSON.stringify({
+          name: typeof parsed.name === 'string' ? parsed.name.slice(0, 60) : null,
+          category: typeof parsed.category === 'string' ? parsed.category.slice(0, 30).toLowerCase() : null,
+        }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // AI: generate project description from folder
+    if (url.pathname === "/api/generate-description" && req.method === "POST") {
+      try {
+        const { folderPath, name } = await req.json();
+
+        if (!CLAUDE_PATH) {
+          return new Response(JSON.stringify({ error: 'claude_not_found' }), { status: 503, headers });
+        }
+        if (!folderPath || !existsSync(folderPath)) {
+          return new Response(JSON.stringify({ error: 'invalid_folder' }), { status: 400, headers });
+        }
+        const { readdirSync, readFileSync } = await import("node:fs");
+        const files = readdirSync(folderPath).slice(0, 30).join(', ');
+        let pkgJson = '';
+        const pkgPath = join(folderPath, 'package.json');
+        if (existsSync(pkgPath)) {
+          try { pkgJson = readFileSync(pkgPath, 'utf-8').slice(0, 500); } catch {}
+        }
+        const prompt = `Project name: ${name || 'unknown'}\nFiles: ${files}\npackage.json: ${pkgJson}\n\nWrite a one-sentence project description (max 100 chars, English). Reply with plain text only, no quotes.`;
+        const proc = Bun.spawn(
+          [CLAUDE_PATH!, '-p', prompt],
+          { env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' }, stdout: 'pipe', stderr: 'pipe' }
+        );
+        const timeoutId = setTimeout(() => proc.kill(), 30_000);
+        await proc.exited;
+        clearTimeout(timeoutId);
+        const description = (await new Response(proc.stdout).text()).trim().slice(0, 120);
+        return new Response(JSON.stringify({ description }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // ── Supabase CLI helpers ──────────────────────────────────────────────────
+    if (url.pathname === "/api/supabase-cli/status" && req.method === "GET") {
+      try {
+        const candidatePaths = [
+          `${process.env.HOME}/.local/bin/supabase`,
+          "/opt/homebrew/bin/supabase",
+          "/usr/local/bin/supabase",
+        ];
+        let cliPath = "";
+        for (const p of candidatePaths) {
+          if (existsSync(p)) { cliPath = p; break; }
+        }
+        // also try PATH-resolved supabase
+        if (!cliPath) {
+          const w = Bun.spawn(["which", "supabase"], { stdout: "pipe", stderr: "pipe" });
+          await w.exited;
+          if (w.exitCode === 0) cliPath = (await new Response(w.stdout).text()).trim();
+        }
+        if (!cliPath) {
+          return new Response(JSON.stringify({ installed: false }), { headers });
+        }
+
+        const proc = Bun.spawn([cliPath, "projects", "list"], {
+          stdout: "pipe", stderr: "pipe",
+          env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.HOME}/.local/bin:${process.env.PATH ?? ""}` },
+        });
+        await proc.exited;
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+
+        if (proc.exitCode !== 0 || /not logged in|unauthorized/i.test(out + err)) {
+          return new Response(JSON.stringify({ installed: true, loggedIn: false, cliPath }), { headers });
+        }
+
+        // parse table rows: LINKED | ORG ID | REFERENCE ID | NAME | REGION | CREATED AT
+        const projects = out.split("\n")
+          .filter(l => l.includes("|") && !l.includes("REFERENCE ID") && !l.includes("------"))
+          .map(line => {
+            const parts = line.split("|").map(p => p.trim());
+            return { ref: parts[2], name: parts[3], region: parts[4] };
+          })
+          .filter(p => p.ref && p.name);
+
+        return new Response(JSON.stringify({ installed: true, loggedIn: true, projects, cliPath }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ installed: false, error: e.message }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/supabase-cli/apikeys" && req.method === "GET") {
+      const ref = url.searchParams.get("ref");
+      if (!ref) return new Response(JSON.stringify({ error: "ref required" }), { status: 400, headers });
+      try {
+        // 1) Try macOS Keychain (supabase CLI stores token there after `supabase login`)
+        let token = "";
+        const kc = Bun.spawn(["security", "find-generic-password", "-s", "Supabase CLI", "-a", "supabase", "-w"], {
+          stdout: "pipe", stderr: "pipe",
+        });
+        await kc.exited;
+        if (kc.exitCode === 0) token = (await new Response(kc.stdout).text()).trim();
+
+        // 2) Fallback: file-based token
+        if (!token) {
+          const tokenFile = Bun.file(`${process.env.HOME}/.supabase/access-token`);
+          if (await tokenFile.exists()) token = (await tokenFile.text()).trim();
+        }
+
+        if (!token) {
+          return new Response(JSON.stringify({ error: "no_token" }), { status: 401, headers });
+        }
+
+        // supabase CLI on macOS stores token as "go-keyring-base64:<base64>" in Keychain
+        if (token.startsWith("go-keyring-base64:")) {
+          token = Buffer.from(token.slice("go-keyring-base64:".length), "base64").toString("utf-8").trim();
+        }
+
+        const res = await fetch(`https://api.supabase.com/v1/projects/${ref}/api-keys`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          return new Response(JSON.stringify({ error: "api_error", status: res.status }), { status: res.status, headers });
+        }
+        const keys = await res.json() as Array<{ name: string; api_key: string }>;
+        const anonKey = keys.find(k => k.name === "anon")?.api_key ?? "";
+        return new Response(JSON.stringify({ anonKey, projectUrl: `https://${ref}.supabase.co` }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
       }

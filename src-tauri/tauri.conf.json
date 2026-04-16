@@ -1,13 +1,13 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "포트관리기",
-  "version": "2026.3.22",
+  "version": "2026.4.12",
   "identifier": "com.portmanager.portmanager",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:9000",
     "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "bun run build"
+    "beforeBuildCommand": ""
   },
   "app": {
     "windows": [

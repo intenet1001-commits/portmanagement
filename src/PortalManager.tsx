@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Globe, Folder, Plus, Trash2, Pencil, X, Check, Search,
   ExternalLink, FolderOpen, Star, Download, Upload,
-  Cloud, CloudOff, CloudUpload, CloudDownload, Settings, RefreshCw, Link2, Pin,
+  Cloud, CloudOff, CloudUpload, CloudDownload, Settings, Settings2, RefreshCw, Link2, Pin,
   BookMarked, ChevronDown, Database
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
@@ -39,6 +39,8 @@ export interface PortalData {
   supabaseUrl?: string;
   supabaseAnonKey?: string;
   deviceId?: string;
+  deviceName?: string;
+  viewingDeviceId?: string; // if set, Pull shows this device's data
   lastSynced?: string;
 }
 
@@ -84,8 +86,27 @@ const PortalAPI = {
       }
       const res = await fetch('/api/portal');
       if (!res.ok) return { items: [], categories: DEFAULT_CATEGORIES };
-      return await res.json();
+      const data: PortalData = await res.json();
+      // Mirror credentials to localStorage for offline fallback
+      if (data.supabaseUrl || data.supabaseAnonKey) {
+        localStorage.setItem('portalCreds', JSON.stringify({
+          supabaseUrl: data.supabaseUrl,
+          supabaseAnonKey: data.supabaseAnonKey,
+          deviceId: data.deviceId,
+        }));
+      }
+      return data;
     } catch {
+      // api-server is down — try to restore credentials from localStorage
+      const cached = localStorage.getItem('portalCreds');
+      if (cached) {
+        try {
+          const { supabaseUrl, supabaseAnonKey, deviceId } = JSON.parse(cached);
+          return { items: [], categories: DEFAULT_CATEGORIES, supabaseUrl, supabaseAnonKey, deviceId };
+        } catch {
+          // ignore malformed cache
+        }
+      }
       return { items: [], categories: DEFAULT_CATEGORIES };
     }
   },
@@ -100,6 +121,14 @@ const PortalAPI = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
+    // Keep localStorage in sync so credentials survive api-server restarts
+    if (data.supabaseUrl || data.supabaseAnonKey) {
+      localStorage.setItem('portalCreds', JSON.stringify({
+        supabaseUrl: data.supabaseUrl,
+        supabaseAnonKey: data.supabaseAnonKey,
+        deviceId: data.deviceId,
+      }));
+    }
   },
 
   async openUrl(url: string): Promise<void> {
@@ -137,10 +166,13 @@ const PortalAPI = {
 
 // ─── Device ID ───────────────────────────────────────────────────────────────
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function getOrCreateDeviceId(): string {
   let id = localStorage.getItem('portal-device-id');
-  if (!id) {
-    id = `device-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  if (!id || !UUID_RE.test(id)) {
+    // Regenerate if missing or legacy non-UUID format (e.g. "device-177415644...")
+    id = crypto.randomUUID();
     localStorage.setItem('portal-device-id', id);
   }
   return id;
@@ -152,24 +184,62 @@ const EMPTY_FORM = { name: '', type: 'web' as 'web' | 'folder', url: '', path: '
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-interface Props {
-  showToast: (msg: string, type: 'success' | 'error') => void;
+export interface PortalActions {
+  push: () => void;
+  pull: () => void;
+  exportData: () => void;
+  importData: () => void;
+  openSettings: () => void;
 }
 
-const CLAUDE_PROMPT = `Supabase CLI로 아래 3개 테이블을 생성해줘.
+interface Props {
+  showToast: (msg: string, type: 'success' | 'error') => void;
+  openSettings?: boolean; // when true, open settings modal immediately
+  onSettingsClosed?: () => void;
+  actionsRef?: React.MutableRefObject<PortalActions | null>;
+  isVisible?: boolean; // false → hide portal UI but keep modals alive
+}
 
--- 1. 포트 관리 테이블
+const AI_TABLE_PROMPT = `포트 관리 프로그램(portmanagement)의 Supabase 테이블을 설정해줘.
+Supabase MCP를 사용해서 아래 4개 테이블을 생성하고 RLS를 비활성화해줘.
+
+-- ※ 멀티 단말 지원: device_id로 단말 구분, '__shared__' sentinel로 공유 데이터 표시
+
+-- 1. 포트/프로젝트 테이블 (단말별)
 create table if not exists ports (
   id text primary key,
+  device_id text,
+  device_name text,
   name text not null,
   port integer,
   command_path text,
+  terminal_command text,
   folder_path text,
   deploy_url text,
-  github_url text
+  github_url text,
+  category text,
+  description text,
+  ai_name text
+);
+create index if not exists idx_ports_device_id on ports(device_id);
+
+-- 기존 테이블 업그레이드 (이미 있는 경우)
+alter table ports add column if not exists device_id text;
+alter table ports add column if not exists device_name text;
+alter table ports add column if not exists terminal_command text;
+alter table ports add column if not exists category text;
+alter table ports add column if not exists description text;
+alter table ports add column if not exists ai_name text;
+
+-- 2. 작업폴더 루트 테이블 (단말별)
+create table if not exists workspace_roots (
+  id text primary key,
+  device_id text not null,
+  name text not null,
+  path text not null
 );
 
--- 2. 포털 아이템 테이블
+-- 3. 포털 아이템 테이블 (folder 타입=단말별 / 나머지=공유)
 create table if not exists portal_items (
   id text primary key,
   device_id text not null,
@@ -184,8 +254,9 @@ create table if not exists portal_items (
   last_visited text,
   created_at text not null
 );
+create index if not exists idx_portal_items_device_id on portal_items(device_id);
 
--- 3. 포털 카테고리 테이블
+-- 4. 포털 카테고리 테이블 (공유, device_id='__shared__')
 create table if not exists portal_categories (
   id text primary key,
   device_id text not null,
@@ -194,18 +265,217 @@ create table if not exists portal_categories (
   "order" integer default 0
 );
 
-RLS는 비활성화하거나 anon key로 읽기/쓰기 허용 정책으로 설정해줘.`;
+-- RLS 비활성화 (anon key 직접 읽기/쓰기 허용)
+alter table ports disable row level security;
+alter table workspace_roots disable row level security;
+alter table portal_items disable row level security;
+alter table portal_categories disable row level security;`;
+
+interface AdvancedSettingsProps {
+  deviceId?: string;
+  deviceName?: string;
+  viewingDeviceId: string;
+  knownDevices: {device_id: string; device_name?: string}[];
+  isFetchingDevices: boolean;
+  onFetchDevices: () => void;
+  onSelectDevice: (id: string) => void;
+  onResetDevice: () => void;
+  onCopyDeviceId: () => void;
+}
+
+function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices, isFetchingDevices, onFetchDevices, onSelectDevice, onResetDevice, onCopyDeviceId }: AdvancedSettingsProps) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="mb-3">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-zinc-900/60 border border-zinc-700/50 rounded-lg text-xs text-zinc-400 hover:border-zinc-600 transition-all"
+      >
+        <span className="flex items-center gap-1.5">
+          <Settings2 className="w-3.5 h-3.5 text-zinc-500" />
+          <span className="text-zinc-400">고급 설정</span>
+          {viewingDeviceId && viewingDeviceId !== deviceId && (
+            <span className="text-amber-400 text-[10px]">• 다른 기기 보는 중</span>
+          )}
+        </span>
+        <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="mt-2 bg-zinc-900/40 border border-zinc-700/40 rounded-lg p-3 space-y-3">
+          {/* Device ID */}
+          <div>
+            <label className="block text-[10px] text-zinc-500 mb-1">Device ID</label>
+            <div className="flex items-center gap-1.5">
+              <input readOnly value={deviceId ? `${deviceId.slice(0, 16)}…` : '—'}
+                className="flex-1 px-2.5 py-1.5 text-xs bg-black/30 border border-zinc-700 text-zinc-500 rounded-lg cursor-default" />
+              <button onClick={onCopyDeviceId}
+                className="px-2.5 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border border-zinc-700 rounded-lg transition-all">복사</button>
+            </div>
+          </div>
+          {/* Device switch */}
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-[10px] text-zinc-500">다른 기기 데이터 보기</label>
+              <button onClick={onFetchDevices} disabled={isFetchingDevices}
+                className="px-2 py-0.5 text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border border-zinc-700 rounded transition-all disabled:opacity-50">
+                {isFetchingDevices ? '조회 중…' : '단말 조회'}
+              </button>
+            </div>
+            {(knownDevices.length > 0 || deviceId) ? (
+              <>
+                <select
+                  value={viewingDeviceId || deviceId || ''}
+                  onChange={e => onSelectDevice(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs bg-black/30 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                >
+                  {/* Always show current device first */}
+                  {deviceId && !knownDevices.find(d => d.device_id === deviceId) && (
+                    <option value={deviceId}>
+                      {deviceName || deviceId.slice(0, 10) + '…'} (이 기기)
+                    </option>
+                  )}
+                  {knownDevices.map(d => {
+                    const isOwn = d.device_id === deviceId;
+                    const name = isOwn
+                      ? (deviceName || d.device_name)
+                      : d.device_name;
+                    const label = name || `기기 ${d.device_id.slice(0, 8)}…`;
+                    return (
+                      <option key={d.device_id} value={d.device_id}>
+                        {label}{isOwn ? ' (이 기기)' : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+                {viewingDeviceId && viewingDeviceId !== deviceId && (
+                  <div className="mt-1.5 flex items-center justify-between">
+                    <p className="text-[10px] text-amber-400">⚠ Pull 시 선택한 기기 데이터 적용됨</p>
+                    <button onClick={onResetDevice} className="text-[10px] text-zinc-500 hover:text-zinc-300 underline">내 기기로 복귀</button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-[10px] text-zinc-600 italic">단말 조회 버튼으로 다른 기기 목록을 불러오세요</p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SetupGuide() {
-  const [copied, setCopied] = React.useState(false);
   const [open, setOpen] = React.useState(false);
+  const [step, setStep] = React.useState(0);
+  const [copied, setCopied] = React.useState(false);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(CLAUDE_PROMPT).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
+  const CLI_FIRST_SETUP = `# 최초 세팅 (Supabase CLI + MCP 방식)
+
+## 1. Supabase 프로젝트 생성
+supabase.com → New project → 이름: portmanagement, Region: Seoul
+
+## 2. Supabase CLI 설치
+brew install supabase/tap/supabase
+
+## 3. CLI 로그인 + 프로젝트 연결
+supabase login
+# 브라우저에서 인증 후 돌아오기
+
+## 4. 프로젝트 Reference ID 확인
+# Supabase 대시보드 → Settings → General → Reference ID 복사
+
+## 5. Project URL + Anon Key 확인
+# Settings → API → Project URL + anon/public key 복사
+# 이 설정 화면의 "Project URL" + "Anon Key" 칸에 입력
+
+## 6. Claude Code에서 테이블 생성 (Supabase MCP 사용)
+# 아래 AI 프롬프트 복사 → Claude Code에 붙여넣기
+`;
+
+  const CLI_ADDITIONAL_DEVICE = `# 추가 단말 세팅 (기존 Supabase 프로젝트 공유)
+
+## 전제조건
+- 기존 맥/PC에서 이미 테이블 생성 완료
+- 동일한 Supabase 프로젝트 URL + Anon Key 보유
+
+## 1. git pull
+git clone https://github.com/[repo]/portmanagement.git
+# 또는 git pull (이미 clone된 경우)
+
+## 2. 의존성 설치
+bun install
+
+## 3. 서버 실행
+bun run start
+
+## 4. 이 설정 화면에서
+- 이 기기 이름 입력 (예: 회사맥북, WindowsPC)
+- Project URL + Anon Key 입력 (기존 맥과 동일한 값)
+- "저장 후 동기화" 클릭
+
+## 5. 데이터 Pull
+- 설정 저장 후 포털 탭 → Pull 버튼
+- 프로젝트 관리 탭 → Pull 버튼
+`;
+
+  const steps = [
+    {
+      title: '🆕 최초 세팅',
+      content: (
+        <div className="space-y-2">
+          <p className="text-zinc-300 text-[11px]">Supabase CLI + MCP 방식으로 처음 설정하는 경우</p>
+          <pre className="bg-black/40 rounded p-2 text-zinc-400 whitespace-pre-wrap text-[10px] max-h-52 overflow-y-auto leading-relaxed">{CLI_FIRST_SETUP}</pre>
+          <button
+            onClick={() => { navigator.clipboard.writeText(CLI_FIRST_SETUP); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+            className="w-full py-1 rounded-lg border text-[10px] font-medium transition-all flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-zinc-600"
+          >
+            <Database className="w-3 h-3" />
+            가이드 복사
+          </button>
+        </div>
+      ),
+    },
+    {
+      title: '💻 추가 단말 세팅',
+      content: (
+        <div className="space-y-2">
+          <p className="text-zinc-300 text-[11px]">기존 Supabase 프로젝트에 새 맥/PC를 추가하는 경우</p>
+          <pre className="bg-black/40 rounded p-2 text-zinc-400 whitespace-pre-wrap text-[10px] max-h-52 overflow-y-auto leading-relaxed">{CLI_ADDITIONAL_DEVICE}</pre>
+          <button
+            onClick={() => { navigator.clipboard.writeText(CLI_ADDITIONAL_DEVICE); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+            className="w-full py-1 rounded-lg border text-[10px] font-medium transition-all flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-zinc-600"
+          >
+            <Database className="w-3 h-3" />
+            가이드 복사
+          </button>
+        </div>
+      ),
+    },
+    {
+      title: '🤖 AI 테이블 생성',
+      content: (
+        <div className="space-y-2">
+          <p className="text-zinc-300 text-[11px]">Claude Code + Supabase MCP로 테이블 자동 생성</p>
+          <ol className="list-decimal list-inside space-y-1 text-zinc-400 text-[10px]">
+            <li>Claude Code 터미널 열기</li>
+            <li>Supabase MCP 연결 확인 (<code className="text-zinc-300 bg-black/30 px-0.5 rounded">/mcp-setup</code>)</li>
+            <li>아래 프롬프트 복사 → Claude Code에 붙여넣기</li>
+            <li>AI가 4개 테이블 + RLS 비활성화 자동 처리</li>
+          </ol>
+          <pre className="bg-black/40 rounded p-2 text-zinc-500 whitespace-pre-wrap text-[10px] max-h-36 overflow-y-auto">{AI_TABLE_PROMPT}</pre>
+          <button
+            onClick={() => { navigator.clipboard.writeText(AI_TABLE_PROMPT).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); }}
+            className={`w-full py-1.5 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+              copied ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-600'
+            }`}
+          >
+            {copied ? <Check className="w-3.5 h-3.5" /> : <Database className="w-3.5 h-3.5" />}
+            {copied ? '복사됨!' : 'AI 프롬프트 복사'}
+          </button>
+        </div>
+      ),
+    },
+  ];
 
   return (
     <div className="mb-4">
@@ -215,38 +485,48 @@ function SetupGuide() {
       >
         <span className="flex items-center gap-1.5">
           <Database className="w-3.5 h-3.5 text-indigo-400" />
-          <span className="font-medium text-zinc-300">테이블 설정 가이드</span>
+          <span className="font-medium text-zinc-300">초기 설정 가이드</span>
           <span className="text-zinc-600">— 처음 사용 시</span>
         </span>
         <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div className="mt-2 bg-zinc-900/40 border border-zinc-700/40 rounded-lg p-3 text-xs text-zinc-400 space-y-2">
-          <p className="text-zinc-300 font-medium">Claude Code에서 아래 프롬프트를 실행하세요:</p>
-          <ol className="list-decimal list-inside space-y-1 text-zinc-500">
-            <li>Claude Code 터미널 열기</li>
-            <li>Supabase MCP 연결 확인</li>
-            <li>아래 프롬프트 복사 후 붙여넣기</li>
-          </ol>
-          <pre className="bg-black/40 rounded p-2 text-zinc-500 whitespace-pre-wrap break-all text-[10px] max-h-32 overflow-y-auto">{CLAUDE_PROMPT}</pre>
-          <button
-            onClick={handleCopy}
-            className={`w-full py-1.5 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-              copied
-                ? 'bg-green-500/10 text-green-400 border-green-500/30'
-                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-600'
-            }`}
-          >
-            {copied ? <Check className="w-3.5 h-3.5" /> : <Database className="w-3.5 h-3.5" />}
-            {copied ? '복사됨!' : 'Claude 프롬프트 복사'}
-          </button>
+        <div className="mt-2 bg-zinc-900/40 border border-zinc-700/40 rounded-lg overflow-hidden">
+          {/* Step tabs */}
+          <div className="flex border-b border-zinc-700/40 overflow-x-auto">
+            {steps.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => setStep(i)}
+                className={`flex-shrink-0 px-3 py-2 text-[10px] font-medium transition-all border-b-2 ${
+                  step === i
+                    ? 'border-indigo-500 text-indigo-300 bg-indigo-500/5'
+                    : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                {s.title}
+              </button>
+            ))}
+          </div>
+          {/* Step content */}
+          <div className="p-3 text-xs">
+            {steps[step].content}
+            <div className="flex gap-2 mt-3">
+              {step > 0 && (
+                <button onClick={() => setStep(s => s - 1)} className="flex-1 py-1 text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded border border-zinc-700 transition-all">← 이전</button>
+              )}
+              {step < steps.length - 1 && (
+                <button onClick={() => setStep(s => s + 1)} className="flex-1 py-1 text-[10px] bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 rounded border border-indigo-500/30 transition-all">다음 →</button>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-export default function PortalManager({ showToast }: Props) {
+export default function PortalManager({ showToast, openSettings, onSettingsClosed, actionsRef, isVisible = true }: Props) {
   const [data, setData] = useState<PortalData>({ items: [], categories: DEFAULT_CATEGORIES });
   const [selectedCat, setSelectedCat] = useState<string>('all');
   const [search, setSearch] = useState('');
@@ -266,6 +546,10 @@ export default function PortalManager({ showToast }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [sbUrl, setSbUrl] = useState('');
   const [sbKey, setSbKey] = useState('');
+  const [deviceName, setDeviceName] = useState('');
+  const [viewingDeviceId, setViewingDeviceId] = useState('');
+  const [knownDevices, setKnownDevices] = useState<{device_id: string; device_name?: string}[]>([]);
+  const [isFetchingDevices, setIsFetchingDevices] = useState(false);
 
   // ── Load ──────────────────────────────────────────────────────────────────
 
@@ -273,13 +557,49 @@ export default function PortalManager({ showToast }: Props) {
     (async () => {
       const loaded = await PortalAPI.load();
       if (!loaded.categories?.length) loaded.categories = DEFAULT_CATEGORIES;
-      if (!loaded.deviceId) loaded.deviceId = getOrCreateDeviceId();
+      // Generate or migrate deviceId (legacy "device-..." format → proper UUID)
+      let needsPersist = false;
+      if (!loaded.deviceId || !UUID_RE.test(loaded.deviceId)) {
+        loaded.deviceId = getOrCreateDeviceId();
+        needsPersist = true;
+      }
       setData(loaded);
       setSbUrl(loaded.supabaseUrl ?? '');
       setSbKey(loaded.supabaseAnonKey ?? '');
+      setDeviceName(loaded.deviceName ?? '');
+      setViewingDeviceId(loaded.viewingDeviceId ?? '');
       setIsLoading(false);
+      // Persist migrated deviceId back to portal.json so it survives restarts
+      if (needsPersist) {
+        try { await PortalAPI.save(loaded); } catch { /* ignore */ }
+      }
     })();
   }, []);
+
+  // Open settings modal when parent triggers it
+  useEffect(() => {
+    if (openSettings) {
+      setShowSettings(true);
+    }
+  }, [openSettings]);
+
+  // Notify parent when settings modal closes
+  useEffect(() => {
+    if (!showSettings && onSettingsClosed) onSettingsClosed();
+  }, [showSettings]);
+
+  // Expose action functions to parent via ref
+  useEffect(() => {
+    if (actionsRef) {
+      actionsRef.current = {
+        push: syncSupabase,
+        pull: pullFromSupabase,
+        exportData,
+        importData,
+        openSettings: () => setShowSettings(true),
+      };
+    }
+  });
 
   const persist = useCallback(async (next: PortalData) => {
     setData(next);
@@ -471,10 +791,10 @@ export default function PortalManager({ showToast }: Props) {
       const supabase = createClient(sbUrl, sbKey);
       const deviceId = data.deviceId ?? getOrCreateDeviceId();
 
-      // Upsert items
+      // Upsert items — folders are per-device, all others are shared
       const itemRows = data.items.map(item => ({
         id: item.id,
-        device_id: deviceId,
+        device_id: item.type === 'folder' ? deviceId : '__shared__',
         name: item.name,
         type: item.type,
         url: item.url ?? null,
@@ -484,13 +804,13 @@ export default function PortalManager({ showToast }: Props) {
         pinned: item.pinned,
         visit_count: item.visitCount,
         last_visited: item.lastVisited ?? null,
-        created_at: item.createdAt,
+        created_at: item.createdAt ?? null,
       }));
 
-      // Upsert categories
+      // Upsert categories — always shared across devices
       const catRows = data.categories.map(cat => ({
         id: cat.id,
-        device_id: deviceId,
+        device_id: '__shared__',
         name: cat.name,
         color: cat.color,
         "order": cat.order,
@@ -504,7 +824,7 @@ export default function PortalManager({ showToast }: Props) {
       if (itemsRes.error) throw new Error(itemsRes.error.message);
       if (catsRes.error) throw new Error(catsRes.error.message);
 
-      const nextData: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceId, lastSynced: new Date().toISOString() };
+      const nextData: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceId, deviceName: deviceName || data.deviceName, lastSynced: new Date().toISOString() };
       await persist(nextData);
       setSyncOk(true);
       showToast(`Supabase 동기화 완료 (${data.items.length}개 항목)`, 'success');
@@ -525,10 +845,11 @@ export default function PortalManager({ showToast }: Props) {
     setIsRestoring(true);
     try {
       const supabase = createClient(sbUrl, sbKey);
-      const deviceId = data.deviceId ?? getOrCreateDeviceId();
+      const ownDeviceId = data.deviceId ?? getOrCreateDeviceId();
+      const targetDeviceId = viewingDeviceId || ownDeviceId;
       const [itemsRes, catsRes] = await Promise.all([
-        supabase.from('portal_items').select('*').eq('device_id', deviceId),
-        supabase.from('portal_categories').select('*').eq('device_id', deviceId),
+        supabase.from('portal_items').select('*').or(`device_id.eq.${targetDeviceId},device_id.eq.__shared__`),
+        supabase.from('portal_categories').select('*').eq('device_id', '__shared__'),
       ]);
       if (itemsRes.error) throw new Error(itemsRes.error.message);
       if (catsRes.error) throw new Error(catsRes.error.message);
@@ -574,8 +895,80 @@ export default function PortalManager({ showToast }: Props) {
     }
   }
 
+  async function fetchKnownDevices() {
+    if (!sbUrl || !sbKey) { showToast('Supabase URL과 Key를 먼저 입력 후 저장하세요', 'error'); return; }
+    setIsFetchingDevices(true);
+    try {
+      const supabase = createClient(sbUrl, sbKey);
+      const seen = new Set<string>();
+      // device_id → device_name 맵 (여러 소스에서 보강)
+      const nameMap = new Map<string, string>();
+
+      // 1순위: ports 테이블 (device_name 컬럼 있으면 사용)
+      const { data: portsRows, error: portsErr } = await supabase
+        .from('ports').select('device_id, device_name, folder_path').not('device_id', 'is', null);
+      if (!portsErr && portsRows) {
+        for (const r of portsRows) {
+          if (!r.device_id || r.device_id === '__shared__') continue;
+          seen.add(r.device_id);
+          if (r.device_name && !nameMap.has(r.device_id)) {
+            nameMap.set(r.device_id, r.device_name);
+          }
+          // device_name 없으면 folder_path에서 사용자명 추출 (/Users/username/...)
+          if (!nameMap.has(r.device_id) && r.folder_path) {
+            const m = r.folder_path.match(/^\/(?:Users|home)\/([^/]+)\//);
+            if (m) nameMap.set(r.device_id, `${m[1]}의 기기`);
+          }
+        }
+      }
+
+      // 2순위: workspace_roots — sentinel 행(__device__)에서 기기명, 없으면 path에서 사용자명 추출
+      const { data: rootRows } = await supabase
+        .from('workspace_roots').select('device_id, name, path').not('device_id', 'is', null);
+      for (const r of rootRows ?? []) {
+        if (!r.device_id || r.device_id === '__shared__') continue;
+        seen.add(r.device_id);
+        // sentinel 행: Push 시 저장한 기기명 (최우선)
+        if (r.path?.startsWith('__device__') && r.name) {
+          nameMap.set(r.device_id, r.name);
+        } else if (!nameMap.has(r.device_id) && r.path) {
+          const m = r.path.match(/^\/(?:Users|home)\/([^/]+)\//);
+          if (m) nameMap.set(r.device_id, `${m[1]}의 기기`);
+        }
+      }
+
+      // 3순위: portal_items folder 타입
+      const { data: folderRows } = await supabase
+        .from('portal_items').select('device_id, path').eq('type', 'folder').not('device_id', 'is', null);
+      for (const r of folderRows ?? []) {
+        if (!r.device_id || r.device_id === '__shared__') continue;
+        seen.add(r.device_id);
+        if (!nameMap.has(r.device_id) && r.path) {
+          const m = r.path.match(/^\/(?:Users|home)\/([^/]+)\//);
+          if (m) nameMap.set(r.device_id, `${m[1]}의 기기`);
+        }
+      }
+
+      const devices = Array.from(seen).map(id => ({
+        device_id: id,
+        device_name: nameMap.get(id),
+      }));
+
+      setKnownDevices(devices);
+      if (devices.length === 0) {
+        showToast('단말 없음 — 이 기기에서 먼저 Push를 실행하세요', 'error');
+      } else {
+        showToast(`${devices.length}개 단말 발견`, 'success');
+      }
+    } catch (e: any) {
+      showToast('단말 조회 오류: ' + e.message, 'error');
+    } finally {
+      setIsFetchingDevices(false);
+    }
+  }
+
   async function saveSettings() {
-    const next: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey };
+    const next: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceName: deviceName || undefined, viewingDeviceId: viewingDeviceId || undefined };
     await persist(next);
     setShowSettings(false);
     showToast('설정 저장됨', 'success');
@@ -607,7 +1000,7 @@ export default function PortalManager({ showToast }: Props) {
     );
   }
 
-  return (
+  const portalUI = isVisible ? (
     <div className="flex gap-4 h-full">
       {/* ── Left Sidebar ────────────────────────────────────────────────────── */}
       <div className="w-48 flex-shrink-0">
@@ -686,53 +1079,24 @@ export default function PortalManager({ showToast }: Props) {
               className="w-full pl-8 pr-3 py-1.5 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
             />
           </div>
+          {viewingDeviceId && viewingDeviceId !== data.deviceId && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-lg shrink-0">
+              <span className="text-amber-400 text-[10px] font-medium whitespace-nowrap">
+                📱 {knownDevices.find(d => d.device_id === viewingDeviceId)?.device_name ?? (viewingDeviceId === data.deviceId ? (data.deviceName ?? viewingDeviceId.slice(0, 6) + '…') : viewingDeviceId.slice(0, 6) + '…')}
+              </span>
+              <button
+                onClick={() => { setViewingDeviceId(''); setData(d => ({ ...d, viewingDeviceId: undefined })); }}
+                className="text-amber-500 hover:text-amber-300 text-xs leading-none"
+                title="내 기기로 복귀"
+              >✕</button>
+            </div>
+          )}
           <button
             onClick={() => openAddModal(selectedCat !== 'all' ? selectedCat : undefined)}
             className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-sm rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all flex items-center gap-1.5"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>추가</span>
-          </button>
-          <button
-            onClick={syncSupabase}
-            disabled={isSyncing}
-            title="포털 데이터를 Supabase에 업로드 (Push)"
-            className={`px-2.5 py-1.5 text-sm rounded-lg border transition-all flex items-center gap-1 ${
-              syncOk === true ? 'bg-green-500/10 text-green-400 border-green-500/30' :
-              syncOk === false ? 'bg-red-500/10 text-red-400 border-red-500/30' :
-              'bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-indigo-500/50'
-            }`}
-          >
-            <CloudUpload className={`w-3.5 h-3.5 ${isSyncing ? 'animate-pulse' : 'text-indigo-400'}`} />
-          </button>
-          <button
-            onClick={pullFromSupabase}
-            disabled={isRestoring}
-            title="Supabase에서 포털 데이터 복원 (Pull)"
-            className="px-2.5 py-1.5 text-sm rounded-lg border transition-all flex items-center gap-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 border-zinc-700 hover:border-indigo-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
-          </button>
-          <button
-            onClick={exportData}
-            title="내보내기"
-            className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all"
-          >
-            <Download className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={importData}
-            title="불러오기"
-            className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all"
-          >
-            <Upload className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={() => setShowSettings(true)}
-            title="Supabase 설정"
-            className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all"
-          >
-            <Settings className="w-3.5 h-3.5" />
           </button>
         </div>
 
@@ -931,36 +1295,76 @@ export default function PortalManager({ showToast }: Props) {
         </Modal>
       )}
 
-      {/* ── Settings Modal ───────────────────────────────────────────────────── */}
+    </div>
+  ) : null;
+
+  return (
+    <>
+      {portalUI}
+
+      {/* ── Settings Modal (탭 무관하게 항상 렌더) ────────────────────────── */}
       {showSettings && (
-        <Modal title="Supabase 설정" onClose={() => setShowSettings(false)} onConfirm={saveSettings} confirmLabel="저장">
-          <SetupGuide />
-          <label className="block text-xs text-zinc-400 mb-1">Project URL</label>
-          <input
-            type="text"
-            value={sbUrl}
-            onChange={e => setSbUrl(e.target.value)}
-            className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-            placeholder="https://xxx.supabase.co"
+        <Modal title="설정" onClose={() => setShowSettings(false)} onConfirm={async () => { await saveSettings(); await syncSupabase(); }} confirmLabel="저장 후 동기화">
+
+          {/* ── 1. 단말 이름 ─────────────────────────────────────────────────── */}
+          <div className="mb-3">
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-zinc-400">
+                이 기기 이름{!deviceName && !data.deviceId && <span className="text-amber-400 font-medium ml-1">* 필수</span>}
+              </label>
+              {deviceName
+                ? <span className="text-[10px] text-green-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />등록됨</span>
+                : data.deviceId
+                  ? <span className="text-[10px] text-amber-400">이름 미설정 — 입력 권장</span>
+                  : null
+              }
+            </div>
+            <input
+              type="text"
+              value={deviceName}
+              onChange={e => setDeviceName(e.target.value)}
+              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              placeholder="예: MyMacPro, 회사맥북, WindowsPC"
+              autoFocus={!deviceName && !data.deviceId}
+            />
+            <p className="text-[10px] text-zinc-600 mt-1">Device ID: {data.deviceId ? data.deviceId.slice(0, 16) + '…' : '자동생성'}</p>
+          </div>
+
+          {/* ── 2. Supabase 연결 ─────────────────────────────────────────────── */}
+          <div className="mb-4">
+            <label className="block text-xs text-zinc-400 mb-1">Project URL</label>
+            <input
+              type="text"
+              value={sbUrl}
+              onChange={e => setSbUrl(e.target.value)}
+              className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              placeholder="https://xxx.supabase.co"
+            />
+            <label className="block text-xs text-zinc-400 mb-1">Anon Key</label>
+            <input
+              type="password"
+              value={sbKey}
+              onChange={e => setSbKey(e.target.value)}
+              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              placeholder="eyJ..."
+            />
+          </div>
+
+          {/* ── 고급 설정 (접이식) ───────────────────────────────────────────── */}
+          <AdvancedSettings
+            deviceId={data.deviceId}
+            deviceName={deviceName}
+            viewingDeviceId={viewingDeviceId}
+            knownDevices={knownDevices}
+            isFetchingDevices={isFetchingDevices}
+            onFetchDevices={fetchKnownDevices}
+            onSelectDevice={id => setViewingDeviceId(id === data.deviceId ? '' : id)}
+            onResetDevice={() => setViewingDeviceId('')}
+            onCopyDeviceId={() => { if (data.deviceId) { navigator.clipboard.writeText(data.deviceId); showToast('Device ID 복사됨', 'success'); } }}
           />
-          <label className="block text-xs text-zinc-400 mb-1">Anon Key</label>
-          <input
-            type="password"
-            value={sbKey}
-            onChange={e => setSbKey(e.target.value)}
-            className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-            placeholder="eyJ..."
-          />
-          <button
-            onClick={() => { saveSettings(); setTimeout(syncSupabase, 300); }}
-            className="w-full mt-1 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-sm rounded-lg border border-purple-500/30 transition-all flex items-center justify-center gap-2"
-          >
-            <Cloud className="w-4 h-4" />
-            저장 후 즉시 동기화
-          </button>
         </Modal>
       )}
-    </div>
+    </>
   );
 }
 

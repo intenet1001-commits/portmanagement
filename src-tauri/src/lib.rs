@@ -21,6 +21,12 @@ struct PortInfo {
     github_url: Option<String>,
     #[serde(rename = "worktreePath", default)]
     worktree_path: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(rename = "aiName", default, skip_serializing_if = "Option::is_none")]
+    ai_name: Option<String>,
     #[serde(rename = "isRunning", default)]
     is_running: bool,
 }
@@ -874,17 +880,24 @@ fn open_log(port_id: String, app_handle: tauri::AppHandle) -> Result<String, Str
     Ok(format!("로그 파일을 열었습니다: {:?}", log_file))
 }
 
+/// Escape single quotes for use inside single-quoted shell strings.
+/// ' → '\'' (end-quote, literal-apostrophe, re-open-quote)
+fn escape_sq(s: &str) -> String {
+    s.replace("'", "'\\''")
+}
+
 #[tauri::command]
 fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
         // 명령어 생성
+        let esc_session = escape_sq(&session_name);
         let escaped_title = format!("[tmux] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
                 .filter(|p| !p.is_empty())
-                .map(|p| format!("-w '{}'", p))
+                .map(|p| format!("-w '{}'", escape_sq(p)))
                 .collect::<Vec<_>>()
                 .join(" ");
             format!("claude {}", flags)
@@ -892,9 +905,9 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
             "claude".to_string()
         };
         let cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -A -s '{}' '{}'", fp, escaped_title, session_name, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;[tmux] {}\\007'; tmux new-session -A -s '{}' '{}'", escape_sq(fp), esc_session, esc_session, claude_cmd)
         } else {
-            format!("printf '\\033]0;{}\\007'; tmux new-session -A -s '{}' '{}'", escaped_title, session_name, claude_cmd)
+            format!("printf '\\033]0;[tmux] {}\\007'; tmux new-session -A -s '{}' '{}'", esc_session, esc_session, claude_cmd)
         };
 
         // iTerm에서 명령어 자동 실행
@@ -917,12 +930,13 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
 fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
+        let esc_session = escape_sq(&session_name);
         let escaped_title = format!("[tmux-fresh] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
                 .filter(|p| !p.is_empty())
-                .map(|p| format!("-w '{}'", p))
+                .map(|p| format!("-w '{}'", escape_sq(p)))
                 .collect::<Vec<_>>()
                 .join(" ");
             format!("claude {}", flags)
@@ -930,11 +944,11 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
             "claude".to_string()
         };
         // Kill existing session first (ignore error), then create fresh (no -A)
-        let kill_cmd = format!("tmux kill-session -t '{}' 2>/dev/null || true", session_name);
+        let kill_cmd = format!("tmux kill-session -t '{}' 2>/dev/null || true", esc_session);
         let new_cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -s '{}' '{}'", fp, escaped_title, session_name, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' '{}'", escape_sq(fp), esc_session, esc_session, claude_cmd)
         } else {
-            format!("printf '\\033]0;{}\\007'; tmux new-session -s '{}' '{}'", escaped_title, session_name, claude_cmd)
+            format!("printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' '{}'", esc_session, esc_session, claude_cmd)
         };
         let cmd = format!("{}; {}", kill_cmd, new_cmd);
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
@@ -955,12 +969,13 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
 fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
+        let esc_session = escape_sq(&session_name);
         let escaped_title = format!("[tmux-bypass] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
                 .filter(|p| !p.is_empty())
-                .map(|p| format!("-w '{}'", p))
+                .map(|p| format!("-w '{}'", escape_sq(p)))
                 .collect::<Vec<_>>()
                 .join(" ");
             format!("claude --dangerously-skip-permissions {}", flags)
@@ -968,9 +983,9 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
             "claude --dangerously-skip-permissions".to_string()
         };
         let cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -A -s '{}-bypass' '{}'", fp, escaped_title, session_name, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;[tmux-bypass] {}\\007'; tmux new-session -A -s '{}-bypass' '{}'", escape_sq(fp), esc_session, esc_session, claude_cmd)
         } else {
-            format!("printf '\\033]0;{}\\007'; tmux new-session -A -s '{}-bypass' '{}'", escaped_title, session_name, claude_cmd)
+            format!("printf '\\033]0;[tmux-bypass] {}\\007'; tmux new-session -A -s '{}-bypass' '{}'", esc_session, esc_session, claude_cmd)
         };
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
@@ -994,7 +1009,7 @@ fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>
         let flags: String = wt.split(',')
             .map(|p| p.trim())
             .filter(|p| !p.is_empty())
-            .map(|p| format!("-w '{}'", p))
+            .map(|p| format!("-w '{}'", escape_sq(p)))
             .collect::<Vec<_>>()
             .join(" ");
         format!("claude --dangerously-skip-permissions {}", flags)
@@ -1002,7 +1017,7 @@ fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>
         "claude --dangerously-skip-permissions".to_string()
     };
     let cmd = if let Some(ref fp) = folder_path {
-        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", fp, escaped_name, claude_cmd)
+        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(fp), escaped_name, claude_cmd)
     } else {
         format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
     };
@@ -1027,7 +1042,7 @@ fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, workt
         let flags: String = wt.split(',')
             .map(|p| p.trim())
             .filter(|p| !p.is_empty())
-            .map(|p| format!("-w '{}'", p))
+            .map(|p| format!("-w '{}'", escape_sq(p)))
             .collect::<Vec<_>>()
             .join(" ");
         format!("claude {}", flags)
@@ -1035,7 +1050,7 @@ fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, workt
         "claude".to_string()
     };
     let cmd = if let Some(ref fp) = folder_path {
-        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", fp, escaped_name, claude_cmd)
+        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(fp), escaped_name, claude_cmd)
     } else {
         format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
     };
@@ -1050,6 +1065,39 @@ fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, workt
         .spawn()
         .map_err(|e| format!("Failed to open iTerm: {}", e))?;
     Ok("iTerm에서 Claude 실행".to_string())
+}
+
+#[tauri::command]
+fn run_claude_with_prompt(folder_path: Option<String>, prompt: String) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        // Escape for shell single-quoted string
+        let cd_part = folder_path
+            .as_deref()
+            .map(|fp| format!("cd '{}' && ", escape_sq(fp)))
+            .unwrap_or_default();
+        let cmd = format!("{}claude", cd_part);
+        let escaped_cmd = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        // Prompt: collapse newlines → spaces, escape for AppleScript
+        let escaped_prompt = prompt
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', " ");
+        let script = format!(
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 4\n    write text \"{}\"\n  end tell\nend tell",
+            escaped_cmd, escaped_prompt
+        );
+        Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn()
+            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+        Ok("iTerm에서 Claude 실행 + 프롬프트 전송".to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("macOS 전용 기능입니다".to_string())
+    }
 }
 
 #[tauri::command]
@@ -1203,6 +1251,162 @@ fn list_git_worktrees(folder_path: String) -> Result<Vec<WorktreeInfo>, String> 
     Ok(worktrees)
 }
 
+/// AI 이름 추천 (folderPath 기반, login shell에서 claude -p 호출)
+#[tauri::command]
+fn suggest_name(folder_path: String) -> Result<Vec<String>, String> {
+    use std::fs;
+
+    let path = std::path::Path::new(&folder_path);
+    if !path.exists() {
+        return Err(format!("폴더 없음: {}", folder_path));
+    }
+
+    // 디렉토리 파일 목록 (최대 30개)
+    let files: Vec<String> = fs::read_dir(path)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .take(30)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // package.json 내용 (있으면 최대 500자)
+    let pkg_json = fs::read_to_string(path.join("package.json"))
+        .map(|s| s.chars().take(500).collect::<String>())
+        .unwrap_or_default();
+
+    let prompt = format!(
+        "Project files: {}\npackage.json: {}\n\nSuggest 3 concise project names (2-4 words, English). Reply with JSON array only: [\"name1\",\"name2\",\"name3\"]",
+        files.join(", "),
+        pkg_json
+    );
+
+    // login shell로 실행 — ~/.zshrc 소싱 → 올바른 PATH + claude 인증 토큰 자동 로드
+    // (Tauri 직접 spawn은 Homebrew PATH / auth 환경이 없어서 claude를 못 찾거나 인증 실패)
+    let escaped_prompt = prompt.replace('\'', "'\"'\"'"); // sh single-quote escape
+    let shell_cmd = format!(
+        "cd '{}' && claude -p '{}'",
+        escape_sq(&folder_path),
+        escaped_prompt
+    );
+
+    let out = std::process::Command::new("/bin/zsh")
+        .args(["-l", "-c", &shell_cmd])
+        .output()
+        .map_err(|e| format!("shell 실행 실패: {}", e))?;
+
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let err_raw = String::from_utf8_lossy(&out.stderr).trim().to_string();
+
+    // 실패 시 stderr/stdout 포함한 에러 반환 (디버깅용)
+    if !out.status.success() || raw.is_empty() {
+        return Err(format!("claude 실패 (exit={}) stdout='{}' stderr='{}'",
+            out.status.code().unwrap_or(-1),
+            &raw[..raw.len().min(300)],
+            &err_raw[..err_raw.len().min(300)]));
+    }
+
+    // JSON 배열 추출
+    if let Some(start) = raw.find('[') {
+        if let Some(end) = raw.rfind(']') {
+            let json_str = &raw[start..=end];
+            if let Ok(suggestions) = serde_json::from_str::<Vec<String>>(json_str) {
+                return Ok(suggestions);
+            }
+        }
+    }
+    // JSON 파싱 실패 시 raw 출력 포함 에러 (claude가 마크다운 등으로 응답했을 가능성)
+    Err(format!("JSON 파싱 실패 (raw='{}')", &raw[..raw.len().min(300)]))
+}
+
+/// AI 이름 일괄 추천 (여러 포트를 한 번의 claude -p 호출로 처리)
+#[tauri::command]
+fn suggest_names_batch(ports: Vec<serde_json::Value>) -> Result<serde_json::Value, String> {
+    use std::fs;
+
+    if ports.is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+
+    let mut project_lines: Vec<String> = Vec::new();
+    let mut valid_ids: Vec<String> = Vec::new();
+
+    for port in &ports {
+        let id = port.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let folder_path = port.get("folderPath").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        if id.is_empty() || folder_path.is_empty() {
+            continue;
+        }
+        let path = std::path::Path::new(&folder_path);
+        if !path.exists() {
+            continue;
+        }
+
+        let files: Vec<String> = fs::read_dir(path)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .take(20)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let pkg_json = fs::read_to_string(path.join("package.json"))
+            .map(|s| s.chars().take(300).collect::<String>())
+            .unwrap_or_default();
+
+        project_lines.push(format!(
+            "id={} files=[{}] package.json={}",
+            id,
+            files.join(", "),
+            if pkg_json.is_empty() { "none".to_string() } else { pkg_json }
+        ));
+        valid_ids.push(id);
+    }
+
+    if valid_ids.is_empty() {
+        return Ok(serde_json::json!({}));
+    }
+
+    let prompt = format!(
+        "For each project below, suggest 1 concise English project name (2-4 words).\nReply ONLY with a JSON object mapping each id to a name: {{\"id1\": \"Name One\", \"id2\": \"Name Two\"}}\n\n{}",
+        project_lines.join("\n")
+    );
+
+    let escaped_prompt = prompt.replace('\'', "'\"'\"'");
+    let shell_cmd = format!("claude -p '{}'", escaped_prompt);
+
+    let out = std::process::Command::new("/bin/zsh")
+        .args(["-l", "-c", &shell_cmd])
+        .output()
+        .map_err(|e| format!("shell 실행 실패: {}", e))?;
+
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let err_raw = String::from_utf8_lossy(&out.stderr).trim().to_string();
+
+    if !out.status.success() || raw.is_empty() {
+        return Err(format!("claude 실패 (exit={}) stdout='{}' stderr='{}'",
+            out.status.code().unwrap_or(-1),
+            &raw[..raw.len().min(300)],
+            &err_raw[..err_raw.len().min(300)]));
+    }
+
+    if let Some(start) = raw.find('{') {
+        if let Some(end) = raw.rfind('}') {
+            let json_str = &raw[start..=end];
+            if let Ok(result) = serde_json::from_str::<serde_json::Value>(json_str) {
+                return Ok(result);
+            }
+        }
+    }
+
+    Err(format!("JSON 파싱 실패 (raw='{}')", &raw[..raw.len().min(300)]))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -1235,10 +1439,13 @@ pub fn run() {
         open_tmux_claude_bypass,
         open_terminal_claude,
         open_terminal_claude_bypass,
+        run_claude_with_prompt,
         export_dmg,
         list_git_worktrees,
         check_file_exists,
         create_folder,
+        suggest_name,
+        suggest_names_batch,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())

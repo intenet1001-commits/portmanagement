@@ -40,3 +40,4 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # OMC (oh-my-claudecode) local state
 .omc/sessions/
 .omc/state/
+.gstack/
