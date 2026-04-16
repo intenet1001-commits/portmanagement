@@ -28,6 +28,16 @@ powershell -c "irm bun.sh/install.ps1 | iex"
 bun --version
 ```
 
+#### Git 설치
+
+**macOS**: `brew install git` 또는 Xcode Command Line Tools (`xcode-select --install`)
+
+**Windows**:
+```powershell
+winget install Git.Git
+```
+> 설치 후 새 PowerShell 창을 열어야 `git` 명령이 인식됩니다.
+
 #### Claude Code 설치 (AI 기능 사용 시)
 
 ```bash
@@ -95,6 +105,34 @@ bun run start
 - 연결 테스트
 
 > ✅ Supabase CLI가 이미 설치·로그인된 경우: 마법사에서 **"CLI 자동 가져오기"** 버튼으로 URL + Anon Key 한번에 입력됩니다.
+
+#### Windows 전용 — Supabase CLI 사전 설치
+
+마법사의 CLI 설치 단계에서 **Scoop** 패키지 매니저가 필요합니다.  
+마법사 실행 전 PowerShell (관리자 권한)에서 미리 설치하세요:
+
+```powershell
+# 1. Scoop 설치
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+irm get.scoop.sh | iex
+
+# 2. 새 PowerShell 창을 열고 Supabase CLI 설치
+scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+scoop install supabase
+
+# 3. 설치 확인
+supabase --version
+```
+
+Scoop 없이 직접 설치하는 방법:
+```powershell
+# PowerShell 관리자 권한
+irm https://github.com/supabase/cli/releases/latest/download/supabase_windows_amd64.zip -OutFile supabase.zip
+Expand-Archive supabase.zip -DestinationPath supabase-cli
+Move-Item supabase-cli\supabase.exe C:\Windows\System32\
+```
+
+> ⚠️ Scoop 또는 CLI 설치 후 반드시 **새 터미널 창**을 열어야 명령이 인식됩니다.
 
 ---
 
