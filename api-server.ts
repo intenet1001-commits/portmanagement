@@ -249,6 +249,13 @@ const server = Bun.serve({
 
         // 파일 경로 vs raw 커맨드 판별
         const isFilePath = commandPath.startsWith('/') || commandPath.startsWith('~');
+        // 파일 경로인 경우 존재 여부 확인
+        if (isFilePath && !existsSync(commandPath)) {
+          return new Response(
+            JSON.stringify({ error: `파일을 찾을 수 없습니다: ${commandPath}` }),
+            { status: 400, headers }
+          );
+        }
         const cmd = isFilePath ? ["bash", commandPath] : ["bash", "-c", commandPath];
         console.log(`[Execute] Starting process: ${cmd.join(' ')}`);
 
@@ -1115,6 +1122,9 @@ end tell`;
         const { folderPath } = await req.json();
         if (!folderPath) {
           return new Response(JSON.stringify({ success: false, error: "Missing folderPath" }), { status: 400, headers });
+        }
+        if (!folderPath.startsWith('/')) {
+          return new Response(JSON.stringify({ success: false, error: "절대경로가 필요합니다" }), { status: 400, headers });
         }
         const { mkdirSync, existsSync } = await import("node:fs");
         if (existsSync(folderPath)) {

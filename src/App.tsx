@@ -1007,6 +1007,7 @@ function App() {
     autoPushTimerRef.current = setTimeout(async () => {
       const cfg = portalConfigRef.current;
       if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) return;
+      if (ports.length === 0) return; // 빈 배열로 stale-delete 방지
       try {
         const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
         const deviceId = cfg.deviceId ?? null;
@@ -1099,6 +1100,16 @@ function App() {
 
   const addPort = () => {
     if (name) {
+      const portNum = port ? parseInt(port) : undefined;
+      if (portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
+        showToast('포트 번호는 1~65535 사이여야 합니다', 'error');
+        return;
+      }
+      const duplicatePort = portNum && ports.find(p => p.port === portNum);
+      if (duplicatePort) {
+        showToast(`포트 ${portNum}은 이미 "${duplicatePort.name}"에서 사용 중입니다`, 'error');
+        return;
+      }
       // commandPath가 있으면 자동으로 폴더 경로 추출
       let autoFolderPath = folderPath;
       if (commandPath && !folderPath) {
