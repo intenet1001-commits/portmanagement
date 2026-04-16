@@ -38,6 +38,9 @@ winget install Git.Git
 ```
 > 설치 후 새 PowerShell 창을 열어야 `git` 명령이 인식됩니다.
 
+> `winget` 오류 시 → https://git-scm.com/download/win 에서 직접 다운로드.  
+> `winget` 자체가 없는 경우 → [Windows 트러블슈팅](#windows-트러블슈팅) 참고
+
 #### Claude Code 설치 (AI 기능 사용 시)
 
 ```bash
@@ -269,6 +272,39 @@ src-tauri\target\release\bundle\nsis\포트관리기_x.x.x_x64-setup.exe
 %APPDATA%\com.portmanager.portmanager\logs\{portId}.log
 ```
 탐색기 주소창에 `%APPDATA%\com.portmanager.portmanager` 입력으로 바로 이동 가능.
+
+---
+
+## Windows 트러블슈팅
+
+### ❌ "running scripts is disabled on this system" 오류
+
+`claude`, `bun`, `npm` 등 명령 실행 시 아래 오류가 뜨는 경우:
+```
+File cannot be loaded because running scripts is disabled on this system.
+```
+
+**해결 방법** — PowerShell을 **관리자 권한**으로 열고 실행:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+`Y` 입력 후 Enter. 이후 새 PowerShell 창에서 다시 시도하세요.
+
+> `RemoteSigned`: 로컬 스크립트는 자유롭게 실행, 다운로드 스크립트는 서명 필요 — 개발 환경 표준 설정입니다.
+
+현재 세션에서만 임시 허용하려면:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
+```
+
+---
+
+### ❌ `winget` 명령을 찾을 수 없는 경우
+
+`winget`은 Windows 10 1709+ / Windows 11에 기본 내장되어 있습니다.  
+없는 경우:
+- **Microsoft Store** → "앱 설치 관리자" 검색 → 업데이트/설치
+- 또는 https://github.com/microsoft/winget-cli/releases 에서 `.msixbundle` 직접 설치
 
 ---
 
