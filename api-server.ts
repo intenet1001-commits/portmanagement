@@ -1491,34 +1491,58 @@ Analyze this project and reply with JSON only (no markdown, no explanation):
     // ── Supabase CLI helpers ──────────────────────────────────────────────────
     if (url.pathname === "/api/supabase-cli/status" && req.method === "GET") {
       try {
-        const candidatePaths = [
-          `${process.env.HOME}/.local/bin/supabase`,
+        const isWin = process.platform === "win32";
+        const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+        const appData = process.env.APPDATA ?? "";
+        const localAppData = process.env.LOCALAPPDATA ?? "";
+
+        // Candidate paths (macOS/Linux + Windows Scoop/winget)
+        const candidatePaths = isWin ? [
+          `${appData}\\scoop\\apps\\supabase\\current\\supabase.exe`,
+          `${localAppData}\\Microsoft\\WinGet\\Packages\\Supabase.CLI\\supabase.exe`,
+          `${home}\\.local\\bin\\supabase.exe`,
+          "C:\\Program Files\\supabase\\supabase.exe",
+        ] : [
+          `${home}/.local/bin/supabase`,
           "/opt/homebrew/bin/supabase",
           "/usr/local/bin/supabase",
         ];
+
         let cliPath = "";
         for (const p of candidatePaths) {
-          if (existsSync(p)) { cliPath = p; break; }
+          if (p && existsSync(p)) { cliPath = p; break; }
         }
-        // also try PATH-resolved supabase
+
+        // PATH-resolved fallback: `where` on Windows, `which` on Unix
         if (!cliPath) {
-          const w = Bun.spawn(["which", "supabase"], { stdout: "pipe", stderr: "pipe" });
-          await w.exited;
-          if (w.exitCode === 0) cliPath = (await new Response(w.stdout).text()).trim();
+          const whichCmd = isWin ? ["where", "supabase"] : ["which", "supabase"];
+          try {
+            const w = Bun.spawn(whichCmd, { stdout: "pipe", stderr: "pipe" });
+            await w.exited;
+            if (w.exitCode === 0) {
+              const out = (await new Response(w.stdout).text()).trim();
+              cliPath = out.split(/\r?\n/)[0].trim(); // first line only
+            }
+          } catch { /* ignore */ }
         }
+
         if (!cliPath) {
           return new Response(JSON.stringify({ installed: false }), { headers });
         }
 
+        const extraPath = isWin
+          ? `${appData}\\scoop\\shims;${process.env.PATH ?? ""}`
+          : `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${home}/.local/bin:${process.env.PATH ?? ""}`;
+
         const proc = Bun.spawn([cliPath, "projects", "list"], {
           stdout: "pipe", stderr: "pipe",
-          env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.HOME}/.local/bin:${process.env.PATH ?? ""}` },
+          env: { ...process.env, PATH: extraPath },
         });
         await proc.exited;
         const out = await new Response(proc.stdout).text();
         const err = await new Response(proc.stderr).text();
 
-        if (proc.exitCode !== 0 || /not logged in|unauthorized/i.test(out + err)) {
+        if (proc.exitCode !== 0 || /not logged in|unauthorized|login/i.test(out + err)) {
           return new Response(JSON.stringify({ installed: true, loggedIn: false, cliPath }), { headers });
         }
 
@@ -1541,18 +1565,32 @@ Analyze this project and reply with JSON only (no markdown, no explanation):
       const ref = url.searchParams.get("ref");
       if (!ref) return new Response(JSON.stringify({ error: "ref required" }), { status: 400, headers });
       try {
-        // 1) Try macOS Keychain (supabase CLI stores token there after `supabase login`)
+        const isWin = process.platform === "win32";
+        const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+        const appData = process.env.APPDATA ?? "";
         let token = "";
-        const kc = Bun.spawn(["security", "find-generic-password", "-s", "Supabase CLI", "-a", "supabase", "-w"], {
-          stdout: "pipe", stderr: "pipe",
-        });
-        await kc.exited;
-        if (kc.exitCode === 0) token = (await new Response(kc.stdout).text()).trim();
 
-        // 2) Fallback: file-based token
+        if (!isWin) {
+          // macOS: try Keychain first
+          try {
+            const kc = Bun.spawn(["security", "find-generic-password", "-s", "Supabase CLI", "-a", "supabase", "-w"], {
+              stdout: "pipe", stderr: "pipe",
+            });
+            await kc.exited;
+            if (kc.exitCode === 0) token = (await new Response(kc.stdout).text()).trim();
+          } catch { /* not available */ }
+        }
+
+        // File-based token — macOS: ~/.supabase/access-token, Windows: %APPDATA%\supabase\access-token
         if (!token) {
-          const tokenFile = Bun.file(`${process.env.HOME}/.supabase/access-token`);
-          if (await tokenFile.exists()) token = (await tokenFile.text()).trim();
+          const tokenPaths = isWin
+            ? [`${appData}\\supabase\\access-token`, `${home}\\.supabase\\access-token`]
+            : [`${home}/.supabase/access-token`];
+          for (const tp of tokenPaths) {
+            if (!tp) continue;
+            const f = Bun.file(tp);
+            if (await f.exists()) { token = (await f.text()).trim(); break; }
+          }
         }
 
         if (!token) {
