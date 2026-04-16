@@ -197,6 +197,7 @@ interface Props {
   openSettings?: boolean; // when true, open settings modal immediately
   onSettingsClosed?: () => void;
   actionsRef?: React.MutableRefObject<PortalActions | null>;
+  isVisible?: boolean; // false → hide portal UI but keep modals alive
 }
 
 const AI_TABLE_PROMPT = `포트 관리 프로그램(portmanagement)의 Supabase 테이블을 설정해줘.
@@ -524,7 +525,7 @@ bun run start
   );
 }
 
-export default function PortalManager({ showToast, openSettings, onSettingsClosed, actionsRef }: Props) {
+export default function PortalManager({ showToast, openSettings, onSettingsClosed, actionsRef, isVisible = true }: Props) {
   const [data, setData] = useState<PortalData>({ items: [], categories: DEFAULT_CATEGORIES });
   const [selectedCat, setSelectedCat] = useState<string>('all');
   const [search, setSearch] = useState('');
@@ -979,7 +980,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     );
   }
 
-  return (
+  const portalUI = isVisible ? (
     <div className="flex gap-4 h-full">
       {/* ── Left Sidebar ────────────────────────────────────────────────────── */}
       <div className="w-48 flex-shrink-0">
@@ -1274,7 +1275,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         </Modal>
       )}
 
-      {/* ── Settings Modal ───────────────────────────────────────────────────── */}
+    </div>
+  ) : null;
+
+  return (
+    <>
+      {portalUI}
+
+      {/* ── Settings Modal (탭 무관하게 항상 렌더) ────────────────────────── */}
       {showSettings && (
         <Modal title="설정" onClose={() => setShowSettings(false)} onConfirm={async () => { await saveSettings(); await syncSupabase(); }} confirmLabel="저장 후 동기화">
 
@@ -1322,8 +1330,6 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             />
           </div>
 
-          {/* 초기 설정 가이드 제거 — 상단 🚀 세팅 버튼 사용 */}
-
           {/* ── 고급 설정 (접이식) ───────────────────────────────────────────── */}
           <AdvancedSettings
             deviceId={data.deviceId}
@@ -1338,7 +1344,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
           />
         </Modal>
       )}
-    </div>
+    </>
   );
 }
 

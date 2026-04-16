@@ -2345,7 +2345,7 @@ function App() {
                   </button>
                 </div>
                 <button
-                  onClick={() => { setActiveTab('portal'); setOpenPortalSettings(true); }}
+                  onClick={() => setOpenPortalSettings(true)}
                   title="Supabase / 단말 설정"
                   className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
                 >
@@ -2366,15 +2366,14 @@ function App() {
           </div>
         </div>
 
-        {/* 포털 탭 */}
-        {activeTab === 'portal' && (
-          <PortalManager
-            showToast={showToast}
-            openSettings={openPortalSettings}
-            onSettingsClosed={() => setOpenPortalSettings(false)}
-            actionsRef={portalActionsRef}
-          />
-        )}
+        {/* 포털 탭 — 항상 마운트, isVisible로 UI 표시 제어 (설정 모달은 탭 무관하게 동작) */}
+        <PortalManager
+          showToast={showToast}
+          openSettings={openPortalSettings}
+          onSettingsClosed={() => setOpenPortalSettings(false)}
+          actionsRef={portalActionsRef}
+          isVisible={activeTab === 'portal'}
+        />
 
         {/* 설정 마법사 오버레이 */}
         {showSetupWizard && (
