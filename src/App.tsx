@@ -119,6 +119,17 @@ const API = {
     }
   },
 
+  async gitPull(folderPath: string): Promise<string> {
+    const response = await fetch('/api/git-pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath })
+    });
+    const result = await response.json();
+    if (!result.success) throw new Error(result.error);
+    return result.output as string;
+  },
+
   async installAppToApplications(): Promise<string> {
     if (isTauri()) {
       return invoke<string>('install_app_to_applications');
