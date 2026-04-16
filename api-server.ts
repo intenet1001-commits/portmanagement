@@ -6,14 +6,56 @@ import { homedir } from "node:os";
 /** Escape single quotes for use inside single-quoted shell strings: ' → '\'' */
 const escapeSq = (s: string): string => s.replace(/'/g, "'\\''");
 
+const IS_WIN = process.platform === 'win32';
+
+/** 포트를 사용 중인 PID 목록 반환 (Windows/macOS 공용) */
+async function getPidsByPort(port: number): Promise<string[]> {
+  if (IS_WIN) {
+    const proc = spawn({
+      cmd: ['powershell', '-NoProfile', '-NonInteractive', '-Command',
+        `(Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue).OwningProcess | Select-Object -Unique`],
+      stdout: 'pipe', stderr: 'pipe',
+    });
+    await proc.exited;
+    const out = await new Response(proc.stdout).text();
+    return out.trim().split('\n').map(p => p.trim()).filter(p => /^\d+$/.test(p));
+  } else {
+    const proc = spawn({ cmd: ['lsof', '-ti', `:${port}`], stdout: 'pipe', stderr: 'pipe' });
+    await proc.exited;
+    const out = await new Response(proc.stdout).text();
+    return out.trim().split('\n').filter(p => p.length > 0);
+  }
+}
+
+/** PID 종료 (Windows/macOS 공용) */
+async function killPid(pid: string, force = false): Promise<void> {
+  if (IS_WIN) {
+    spawn({ cmd: ['taskkill', '/F', '/PID', pid], stdout: 'pipe', stderr: 'pipe' });
+    await new Promise(r => setTimeout(r, 100));
+  } else {
+    const sig = force ? '-9' : '-15';
+    const p = spawn({ cmd: ['kill', sig, pid], stdout: 'inherit', stderr: 'inherit' });
+    await p.exited;
+  }
+}
+
+/** 폴더/파일 열기 (Windows/macOS 공용) */
+function openPath(target: string): void {
+  if (IS_WIN) {
+    spawn({ cmd: ['explorer.exe', target], stdout: 'inherit', stderr: 'inherit' });
+  } else {
+    spawn({ cmd: ['open', target], stdout: 'inherit', stderr: 'inherit' });
+  }
+}
+
 // Resolve claude binary path once at startup (Homebrew first, then PATH fallback)
 function resolveClaudePath(): string | null {
   if (existsSync('/opt/homebrew/bin/claude')) return '/opt/homebrew/bin/claude';
   if (existsSync('/usr/local/bin/claude')) return '/usr/local/bin/claude';
-  const result = Bun.spawnSync(['which', 'claude'], {
-    env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
-  });
-  const resolved = result.stdout.toString().trim();
+  const isWin = process.platform === 'win32';
+  const finder = isWin ? ['where', 'claude'] : ['which', 'claude'];
+  const result = Bun.spawnSync(finder, { env: { ...process.env } });
+  const resolved = result.stdout.toString().trim().split('\n')[0].trim();
   return resolved || null;
 }
 const CLAUDE_PATH = resolveClaudePath();
@@ -239,16 +281,19 @@ const server = Bun.serve({
 
         // .html 파일은 브라우저로 열기
         if (commandPath.toLowerCase().endsWith('.html')) {
-          try {
-            Bun.spawnSync(['open', '-a', 'Google Chrome', commandPath]);
-          } catch {
-            Bun.spawnSync(['open', commandPath]); // fallback to default browser
+          if (IS_WIN) {
+            spawn({ cmd: ['cmd', '/c', 'start', '', commandPath], stdout: 'inherit', stderr: 'inherit' });
+          } else {
+            try { Bun.spawnSync(['open', '-a', 'Google Chrome', commandPath]); }
+            catch { Bun.spawnSync(['open', commandPath]); }
           }
           return new Response(JSON.stringify({ success: true, message: 'Opened HTML in browser' }), { headers });
         }
 
         // 파일 경로 vs raw 커맨드 판별
-        const isFilePath = commandPath.startsWith('/') || commandPath.startsWith('~');
+        const isFilePath = IS_WIN
+          ? /^([A-Za-z]:[\\\/]|\\\\|~)/.test(commandPath)
+          : commandPath.startsWith('/') || commandPath.startsWith('~');
         // 파일 경로인 경우 존재 여부 확인
         if (isFilePath && !existsSync(commandPath)) {
           return new Response(
@@ -256,7 +301,12 @@ const server = Bun.serve({
             { status: 400, headers }
           );
         }
-        const cmd = isFilePath ? ["bash", commandPath] : ["bash", "-c", commandPath];
+        // Windows: .bat/.cmd는 cmd /c로, 그 외는 raw command 실행
+        const cmd = IS_WIN
+          ? (isFilePath
+              ? ['cmd', '/c', commandPath]
+              : ['cmd', '/c', commandPath])
+          : (isFilePath ? ['bash', commandPath] : ['bash', '-c', commandPath]);
         console.log(`[Execute] Starting process: ${cmd.join(' ')}`);
 
         const proc = spawn({
@@ -327,54 +377,21 @@ const server = Bun.serve({
         // 포트로 실행 중인 모든 프로세스 찾기
         if (port) {
           console.log(`[Stop] Searching for all processes on port: ${port}`);
-
           try {
-            const lsofProc = spawn({
-              cmd: ["lsof", "-ti", `:${port}`],
-              stdout: "pipe",
-              stderr: "pipe",
-            });
-
-            await lsofProc.exited;
-            const output = await new Response(lsofProc.stdout).text();
-            const pids = output.trim().split('\n').filter(p => p.length > 0);
-
+            const pids = await getPidsByPort(port);
             if (pids.length > 0) {
               console.log(`[Stop] Found ${pids.length} PIDs on port ${port}:`, pids);
-
-              // 모든 PID에 대해 SIGTERM 시도 후 SIGKILL
               for (const pid of pids) {
-                console.log(`[Stop] Killing PID ${pid} on port ${port}`);
-
-                // SIGTERM 시도
-                const termProc = spawn({
-                  cmd: ["kill", "-15", pid],
-                  stdout: "inherit",
-                  stderr: "inherit"
-                });
-                await termProc.exited;
-
-                // 200ms 대기
-                await new Promise(resolve => setTimeout(resolve, 200));
-
-                // 프로세스가 아직 살아있는지 확인
-                const checkProc = spawn({
-                  cmd: ["kill", "-0", pid],
-                  stdout: "pipe",
-                  stderr: "pipe",
-                });
-                await checkProc.exited;
-
-                if (checkProc.exitCode === 0) {
-                  // 여전히 살아있으면 SIGKILL
-                  console.log(`[Stop] Process ${pid} still alive, sending SIGKILL`);
-                  spawn({ cmd: ["kill", "-9", pid], stdout: "inherit", stderr: "inherit" });
-                  await new Promise(resolve => setTimeout(resolve, 100));
+                await killPid(pid, false);
+                await new Promise(r => setTimeout(r, 200));
+                // macOS only: check if still alive then force kill
+                if (!IS_WIN) {
+                  const check = spawn({ cmd: ['kill', '-0', pid], stdout: 'pipe', stderr: 'pipe' });
+                  await check.exited;
+                  if (check.exitCode === 0) await killPid(pid, true);
                 }
-
                 killedPids.push(pid);
               }
-
               console.log(`[Stop] Successfully killed ${killedPids.length} process(es)`);
             } else {
               console.log(`[Stop] No process found on port ${port}`);
@@ -433,28 +450,14 @@ const server = Bun.serve({
           }
         }
 
-        // lsof로 포트를 사용하는 모든 프로세스 강제 종료
+        // 포트를 사용하는 모든 프로세스 강제 종료 (Windows/macOS 공용)
         try {
-          const lsofProc = spawn({
-            cmd: ["lsof", "-ti", `:${port}`],
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-
-          await lsofProc.exited;
-          const output = await new Response(lsofProc.stdout).text();
-          const pids = output.trim().split('\n').filter(p => p.length > 0);
-
+          const pids = await getPidsByPort(port);
           if (pids.length > 0) {
             console.log(`[ForceRestart] Found PIDs on port ${port}:`, pids);
-
-            // 모든 PID를 SIGKILL로 즉시 강제 종료
             for (const pid of pids) {
-              console.log(`[ForceRestart] Force killing PID ${pid}`);
-              spawn({ cmd: ["kill", "-9", pid], stdout: "inherit", stderr: "inherit" });
+              await killPid(pid, true);
             }
-
-            // 프로세스가 완전히 종료될 시간 대기
             await new Promise(resolve => setTimeout(resolve, 500));
             console.log(`[ForceRestart] Successfully killed all processes on port ${port}`);
           } else {
@@ -465,8 +468,12 @@ const server = Bun.serve({
         }
 
         // 2단계: 새로운 프로세스 시작 (파일 경로 vs raw 커맨드 판별)
-        const isFilePath = commandPath.startsWith('/') || commandPath.startsWith('~');
-        const restartCmd = isFilePath ? ["bash", commandPath] : ["bash", "-c", commandPath];
+        const isFilePath = IS_WIN
+          ? /^([A-Za-z]:[\\\/]|\\\\|~)/.test(commandPath)
+          : commandPath.startsWith('/') || commandPath.startsWith('~');
+        const restartCmd = IS_WIN
+          ? ['cmd', '/c', commandPath]
+          : (isFilePath ? ['bash', commandPath] : ['bash', '-c', commandPath]);
         console.log(`[ForceRestart] Starting new process: ${restartCmd.join(' ')}`);
 
         const newProc = spawn({
@@ -517,17 +524,8 @@ const server = Bun.serve({
           );
         }
 
-        // lsof로 포트 상태 확인
-        const lsofProc = spawn({
-          cmd: ["lsof", "-ti", `:${port}`],
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-
-        await lsofProc.exited;
-        const output = await new Response(lsofProc.stdout).text();
-        const pids = output.trim().split('\n').filter(p => p.length > 0);
-
+        // 포트 상태 확인 (Windows/macOS 공용)
+        const pids = await getPidsByPort(port);
         const isRunning = pids.length > 0;
 
         console.log(`[CheckPortStatus] Port ${port} is ${isRunning ? 'RUNNING' : 'NOT running'}`);
@@ -717,15 +715,26 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/pick-folder" && req.method === "GET") {
       try {
-        const proc = Bun.spawn({
-          cmd: ["osascript", "-e", 'POSIX path of (choose folder)'],
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const picked = (await new Response(proc.stdout).text()).trim();
-        await proc.exited;
-        if (proc.exitCode !== 0 || !picked) {
-          return new Response(JSON.stringify({ error: "cancelled" }), { status: 400, headers });
+        let picked = '';
+        if (IS_WIN) {
+          // Windows: PowerShell FolderBrowserDialog
+          const ps = Bun.spawn({
+            cmd: ['powershell', '-NoProfile', '-NonInteractive', '-Command',
+              `Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = '폴더 선택'; if ($f.ShowDialog() -eq 'OK') { Write-Output $f.SelectedPath }`],
+            stdout: 'pipe', stderr: 'pipe',
+          });
+          await ps.exited;
+          picked = (await new Response(ps.stdout).text()).trim();
+        } else {
+          const proc = Bun.spawn({
+            cmd: ['osascript', '-e', 'POSIX path of (choose folder)'],
+            stdout: 'pipe', stderr: 'pipe',
+          });
+          await proc.exited;
+          picked = (await new Response(proc.stdout).text()).trim();
+        }
+        if (!picked) {
+          return new Response(JSON.stringify({ error: 'cancelled' }), { status: 400, headers });
         }
         return new Response(JSON.stringify({ path: picked }), { headers });
       } catch (e) {
@@ -746,15 +755,18 @@ const server = Bun.serve({
           );
         }
 
-        // 절대 경로 확인
-        if (!folderPath.startsWith("/")) {
+        // 절대 경로 확인 (Windows: C:\... or \\..., macOS: /...)
+        const isAbsolute = IS_WIN
+          ? /^([A-Za-z]:[\\\/]|\\\\)/.test(folderPath)
+          : folderPath.startsWith('/');
+        if (!isAbsolute) {
           return new Response(
             JSON.stringify({ error: `절대 경로가 필요합니다: "${folderPath}"` }),
             { status: 400, headers }
           );
         }
 
-        // 경로 존재 여부 확인 (파일/디렉토리 모두 지원)
+        // 경로 존재 여부 확인
         if (!existsSync(folderPath)) {
           return new Response(
             JSON.stringify({ error: `폴더를 찾을 수 없습니다: "${folderPath}"` }),
@@ -762,12 +774,7 @@ const server = Bun.serve({
           );
         }
 
-        // macOS에서 폴더 열기
-        spawn({
-          cmd: ["open", folderPath],
-          stdout: "inherit",
-          stderr: "inherit",
-        });
+        openPath(folderPath);
 
         return new Response(
           JSON.stringify({
@@ -788,27 +795,39 @@ const server = Bun.serve({
       }
     }
 
+    // ── Terminal/tmux helper (Windows: wt.exe or cmd, macOS: iTerm) ─────────
+    function openTerminalWithCmd(shellCmd: string, folderPath: string | null, title: string): void {
+      if (IS_WIN) {
+        // Windows Terminal 우선, 없으면 cmd 폴백
+        const wtArgs = folderPath
+          ? ['wt.exe', '-d', folderPath, '--title', title, '--', 'cmd', '/k', shellCmd]
+          : ['wt.exe', '--title', title, '--', 'cmd', '/k', shellCmd];
+        const wt = Bun.spawnSync(['where', 'wt.exe'], { stdout: 'pipe', stderr: 'pipe' });
+        if (wt.exitCode === 0) {
+          spawn({ cmd: wtArgs, stdout: 'inherit', stderr: 'inherit' });
+        } else {
+          // fallback: start cmd
+          const cdPart = folderPath ? `cd /d "${folderPath}" && ` : '';
+          spawn({ cmd: ['cmd', '/c', 'start', `"${title}"`, 'cmd', '/k', `${cdPart}${shellCmd}`],
+            stdout: 'inherit', stderr: 'inherit' });
+        }
+      } else {
+        const escCmd = shellCmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const escTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const cdPart = folderPath ? `write text "cd '${escapeSq(folderPath)}'"\n    ` : '';
+        const script = `tell application "iTerm"\n  activate\n  set w to create window with default profile\n  tell current session of w\n    ${cdPart}write text "${escCmd}"\n    delay 0.3\n    set name to "${escTitle}"\n  end tell\nend tell`;
+        spawn({ cmd: ['osascript', '-e', script], stdout: 'inherit', stderr: 'inherit' });
+      }
+    }
+
     if (url.pathname === "/api/open-tmux-claude" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
-
-        const escSession = escapeSq(sessionName);
-        const escFolder = folderPath ? escapeSq(folderPath) : null;
-        const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const title = `[tmux] ${escapedSessionName}`;
-        const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
-        const cmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`
-          : `printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`;
-
-        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
-
-        return new Response(
-          JSON.stringify({ success: true, message: `tmux + Claude 실행 중 (세션: ${sessionName})` }),
-          { headers }
-        );
+        const claudeCmd = IS_WIN
+          ? (worktreePath ? `claude -w "${worktreePath}"` : 'claude')
+          : `tmux new-session -A -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
+        openTerminalWithCmd(claudeCmd, folderPath ?? null, `[tmux] ${sessionName}`);
+        return new Response(JSON.stringify({ success: true, message: `Claude 실행 중 (세션: ${sessionName})` }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
@@ -817,23 +836,11 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude-fresh" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
-        const escSession = escapeSq(sessionName);
-        const escFolder = folderPath ? escapeSq(folderPath) : null;
-        const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const title = `[tmux-fresh] ${escapedSessionName}`;
-        const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
-        const killCmd = `tmux kill-session -t '${escSession}' 2>/dev/null || true`;
-        const newCmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' '${claudeCmd}'`
-          : `printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' '${claudeCmd}'`;
-        const cmd = `${killCmd}; ${newCmd}`;
-        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
-        return new Response(
-          JSON.stringify({ success: true, message: `tmux 새 세션 시작 (세션: ${sessionName})` }),
-          { headers }
-        );
+        const claudeCmd = IS_WIN
+          ? (worktreePath ? `claude -w "${worktreePath}"` : 'claude')
+          : `tmux kill-session -t '${escapeSq(sessionName)}' 2>/dev/null; tmux new-session -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
+        openTerminalWithCmd(claudeCmd, folderPath ?? null, `[fresh] ${sessionName}`);
+        return new Response(JSON.stringify({ success: true, message: `Claude 새 세션 시작 (${sessionName})` }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
@@ -842,64 +849,25 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude-bypass" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
-
-        const escSession = escapeSq(sessionName);
-        const escFolder = folderPath ? escapeSq(folderPath) : null;
-        const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const title = `[tmux-bypass] ${escapedSessionName}`;
-        const claudeCmd = worktreePath
-          ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`
-          : 'claude --dangerously-skip-permissions';
-        const cmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' '${claudeCmd}'`
-          : `printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' '${claudeCmd}'`;
-
-        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
-
-        return new Response(
-          JSON.stringify({ success: true, message: `tmux + Claude (bypass) 실행 중 (세션: ${sessionName}-bypass)` }),
-          { headers }
-        );
+        const claudeCmd = IS_WIN
+          ? (worktreePath ? `claude --dangerously-skip-permissions -w "${worktreePath}"` : 'claude --dangerously-skip-permissions')
+          : `tmux new-session -A -s '${escapeSq(sessionName)}-bypass' '${worktreePath ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'` : 'claude --dangerously-skip-permissions'}'`;
+        openTerminalWithCmd(claudeCmd, folderPath ?? null, `[bypass] ${sessionName}`);
+        return new Response(JSON.stringify({ success: true, message: `Claude bypass 실행 중 (${sessionName})` }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
     }
 
-    // 카테고리 최신화: iTerm 새 창 열기 + 자동 프롬프트 전송
     if (url.pathname === "/api/run-claude-with-prompt" && req.method === "POST") {
       try {
         const { folderPath, prompt } = await req.json();
-
-        // Escape for AppleScript double-quoted string
-        const escAS = (s: string) => s
-          .replace(/\\/g, '\\\\')
-          .replace(/"/g, '\\"')
-          .replace(/\n/g, ' ');  // newlines → spaces (single-line input to Claude)
-
-        const escapedFolder = folderPath ? escAS(escapeSq(folderPath)) : null;
-        const escapedPrompt = escAS(prompt as string);
-
-        const lines: string[] = [];
-        if (escapedFolder) lines.push(`write text "cd \\"${escapedFolder}\\""`);
-        lines.push(`write text "claude"`);
-        lines.push(`delay 4`);
-        lines.push(`write text "${escapedPrompt}"`);
-
-        const script = `tell application "iTerm"
-  activate
-  set newWindow to create window with default profile
-  tell current session of newWindow
-    ${lines.join('\n    ')}
-  end tell
-end tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
-
-        return new Response(
-          JSON.stringify({ success: true, message: "Claude 실행 + 프롬프트 자동 전송" }),
-          { headers }
-        );
+        openTerminalWithCmd('claude', folderPath ?? null, 'Claude');
+        // Windows: prompt auto-send not supported via wt.exe (no stdin injection)
+        const msg = IS_WIN
+          ? 'Claude 실행됨 (Windows — 프롬프트 자동 전송 불가, 직접 입력하세요)'
+          : 'Claude 실행 + 프롬프트 자동 전송';
+        return new Response(JSON.stringify({ success: true, message: msg }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
@@ -908,15 +876,11 @@ end tell`;
     if (url.pathname === "/api/open-terminal-claude" && req.method === "POST") {
       try {
         const { folderPath, name, worktreePath } = await req.json();
-        const escapedName = (name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
-        const cmd = folderPath
-          ? `cd '${escapeSq(folderPath)}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
-          : `printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`;
-        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escapedName}"\n  end tell\nend tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
-        return new Response(JSON.stringify({ success: true, message: "Terminal에서 Claude 실행" }), { headers });
+        const claudeCmd = worktreePath
+          ? (IS_WIN ? `claude -w "${worktreePath}"` : `claude -w '${escapeSq(worktreePath)}'`)
+          : 'claude';
+        openTerminalWithCmd(claudeCmd, folderPath ?? null, name || 'Claude');
+        return new Response(JSON.stringify({ success: true, message: 'Terminal에서 Claude 실행' }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
@@ -925,17 +889,11 @@ end tell`;
     if (url.pathname === "/api/open-terminal-claude-bypass" && req.method === "POST") {
       try {
         const { folderPath, name, worktreePath } = await req.json();
-        const escapedName = `[bypass] ${(name || 'Claude').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}`;
         const claudeCmd = worktreePath
-          ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`
+          ? (IS_WIN ? `claude --dangerously-skip-permissions -w "${worktreePath}"` : `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`)
           : 'claude --dangerously-skip-permissions';
-        const cmd = folderPath
-          ? `cd '${escapeSq(folderPath)}' && printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`
-          : `printf '\\033]0;${escapedName}\\007' && ${claudeCmd}`;
-        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escapedName}"\n  end tell\nend tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
-        return new Response(JSON.stringify({ success: true, message: "Terminal에서 Claude (bypass) 실행" }), { headers });
+        openTerminalWithCmd(claudeCmd, folderPath ?? null, `[bypass] ${name || 'Claude'}`);
+        return new Response(JSON.stringify({ success: true, message: 'Terminal에서 Claude (bypass) 실행' }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
@@ -1507,7 +1465,6 @@ Analyze this project and reply with JSON only (no markdown, no explanation):
           "/opt/homebrew/bin/supabase",
           "/usr/local/bin/supabase",
         ];
-
         let cliPath = "";
         for (const p of candidatePaths) {
           if (p && existsSync(p)) { cliPath = p; break; }
@@ -1527,7 +1484,10 @@ Analyze this project and reply with JSON only (no markdown, no explanation):
         }
 
         if (!cliPath) {
-          return new Response(JSON.stringify({ installed: false }), { headers });
+          const loginCmd = isWin
+            ? "bun install -g supabase  # 설치 후: supabase login"
+            : "brew install supabase/tap/supabase  # 설치 후: supabase login";
+          return new Response(JSON.stringify({ installed: false, loginCmd }), { headers });
         }
 
         const extraPath = isWin
@@ -1543,7 +1503,10 @@ Analyze this project and reply with JSON only (no markdown, no explanation):
         const err = await new Response(proc.stderr).text();
 
         if (proc.exitCode !== 0 || /not logged in|unauthorized|login/i.test(out + err)) {
-          return new Response(JSON.stringify({ installed: true, loggedIn: false, cliPath }), { headers });
+          return new Response(JSON.stringify({
+            installed: true, loggedIn: false, cliPath,
+            loginCmd: `${cliPath} login`,
+          }), { headers });
         }
 
         // parse table rows: LINKED | ORG ID | REFERENCE ID | NAME | REGION | CREATED AT
@@ -1597,7 +1560,7 @@ Analyze this project and reply with JSON only (no markdown, no explanation):
           return new Response(JSON.stringify({ error: "no_token" }), { status: 401, headers });
         }
 
-        // supabase CLI on macOS stores token as "go-keyring-base64:<base64>" in Keychain
+        // macOS Keychain base64 encoding
         if (token.startsWith("go-keyring-base64:")) {
           token = Buffer.from(token.slice("go-keyring-base64:".length), "base64").toString("utf-8").trim();
         }

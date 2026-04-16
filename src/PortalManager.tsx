@@ -595,9 +595,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     })();
   }, []);
 
-  // Open settings modal when parent triggers it
+  // Open settings modal when parent triggers it — reload fresh data each time
   useEffect(() => {
     if (openSettings) {
+      PortalAPI.load().then(loaded => {
+        if (loaded.supabaseUrl) setSbUrl(loaded.supabaseUrl);
+        if (loaded.supabaseAnonKey) setSbKey(loaded.supabaseAnonKey);
+        if (loaded.deviceName) setDeviceName(loaded.deviceName);
+      }).catch(() => {});
       setShowSettings(true);
     }
   }, [openSettings]);
@@ -615,7 +620,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         pull: pullFromSupabase,
         exportData,
         importData,
-        openSettings: () => setShowSettings(true),
+        openSettings: () => {
+          PortalAPI.load().then(loaded => {
+            if (loaded.supabaseUrl) setSbUrl(loaded.supabaseUrl);
+            if (loaded.supabaseAnonKey) setSbKey(loaded.supabaseAnonKey);
+            if (loaded.deviceName) setDeviceName(loaded.deviceName);
+          }).catch(() => {});
+          setShowSettings(true);
+        },
       };
     }
   });
@@ -1041,10 +1053,13 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
               const c = getColor(cat.color);
               const count = data.items.filter(i => i.category === cat.id).length;
               return (
-                <button
+                <div
                   key={cat.id}
                   onClick={() => setSelectedCat(cat.id)}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm transition-colors group ${selectedCat === cat.id ? 'bg-zinc-700/50 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'}`}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={e => e.key === 'Enter' && setSelectedCat(cat.id)}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm transition-colors group cursor-pointer ${selectedCat === cat.id ? 'bg-zinc-700/50 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'}`}
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     <span className={`w-2 h-2 rounded-full flex-shrink-0 ${c.dot}`} />
@@ -1059,7 +1074,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
                       <X className="w-3 h-3" />
                     </button>
                   </div>
-                </button>
+                </div>
               );
             })}
           </div>

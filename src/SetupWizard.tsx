@@ -23,11 +23,14 @@ function CliAutoFill({ onFill }: { onFill: (url: string, key: string) => void })
   const [fetching, setFetching] = useState(false);
   const [filled, setFilled] = useState(false);
   const [fetchError, setFetchError] = useState('');
+  const [loginCmd, setLoginCmd] = useState('supabase login');
 
-  useEffect(() => {
+  function loadStatus() {
+    setStatus('loading');
     fetch('/api/supabase-cli/status')
       .then(r => r.json())
       .then(data => {
+        if (data.loginCmd) setLoginCmd(data.loginCmd);
         if (!data.installed) return setStatus('not_installed');
         if (!data.loggedIn) return setStatus('not_logged_in');
         setProjects(data.projects ?? []);
@@ -35,7 +38,9 @@ function CliAutoFill({ onFill }: { onFill: (url: string, key: string) => void })
         setStatus('ready');
       })
       .catch(() => setStatus('error'));
-  }, []);
+  }
+
+  useEffect(() => { loadStatus(); }, []);
 
   async function handleAutoFill() {
     if (!selectedRef) return;
@@ -74,25 +79,34 @@ function CliAutoFill({ onFill }: { onFill: (url: string, key: string) => void })
       )}
 
       {status === 'not_installed' && (
-        <p className="text-xs text-zinc-400">
-          Supabase CLI가 설치되어 있지 않습니다.{' '}
-          <code className="text-violet-300">brew install supabase/tap/supabase</code> 또는 아래에서 직접 입력하세요.
-        </p>
-      )}
-
-      {status === 'not_logged_in' && (
         <div className="space-y-2">
-          <p className="text-xs text-zinc-400">CLI 설치됨, 로그인 필요.</p>
+          <p className="text-xs text-zinc-400">Supabase CLI가 설치되어 있지 않습니다.</p>
           <div className="bg-black/40 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-xs text-emerald-300 flex items-center justify-between">
-            <span>supabase login</span>
-            <button onClick={() => navigator.clipboard.writeText('supabase login')}
+            <span>{loginCmd}</span>
+            <button onClick={() => navigator.clipboard.writeText(loginCmd)}
               className="text-zinc-500 hover:text-zinc-300 transition-colors ml-3">
               <Copy className="w-3 h-3" />
             </button>
           </div>
-          <p className="text-[10px] text-zinc-600">터미널에서 위 명령 실행 후 이 페이지를 새로고침하세요.</p>
-          <button onClick={() => { setStatus('loading'); fetch('/api/supabase-cli/status').then(r=>r.json()).then(d=>{ if(!d.installed) setStatus('not_installed'); else if(!d.loggedIn) setStatus('not_logged_in'); else { setProjects(d.projects??[]); if(d.projects?.length===1) setSelectedRef(d.projects[0].ref); setStatus('ready'); }}); }}
-            className="text-[11px] text-violet-400 hover:text-violet-300 transition-colors underline">
+          <p className="text-[10px] text-zinc-600">터미널에서 위 명령 실행 후 아래 버튼을 누르세요.</p>
+          <button onClick={loadStatus} className="text-[11px] text-violet-400 hover:text-violet-300 transition-colors underline">
+            상태 다시 확인
+          </button>
+        </div>
+      )}
+
+      {status === 'not_logged_in' && (
+        <div className="space-y-2">
+          <p className="text-xs text-zinc-400">CLI 설치됨, 로그인이 필요합니다.</p>
+          <div className="bg-black/40 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-xs text-emerald-300 flex items-center justify-between">
+            <span>{loginCmd}</span>
+            <button onClick={() => navigator.clipboard.writeText(loginCmd)}
+              className="text-zinc-500 hover:text-zinc-300 transition-colors ml-3">
+              <Copy className="w-3 h-3" />
+            </button>
+          </div>
+          <p className="text-[10px] text-zinc-600">터미널에서 위 명령 실행 후 아래 버튼을 누르세요.</p>
+          <button onClick={loadStatus} className="text-[11px] text-violet-400 hover:text-violet-300 transition-colors underline">
             상태 다시 확인
           </button>
         </div>
