@@ -63,6 +63,19 @@ API 서버(포트 3001) + 개발 서버(포트 9000) 동시 시작.
 실행.command   ← Finder에서 더블클릭
 ```
 
+**Windows 간편 실행 (더블클릭)**
+```
+실행.bat   ← 탐색기에서 더블클릭
+```
+또는 PowerShell에서:
+```powershell
+cd portmanagement
+bun run start
+```
+
+> ⚠️ Windows에서 `bun run start` 실행 시 방화벽 허용 팝업이 뜨면 **허용** 선택하세요.  
+> 브라우저에서 **http://localhost:9000** 을 엽니다.
+
 ---
 
 ### Step 4. DB 구축 (Supabase — 여러 기기 동기화 시)
@@ -151,7 +164,9 @@ bun add-command.ts /경로/실행.command "프로젝트 이름"
 
 ---
 
-## 빌드 (macOS 배포)
+## 빌드
+
+### macOS 배포
 
 ```bash
 bun run tauri:build      # .app 번들
@@ -159,6 +174,33 @@ bun run tauri:build:dmg  # DMG 배포 패키지
 ```
 
 > 빌드 버전은 마지막 git 커밋 날짜 기준으로 자동 생성됩니다.
+
+### Windows 배포
+
+**사전 준비:**
+```powershell
+# Rust 설치 (https://rustup.rs)
+winget install Rustlang.Rustup
+
+# Visual Studio C++ Build Tools 설치
+winget install Microsoft.VisualStudio.2022.BuildTools
+
+# WebView2 런타임 (Windows 11은 기본 내장)
+# Windows 10: https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+```
+
+**빌드:**
+```powershell
+bun run tauri:build:windows   # .msi + .exe 설치 패키지
+```
+
+빌드 결과물:
+```
+src-tauri\target\release\bundle\msi\포트관리기_x.x.x_x64_en-US.msi
+src-tauri\target\release\bundle\nsis\포트관리기_x.x.x_x64-setup.exe
+```
+
+> ⚠️ Windows 빌드는 Windows 환경에서 직접 실행해야 합니다 (크로스 컴파일 미지원).
 
 ---
 
@@ -177,10 +219,34 @@ bun run tauri:build:dmg  # DMG 배포 패키지
 
 ## 데이터 저장 위치
 
+**macOS**
 ```
 ~/Library/Application Support/com.portmanager.portmanager/ports.json
 ~/Library/Application Support/com.portmanager.portmanager/logs/{portId}.log
 ```
+
+**Windows**
+```
+%APPDATA%\com.portmanager.portmanager\ports.json
+%APPDATA%\com.portmanager.portmanager\logs\{portId}.log
+```
+탐색기 주소창에 `%APPDATA%\com.portmanager.portmanager` 입력으로 바로 이동 가능.
+
+---
+
+## Windows 사용 시 주의사항
+
+| 항목 | macOS | Windows |
+|---|---|---|
+| 간편 실행 | `실행.command` 더블클릭 | `실행.bat` 더블클릭 |
+| 포트 상태 감지 | `lsof` 기반 | `netstat` 기반 (자동 처리) |
+| 프로세스 강제 종료 | `SIGKILL` | `taskkill /F` (자동 처리) |
+| `.command` 파일 | ✅ 지원 | ❌ `.bat` 또는 `.ps1` 파일 사용 |
+| iTerm 연동 (카테고리 최신화 등) | ✅ | ❌ Windows Terminal 미지원 |
+| Tauri 앱 빌드 | `.app` / `.dmg` | `.msi` / `.exe` |
+| 데이터 경로 | `~/Library/...` | `%APPDATA%\...` |
+
+> 💡 **Windows에서 실행 파일 등록**: UI에서 포트 추가 시 `.command` 대신 `.bat` 또는 `.ps1` 파일을 등록하세요.
 
 ---
 
