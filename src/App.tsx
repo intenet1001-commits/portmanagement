@@ -875,7 +875,7 @@ function App() {
                   .from('workspace_roots').select('*').eq('device_id', deviceId);
                 if (rootData && rootData.length > 0) {
                   const restoredRoots: WorkspaceRoot[] = rootData
-                    .filter((r: any) => r.path !== '__device__')
+                    .filter((r: any) => !r.path?.startsWith('__device__'))
                     .map((r: any) => ({ id: r.id, name: r.name, path: r.path }));
                   setWorkspaceRoots(restoredRoots);
                   await API.saveWorkspaceRoots(restoredRoots);
@@ -1504,7 +1504,7 @@ function App() {
         }));
         // 기기명 sentinel 행 — 스키마 변경 없이 device_name을 Supabase에 저장
         if (deviceNameVal) {
-          rootRows.push({ id: `__device__${deviceId}`, device_id: deviceId, name: deviceNameVal, path: '__device__' });
+          rootRows.push({ id: `__device__${deviceId}`, device_id: deviceId, name: deviceNameVal, path: `__device__${deviceId}` });
         }
         if (rootRows.length > 0) {
           const { error: rootError } = await supabase.from('workspace_roots').upsert(rootRows, { onConflict: 'id' });

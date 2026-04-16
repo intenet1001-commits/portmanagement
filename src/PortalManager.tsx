@@ -929,7 +929,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         if (!r.device_id || r.device_id === '__shared__') continue;
         seen.add(r.device_id);
         // sentinel 행: Push 시 저장한 기기명 (최우선)
-        if (r.path === '__device__' && r.name) {
+        if (r.path?.startsWith('__device__') && r.name) {
           nameMap.set(r.device_id, r.name);
         } else if (!nameMap.has(r.device_id) && r.path) {
           const m = r.path.match(/^\/(?:Users|home)\/([^/]+)\//);
