@@ -300,14 +300,9 @@ scoop install supabase
 # 방법 2: npm
 npm install -g supabase`;
 
-  const createProjectCmd = `# 1. Org ID 확인
-supabase orgs list
-
-# 2. 프로젝트 생성 (org-id는 위 결과에서 복사)
-supabase projects create portmanagement \\
-  --org-id <YOUR_ORG_ID> \\
-  --db-password <원하는_비밀번호> \\
-  --region ap-northeast-1`;
+  const createProjectCmd = os === 'mac'
+    ? `# 1. Org ID 확인\nsupabase orgs list\n\n# 2. 프로젝트 생성\nsupabase projects create portmanagement \\\n  --org-id <YOUR_ORG_ID> \\\n  --db-password <원하는_비밀번호> \\\n  --region ap-northeast-1`
+    : `# 1. Org ID 확인\nsupabase orgs list\n\n# 2. 프로젝트 생성 (PowerShell — 백틱으로 줄 이음)\nsupabase projects create portmanagement \`\n  --org-id <YOUR_ORG_ID> \`\n  --db-password <원하는_비밀번호> \`\n  --region ap-northeast-1`;
 
   const stepContent = [
     // 0: 가입
@@ -351,10 +346,19 @@ supabase projects create portmanagement \\
       )}
       {os === 'windows' && (
         <>
-          <CodeBlock label="방법 1: Scoop (권장)" code={`scoop bucket add supabase https://github.com/supabase/scoop-bucket.git\nscoop install supabase`} />
-          <CodeBlock label="방법 2: Scoop 없는 경우" code={`powershell -c "irm https://github.com/supabase/cli/releases/latest/download/supabase_windows_amd64.zip -OutFile supabase.zip"\nExpand-Archive supabase.zip\nmove supabase\\supabase.exe C:\\Windows\\System32\\`} comment="PowerShell 관리자 권한으로 실행" />
+          <InfoBox color="blue">
+            <p className="text-xs font-semibold mb-2">① Scoop 패키지 매니저 설치 (없는 경우)</p>
+            <p className="text-xs text-blue-200 mb-2">PowerShell을 <strong>관리자 권한</strong>으로 열고 실행:</p>
+            <div className="bg-black/40 rounded px-3 py-2 font-mono text-xs text-emerald-300 flex items-center justify-between">
+              <span>Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force; irm get.scoop.sh | iex</span>
+              <button onClick={() => navigator.clipboard.writeText('Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force; irm get.scoop.sh | iex')} className="text-zinc-500 hover:text-zinc-300 ml-2 shrink-0"><Copy className="w-3 h-3" /></button>
+            </div>
+            <p className="text-[10px] text-blue-300 mt-1">설치 후 새 PowerShell 창을 열어야 <code>scoop</code>이 인식됩니다.</p>
+          </InfoBox>
+          <CodeBlock label="② Supabase CLI 설치 (Scoop)" code={`scoop bucket add supabase https://github.com/supabase/scoop-bucket.git\nscoop install supabase`} />
+          <CodeBlock label="또는: Scoop 없이 직접 설치" code={`irm https://github.com/supabase/cli/releases/latest/download/supabase_windows_amd64.zip -OutFile supabase.zip\nExpand-Archive supabase.zip -DestinationPath supabase-cli\nMove-Item supabase-cli\\supabase.exe C:\\Windows\\System32\\`} comment="PowerShell 관리자 권한으로 실행" />
           <InfoBox color="amber">
-            <p className="text-xs">⚠️ Windows: Scoop 설치 후 <strong>새 터미널 창</strong>을 열어야 명령이 인식됩니다.</p>
+            <p className="text-xs">⚠️ 설치 후 반드시 <strong>새 PowerShell 창</strong>을 열어야 명령이 인식됩니다.</p>
           </InfoBox>
         </>
       )}
@@ -409,10 +413,28 @@ supabase projects create portmanagement \\
     // 4: 테이블 생성
     <div key={4} className="space-y-4">
       <p className="text-zinc-400 text-sm">마이그레이션 파일을 만들고 DB에 적용합니다.</p>
-      <CodeBlock label="1. 마이그레이션 파일 생성" code="supabase migration new init_portmanagement" comment="supabase/migrations/ 폴더에 파일 생성됨" />
-      <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-3 text-xs text-zinc-400 space-y-1">
+      <OsToggle os={os} onChange={setOs} />
+      <CodeBlock label="1. 마이그레이션 파일 생성" code="supabase migration new init_portmanagement" comment="portmanagement 폴더 내 supabase/migrations/ 에 파일 생성됨" />
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-3 text-xs text-zinc-400 space-y-2">
         <p>생성된 파일을 열고 아래 SQL을 붙여넣기:</p>
-        <p className="text-zinc-600">경로: <code className="text-zinc-400">supabase/migrations/[타임스탬프]_init_portmanagement.sql</code></p>
+        <p className="text-zinc-600">
+          경로:{' '}
+          <code className="text-zinc-400">
+            {os === 'mac'
+              ? 'supabase/migrations/[타임스탬프]_init_portmanagement.sql'
+              : 'supabase\\migrations\\[타임스탬프]_init_portmanagement.sql'}
+          </code>
+        </p>
+        {os === 'windows' && (
+          <div className="pt-1 space-y-1">
+            <p className="text-zinc-500">파일 열기 (PowerShell):</p>
+            <div className="bg-black/40 rounded px-3 py-1.5 font-mono text-xs text-emerald-300 flex items-center justify-between">
+              <span>{'notepad (Get-ChildItem supabase\\migrations\\*.sql | Select-Object -Last 1).FullName'}</span>
+              <button onClick={() => navigator.clipboard.writeText('notepad (Get-ChildItem supabase\\migrations\\*.sql | Select-Object -Last 1).FullName')} className="text-zinc-500 hover:text-zinc-300 ml-2 shrink-0"><Copy className="w-3 h-3" /></button>
+            </div>
+            <p className="text-[10px] text-zinc-600">또는 VS Code: <code className="text-zinc-400">code .</code> 로 폴더 열기</p>
+          </div>
+        )}
       </div>
       <CodeBlock label="2. SQL 내용 (파일에 붙여넣기)" code={MIGRATION_SQL} />
       <CodeBlock label="3. DB에 적용" code="supabase db push" comment="완료 시 'Finished supabase db push' 출력" />
