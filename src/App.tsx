@@ -838,7 +838,12 @@ function App() {
               const supabase = getSupabaseClient(portalData.supabaseUrl, portalData.supabaseAnonKey);
               let portsQuery = supabase.from('ports').select('*');
               if (portalData.deviceId) portsQuery = portsQuery.eq('device_id', portalData.deviceId);
-              const { data: remoteData, error } = await withTimeout(portsQuery, 10_000);
+              let { data: remoteData, error } = await withTimeout(portsQuery, 10_000);
+              // device_id 필터 결과 없으면 전체 재시도 (마이그레이션 전 호환)
+              if (!error && (!remoteData || remoteData.length === 0) && portalData.deviceId) {
+                const retry = await withTimeout(supabase.from('ports').select('*'), 10_000);
+                if (!retry.error && retry.data && retry.data.length > 0) remoteData = retry.data;
+              }
               if (!error && remoteData && remoteData.length > 0) {
                 const remoteRows: PortInfo[] = remoteData.map((row: any) => ({
                   id: row.id,
@@ -1367,12 +1372,11 @@ function App() {
       if (pullDeviceId) portsQuery = portsQuery.eq('device_id', pullDeviceId);
       let { data, error } = await withTimeout(portsQuery, 30_000);
 
-      // device_id 컬럼 없으면(마이그레이션 전) 필터 없이 재시도
-      if (error?.message?.includes('device_id')) {
+      // device_id 필터 결과가 비어있으면(컬럼 없거나 해당 기기 데이터 없음) 전체 재시도
+      if (!error && (!data || data.length === 0) && pullDeviceId) {
         const retry = await withTimeout(supabase.from('ports').select('*'), 30_000);
         data = retry.data;
         error = retry.error;
-        if (!error) showToast('⚠ ports 테이블에 device_id 컬럼이 없습니다. 설정 → 초기 설정 가이드의 마이그레이션 SQL을 실행하세요.', 'error');
       }
 
       if (error) throw new Error(error.message);
