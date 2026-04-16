@@ -538,16 +538,49 @@ const mergePorts = (local: PortInfo[], remote: PortInfo[]): PortInfo[] => {
   const merged = local.map(p => {
     const r = remoteById.get(p.id);
     if (!r) return p;
-    // Remote wins for all synced fields, EXCEPT:
-    //   - isRunning: always local (live process state)
-    //   - aiName: local wins if remote has none (Supabase `ports` table
-    //     lacks an ai_name column, so remote always carries undefined;
-    //     this preserves the device-local AI alias across Pull)
     return { ...p, ...r, isRunning: p.isRunning, aiName: r.aiName ?? p.aiName };
   });
   const localIds = new Set(local.map(p => p.id));
   const newFromRemote = remote.filter(p => !localIds.has(p.id));
   return [...merged, ...newFromRemote];
+};
+
+// 다른 기기 Pull 전용 병합: name 기준으로 매칭, 새 항목만 새 ID로 추가
+// 경로(folderPath, commandPath)는 기기마다 다르므로 기존 로컬 것 유지
+const mergePortsFromOtherDevice = (local: PortInfo[], remote: PortInfo[]): PortInfo[] => {
+  const result = new Map(local.map(p => [p.id, p]));
+  const localByName = new Map(local.map(p => [p.name?.toLowerCase(), p.id]));
+
+  for (const r of remote) {
+    const key = r.name?.toLowerCase();
+    if (!key) continue;
+    const existingId = localByName.get(key);
+    if (existingId) {
+      // 이미 있는 프로젝트 → 공유 메타만 업데이트, 경로는 로컬 유지
+      const existing = result.get(existingId)!;
+      result.set(existingId, {
+        ...existing,
+        port: r.port ?? existing.port,
+        deployUrl: r.deployUrl ?? existing.deployUrl,
+        githubUrl: r.githubUrl ?? existing.githubUrl,
+        description: r.description ?? existing.description,
+        category: r.category ?? existing.category,
+      });
+    } else {
+      // 새 프로젝트 → 새 ID 발급, 경로는 비워둠 (이 기기에서 직접 설정 필요)
+      const newId = crypto.randomUUID();
+      const newPort: PortInfo = {
+        ...r,
+        id: newId,
+        folderPath: undefined,
+        commandPath: undefined,
+        isRunning: false,
+      };
+      result.set(newId, newPort);
+      localByName.set(key, newId);
+    }
+  }
+  return Array.from(result.values());
 };
 
 // Supabase client cache — one instance per credential pair (Fix P2b)
@@ -1403,7 +1436,11 @@ function App() {
         isRunning: false,
       }));
 
-      const merged = mergePorts(ports, remoteRows);
+      // 다른 기기 Pull → name 기준 병합 + 새 ID 발급 (ID 충돌 방지)
+      // 내 기기 Pull → ID 기준 병합 (기존 동작 유지)
+      const merged = isOtherDevice
+        ? mergePortsFromOtherDevice(ports, remoteRows)
+        : mergePorts(ports, remoteRows);
       setPorts(merged);
       await API.savePorts(merged);
 
