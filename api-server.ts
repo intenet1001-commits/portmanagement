@@ -1455,6 +1455,96 @@ Analyze this project and reply with JSON only (no markdown, no explanation):
       }
     }
 
+    // ── Supabase CLI helpers ──────────────────────────────────────────────────
+    if (url.pathname === "/api/supabase-cli/status" && req.method === "GET") {
+      try {
+        const candidatePaths = [
+          `${process.env.HOME}/.local/bin/supabase`,
+          "/opt/homebrew/bin/supabase",
+          "/usr/local/bin/supabase",
+        ];
+        let cliPath = "";
+        for (const p of candidatePaths) {
+          if (existsSync(p)) { cliPath = p; break; }
+        }
+        // also try PATH-resolved supabase
+        if (!cliPath) {
+          const w = Bun.spawn(["which", "supabase"], { stdout: "pipe", stderr: "pipe" });
+          await w.exited;
+          if (w.exitCode === 0) cliPath = (await new Response(w.stdout).text()).trim();
+        }
+        if (!cliPath) {
+          return new Response(JSON.stringify({ installed: false }), { headers });
+        }
+
+        const proc = Bun.spawn([cliPath, "projects", "list"], {
+          stdout: "pipe", stderr: "pipe",
+          env: { ...process.env, PATH: `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:${process.env.HOME}/.local/bin:${process.env.PATH ?? ""}` },
+        });
+        await proc.exited;
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+
+        if (proc.exitCode !== 0 || /not logged in|unauthorized/i.test(out + err)) {
+          return new Response(JSON.stringify({ installed: true, loggedIn: false, cliPath }), { headers });
+        }
+
+        // parse table rows: LINKED | ORG ID | REFERENCE ID | NAME | REGION | CREATED AT
+        const projects = out.split("\n")
+          .filter(l => l.includes("|") && !l.includes("REFERENCE ID") && !l.includes("------"))
+          .map(line => {
+            const parts = line.split("|").map(p => p.trim());
+            return { ref: parts[2], name: parts[3], region: parts[4] };
+          })
+          .filter(p => p.ref && p.name);
+
+        return new Response(JSON.stringify({ installed: true, loggedIn: true, projects, cliPath }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ installed: false, error: e.message }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/supabase-cli/apikeys" && req.method === "GET") {
+      const ref = url.searchParams.get("ref");
+      if (!ref) return new Response(JSON.stringify({ error: "ref required" }), { status: 400, headers });
+      try {
+        // 1) Try macOS Keychain (supabase CLI stores token there after `supabase login`)
+        let token = "";
+        const kc = Bun.spawn(["security", "find-generic-password", "-s", "Supabase CLI", "-a", "supabase", "-w"], {
+          stdout: "pipe", stderr: "pipe",
+        });
+        await kc.exited;
+        if (kc.exitCode === 0) token = (await new Response(kc.stdout).text()).trim();
+
+        // 2) Fallback: file-based token
+        if (!token) {
+          const tokenFile = Bun.file(`${process.env.HOME}/.supabase/access-token`);
+          if (await tokenFile.exists()) token = (await tokenFile.text()).trim();
+        }
+
+        if (!token) {
+          return new Response(JSON.stringify({ error: "no_token" }), { status: 401, headers });
+        }
+
+        // supabase CLI on macOS stores token as "go-keyring-base64:<base64>" in Keychain
+        if (token.startsWith("go-keyring-base64:")) {
+          token = Buffer.from(token.slice("go-keyring-base64:".length), "base64").toString("utf-8").trim();
+        }
+
+        const res = await fetch(`https://api.supabase.com/v1/projects/${ref}/api-keys`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) {
+          return new Response(JSON.stringify({ error: "api_error", status: res.status }), { status: res.status, headers });
+        }
+        const keys = await res.json() as Array<{ name: string; api_key: string }>;
+        const anonKey = keys.find(k => k.name === "anon")?.api_key ?? "";
+        return new Response(JSON.stringify({ anonKey, projectUrl: `https://${ref}.supabase.co` }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
     return new Response(JSON.stringify({ error: "Not found" }), {
       status: 404,
       headers,

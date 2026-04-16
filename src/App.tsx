@@ -1344,14 +1344,12 @@ function App() {
     if (isRestoring) return;
     setIsRestoring(true);
     try {
-      // portal.json에서 Supabase 자격 증명 로드
       let portalData: any;
       if (isTauri()) {
         portalData = await invoke('load_portal');
       } else {
         portalData = await getPortalCredentials();
       }
-      // Keep portalConfigRef in sync so auto-push fires after credentials are set
       if (portalData?.supabaseUrl) portalConfigRef.current = portalData;
 
       const { supabaseUrl, supabaseAnonKey } = portalData ?? {};
@@ -1361,23 +1359,28 @@ function App() {
       }
 
       const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
-      const deviceId = portalData?.deviceId ?? null;
+      // 설정의 "다른 기기 보기"가 선택돼 있으면 그 기기 기준으로 Pull
+      const pullDeviceId = portalData?.viewingDeviceId || portalData?.deviceId || null;
+      const isOtherDevice = portalData?.viewingDeviceId && portalData.viewingDeviceId !== portalData?.deviceId;
 
-      // 30s timeout — manual pull
-      // Step 5: filter by device_id so each device only restores its own ports
       let portsQuery = supabase.from('ports').select('*');
-      if (deviceId) portsQuery = portsQuery.eq('device_id', deviceId);
-      const { data, error } = await withTimeout(
-        portsQuery,
-        30_000
-      );
+      if (pullDeviceId) portsQuery = portsQuery.eq('device_id', pullDeviceId);
+      let { data, error } = await withTimeout(portsQuery, 30_000);
+
+      // device_id 컬럼 없으면(마이그레이션 전) 필터 없이 재시도
+      if (error?.message?.includes('device_id')) {
+        const retry = await withTimeout(supabase.from('ports').select('*'), 30_000);
+        data = retry.data;
+        error = retry.error;
+        if (!error) showToast('⚠ ports 테이블에 device_id 컬럼이 없습니다. 설정 → 초기 설정 가이드의 마이그레이션 SQL을 실행하세요.', 'error');
+      }
+
       if (error) throw new Error(error.message);
       if (!data || data.length === 0) {
         showToast('Supabase에 저장된 포트가 없습니다', 'error');
         return;
       }
 
-      // snake_case → camelCase 매핑
       const remoteRows: PortInfo[] = data.map((row: any) => ({
         id: row.id,
         name: row.name,
@@ -1393,28 +1396,30 @@ function App() {
         isRunning: false,
       }));
 
-      // Model B merge: remote wins for known IDs, local-only rows survive
       const merged = mergePorts(ports, remoteRows);
       setPorts(merged);
       await API.savePorts(merged);
 
-      // workspace_roots 복원 (Fix #7: disk에도 저장, 빈 결과면 덮어쓰기 방지)
-      // deviceId already declared above (used for ports query scope)
       let rootsMsg = '';
-      if (deviceId) {
-        const { data: rootData } = await supabase
-          .from('workspace_roots').select('*').eq('device_id', deviceId);
+      if (pullDeviceId) {
+        let { data: rootData } = await supabase
+          .from('workspace_roots').select('*').eq('device_id', pullDeviceId);
+        // pullDeviceId로 결과 없으면 전체에서 가져오기 (다른 기기 데이터)
+        if (!rootData || rootData.length === 0) {
+          const fallback = await supabase.from('workspace_roots').select('*');
+          if (fallback.data && fallback.data.length > 0) rootData = fallback.data;
+        }
         if (rootData && rootData.length > 0) {
           const restoredRoots: WorkspaceRoot[] = rootData.map((r: any) => ({
             id: r.id, name: r.name, path: r.path,
           }));
           setWorkspaceRoots(restoredRoots);
-          await API.saveWorkspaceRoots(restoredRoots); // Fix #7
+          await API.saveWorkspaceRoots(restoredRoots);
           rootsMsg = ` + ${restoredRoots.length}개 작업루트`;
         }
-        // guard: rootData.length === 0 → skip, keep local roots intact
       }
-      showToast(`Supabase에서 ${merged.length}개 포트${rootsMsg}를 복원했습니다 ✓`, 'success');
+      const label = isOtherDevice ? '[다른 기기] ' : '';
+      showToast(`${label}Supabase에서 ${merged.length}개 포트${rootsMsg}를 복원했습니다 ✓`, 'success');
     } catch (e) {
       showToast('Supabase 복원 실패: ' + e, 'error');
     } finally {

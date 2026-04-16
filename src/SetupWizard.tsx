@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Check, Copy, ChevronRight, Terminal, Database, Server,
-  Globe, ArrowRight, ExternalLink, Laptop, Plus, RefreshCw, Monitor,
+  Globe, ArrowRight, ExternalLink, Laptop, Plus, RefreshCw, Monitor, Zap,
 } from 'lucide-react';
 
 interface SetupWizardProps {
@@ -11,6 +11,124 @@ interface SetupWizardProps {
 
 type Mode = 'choose' | 'first' | 'additional';
 type OS = 'mac' | 'windows';
+
+// ─── CLI Auto-fill Component ──────────────────────────────────────────────────
+
+type CliStatus = 'loading' | 'not_installed' | 'not_logged_in' | 'ready' | 'error';
+
+function CliAutoFill({ onFill }: { onFill: (url: string, key: string) => void }) {
+  const [status, setStatus] = useState<CliStatus>('loading');
+  const [projects, setProjects] = useState<{ ref: string; name: string; region: string }[]>([]);
+  const [selectedRef, setSelectedRef] = useState('');
+  const [fetching, setFetching] = useState(false);
+  const [filled, setFilled] = useState(false);
+  const [fetchError, setFetchError] = useState('');
+
+  useEffect(() => {
+    fetch('/api/supabase-cli/status')
+      .then(r => r.json())
+      .then(data => {
+        if (!data.installed) return setStatus('not_installed');
+        if (!data.loggedIn) return setStatus('not_logged_in');
+        setProjects(data.projects ?? []);
+        if (data.projects?.length === 1) setSelectedRef(data.projects[0].ref);
+        setStatus('ready');
+      })
+      .catch(() => setStatus('error'));
+  }, []);
+
+  async function handleAutoFill() {
+    if (!selectedRef) return;
+    setFetching(true);
+    setFetchError('');
+    try {
+      const res = await fetch(`/api/supabase-cli/apikeys?ref=${selectedRef}`);
+      const data = await res.json();
+      if (data.anonKey) {
+        onFill(data.projectUrl, data.anonKey);
+        setFilled(true);
+      } else {
+        setFetchError(data.error === 'no_token' ? 'CLI 로그인 토큰을 찾을 수 없습니다. supabase login을 실행해주세요.' : 'Anon Key를 가져오지 못했습니다.');
+      }
+    } catch {
+      setFetchError('네트워크 오류');
+    } finally {
+      setFetching(false);
+    }
+  }
+
+  return (
+    <div className={`rounded-xl border p-4 space-y-3 ${
+      filled ? 'bg-green-500/5 border-green-500/30' : 'bg-violet-500/5 border-violet-500/20'
+    }`}>
+      <div className="flex items-center gap-2">
+        <Zap className="w-4 h-4 text-violet-400 shrink-0" />
+        <span className="text-sm font-semibold text-violet-300">CLI 자동 가져오기</span>
+        {status === 'loading' && <RefreshCw className="w-3.5 h-3.5 text-zinc-500 animate-spin ml-auto" />}
+        {status === 'ready' && !filled && <span className="ml-auto text-[10px] text-green-400 font-medium">✓ CLI 인증됨</span>}
+        {filled && <span className="ml-auto text-[10px] text-green-400 font-medium">✓ 자동 입력 완료</span>}
+      </div>
+
+      {status === 'loading' && (
+        <p className="text-xs text-zinc-500">CLI 상태 확인 중…</p>
+      )}
+
+      {status === 'not_installed' && (
+        <p className="text-xs text-zinc-400">
+          Supabase CLI가 설치되어 있지 않습니다.{' '}
+          <code className="text-violet-300">brew install supabase/tap/supabase</code> 또는 아래에서 직접 입력하세요.
+        </p>
+      )}
+
+      {status === 'not_logged_in' && (
+        <div className="space-y-2">
+          <p className="text-xs text-zinc-400">CLI 설치됨, 로그인 필요.</p>
+          <div className="bg-black/40 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-xs text-emerald-300 flex items-center justify-between">
+            <span>supabase login</span>
+            <button onClick={() => navigator.clipboard.writeText('supabase login')}
+              className="text-zinc-500 hover:text-zinc-300 transition-colors ml-3">
+              <Copy className="w-3 h-3" />
+            </button>
+          </div>
+          <p className="text-[10px] text-zinc-600">터미널에서 위 명령 실행 후 이 페이지를 새로고침하세요.</p>
+          <button onClick={() => { setStatus('loading'); fetch('/api/supabase-cli/status').then(r=>r.json()).then(d=>{ if(!d.installed) setStatus('not_installed'); else if(!d.loggedIn) setStatus('not_logged_in'); else { setProjects(d.projects??[]); if(d.projects?.length===1) setSelectedRef(d.projects[0].ref); setStatus('ready'); }}); }}
+            className="text-[11px] text-violet-400 hover:text-violet-300 transition-colors underline">
+            상태 다시 확인
+          </button>
+        </div>
+      )}
+
+      {status === 'ready' && !filled && (
+        <div className="space-y-2">
+          <label className="block text-[11px] text-zinc-500">프로젝트 선택</label>
+          <div className="flex gap-2">
+            <select
+              value={selectedRef}
+              onChange={e => setSelectedRef(e.target.value)}
+              className="flex-1 px-3 py-2 text-sm bg-black/40 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500">
+              <option value="">— 프로젝트 선택 —</option>
+              {projects.map(p => (
+                <option key={p.ref} value={p.ref}>{p.name} ({p.ref})</option>
+              ))}
+            </select>
+            <button
+              onClick={handleAutoFill}
+              disabled={!selectedRef || fetching}
+              className="px-4 py-2 bg-violet-500 hover:bg-violet-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg transition-all flex items-center gap-1.5 whitespace-nowrap">
+              {fetching ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+              {fetching ? '가져오는 중…' : '자동 입력'}
+            </button>
+          </div>
+          {fetchError && <p className="text-xs text-red-400">{fetchError}</p>}
+        </div>
+      )}
+
+      {filled && (
+        <p className="text-xs text-green-300">URL과 Anon Key가 자동으로 입력되었습니다. 아래에서 확인하세요.</p>
+      )}
+    </div>
+  );
+}
 
 // ─── Shared Components ────────────────────────────────────────────────────────
 
@@ -274,9 +392,10 @@ supabase projects create portmanagement \\
     // 5: API Key
     <div key={5} className="space-y-4">
       <p className="text-zinc-400 text-sm">CLI로 API 키를 가져옵니다.</p>
+      <CliAutoFill onFill={(url, key) => { setSupabaseUrl(url); setSupabaseAnonKey(key); if (!refId) { const m = url.match(/https:\/\/(.+)\.supabase\.co/); if (m) setRefId(m[1]); } }} />
       {refId
-        ? <CodeBlock label="API Key 조회" code={`supabase projects api-keys --project-ref ${refId}`} />
-        : <InfoBox color="amber"><p className="text-xs">이전 단계에서 Project Ref를 입력해야 합니다.</p></InfoBox>
+        ? <CodeBlock label="(참고) 수동 조회 명령" code={`supabase projects api-keys --project-ref ${refId}`} />
+        : <InfoBox color="amber"><p className="text-xs">이전 단계에서 Project Ref를 입력하거나 위 자동 입력을 사용하세요.</p></InfoBox>
       }
       <div className="bg-black/40 border border-zinc-700 rounded-lg p-3 font-mono text-xs space-y-1">
         <p className="text-zinc-500">출력 예시:</p>
@@ -455,8 +574,9 @@ bun run start`} />
 
     <div key={1} className="space-y-4">
       <p className="text-zinc-400 text-sm">기존 기기와 동일한 Supabase URL + Anon Key를 입력하세요.</p>
+      <CliAutoFill onFill={(url, key) => { setSupabaseUrl(url); setSupabaseAnonKey(key); }} />
       <InfoBox color="amber">
-        <p className="text-xs">💡 기존 기기에서: 상단 ⚙ → Project URL + Anon Key 복사</p>
+        <p className="text-xs">💡 기존 기기에서: 상단 ⚙ → Project URL + Anon Key 복사 (CLI 없을 때)</p>
       </InfoBox>
       <div>
         <label className="block text-xs text-zinc-400 mb-1">Project URL</label>
