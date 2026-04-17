@@ -840,11 +840,11 @@ const server = Bun.serve({
         const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const worktreeName1 = worktreePath ? worktreePath.replace(/\/$/, '').split('/').pop() : null;
         const title = worktreeName1 ? `[tmux] ${escapedSessionName} (${worktreeName1})` : `[tmux] ${escapedSessionName}`;
-        const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
-        const claudeCmdDq = claudeCmd.replace(/"/g, "'");
-        const cmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' "${claudeCmdDq}"`
-          : `printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' "${claudeCmdDq}"`;
+        const claudeCmd = 'claude';
+        const cdTarget1 = worktreePath ? escapeSq(worktreePath) : escFolder;
+        const cmd = cdTarget1
+          ? `cd '${cdTarget1}' && printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' "${claudeCmd}"`
+          : `printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' "${claudeCmd}"`;
 
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -867,12 +867,12 @@ const server = Bun.serve({
         const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const worktreeName2 = worktreePath ? worktreePath.replace(/\/$/, '').split('/').pop() : null;
         const title = worktreeName2 ? `[tmux-fresh] ${escapedSessionName} (${worktreeName2})` : `[tmux-fresh] ${escapedSessionName}`;
-        const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
-        const claudeCmdDq2 = claudeCmd.replace(/"/g, "'");
+        const claudeCmd2 = 'claude';
+        const cdTarget2 = worktreePath ? escapeSq(worktreePath) : escFolder;
         const killCmd = `tmux kill-session -t '${escSession}' 2>/dev/null || true`;
-        const newCmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' "${claudeCmdDq2}"`
-          : `printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' "${claudeCmdDq2}"`;
+        const newCmd = cdTarget2
+          ? `cd '${cdTarget2}' && printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' "${claudeCmd2}"`
+          : `printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' "${claudeCmd2}"`;
         const cmd = `${killCmd}; ${newCmd}`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -895,13 +895,12 @@ const server = Bun.serve({
         const escapedSessionName = sessionName.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const worktreeName3 = worktreePath ? worktreePath.replace(/\/$/, '').split('/').pop() : null;
         const title = worktreeName3 ? `[tmux-bypass] ${escapedSessionName} (${worktreeName3})` : `[tmux-bypass] ${escapedSessionName}`;
-        const claudeCmd = worktreePath
-          ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`
-          : 'claude --dangerously-skip-permissions';
-        const claudeCmdDq3 = claudeCmd.replace(/"/g, "'");
-        const cmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' "${claudeCmdDq3}"`
-          : `printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' "${claudeCmdDq3}"`;
+        // claude -w <path> validates git branch name and rejects non-ASCII → just cd instead
+        const claudeCmd = 'claude --dangerously-skip-permissions';
+        const cdTarget = worktreePath ? escapeSq(worktreePath) : escFolder;
+        const cmd = cdTarget
+          ? `cd '${cdTarget}' && printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' "${claudeCmd}"`
+          : `printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' "${claudeCmd}"`;
 
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -1460,16 +1459,18 @@ end tell`;
         }
         // Allow Unicode (Korean etc.) — only strip truly invalid git branch chars
         const safeBranch = (branchName as string).replace(/[\s~^:?*\[\\]/g, '-').replace(/\.{2,}/g, '-').replace(/^[-.]|[-.]$/g, '') || 'branch';
+        // Directory name must be ASCII-only — claude -w rejects non-ASCII paths
+        const dirSafeBranch = safeBranch.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-').replace(/^[-.]|[-.]$/g, '') || `wt${Date.now().toString(36).slice(-6)}`;
         const isICloud = (folderPath as string).includes('com~apple~CloudDocs') || (folderPath as string).includes('Mobile Documents');
         const home = process.env.HOME || `/Users/${process.env.USER}`;
         const basename = (folderPath as string).replace(/\/$/, '').split('/').pop() || 'project';
         const targetPath = worktreePath || (() => {
           if (isICloud) {
             // iCloud 경로: git checkout이 SIGBUS → ~/worktrees/ (iCloud 밖)에 생성
-            return `${home}/worktrees/${basename}-${safeBranch}`;
+            return `${home}/worktrees/${basename}-${dirSafeBranch}`;
           }
           const parts = (folderPath as string).replace(/\/$/, '').split('/');
-          parts[parts.length - 1] = parts[parts.length - 1] + '-' + safeBranch;
+          parts[parts.length - 1] = parts[parts.length - 1] + '-' + dirSafeBranch;
           return parts.join('/');
         })();
         // Check if worktree for this branch already exists
@@ -1487,17 +1488,19 @@ end tell`;
           return null;
         })();
         if (existingPath) {
-          // 이미 ~/worktrees/ 안이면 바로 반환
-          if (existingPath.startsWith(`${home}/worktrees/`)) {
+          // 이미 ~/worktrees/ 안이고 ASCII 경로면 바로 반환
+          const isAscii = (s: string) => /^[\x00-\x7F]*$/.test(s);
+          if (existingPath.startsWith(`${home}/worktrees/`) && isAscii(existingPath)) {
             return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
           }
           // 파일이 있으면 반환, 없으면(no-checkout 잔재) 제거 후 ~/worktrees/ 재생성
           const { readdirSync, rmSync } = await import('fs');
           let hasFiles = false;
           try { hasFiles = readdirSync(existingPath).some(e => e !== '.git'); } catch {}
-          if (hasFiles) {
+          if (hasFiles && isAscii(existingPath)) {
             return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
           }
+          // 비ASCII 경로(한국어 등) → claude -w가 거부 → 제거 후 ASCII 경로로 재생성
           // 빈 워크트리 제거: .git 파일에서 메인 레포 경로 추출
           try {
             const gitContent = await Bun.file(`${existingPath}/.git`).text();

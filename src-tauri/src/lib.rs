@@ -1274,9 +1274,24 @@ fn git_worktree_add(folder_path: String, branch_name: String, worktree_path: Opt
         .map(|c| if c.is_whitespace() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\') { '-' } else { c })
         .collect();
     let safe_branch = safe_branch.trim_matches('-').to_string();
+    // Directory name must be ASCII-only — claude -w rejects non-ASCII paths
+    let dir_safe_branch: String = safe_branch.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' { c } else { '-' })
+        .collect();
+    let dir_safe_branch = dir_safe_branch.trim_matches('-').to_string();
+    let dir_safe_branch = if dir_safe_branch.is_empty() {
+        format!("wt{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() % 1000000)
+    } else { dir_safe_branch };
+    let is_icloud = folder_path.contains("com~apple~CloudDocs") || folder_path.contains("Mobile Documents");
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     let target = worktree_path.filter(|p| !p.is_empty()).unwrap_or_else(|| {
-        let base = folder_path.trim_end_matches('/');
-        format!("{}-{}", base, safe_branch)
+        if is_icloud {
+            let base = folder_path.trim_end_matches('/').rsplit('/').next().unwrap_or("project");
+            format!("{}/worktrees/{}-{}", home, base, dir_safe_branch)
+        } else {
+            let base = folder_path.trim_end_matches('/');
+            format!("{}-{}", base, dir_safe_branch)
+        }
     });
     // Use --no-checkout on iCloud paths to avoid SIGBUS (signal 10)
     let is_icloud = folder_path.contains("com~apple~CloudDocs") || folder_path.contains("Mobile Documents");
