@@ -740,6 +740,10 @@ function App() {
   const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
   const [worktreePickerValue, setWorktreePickerValue] = useState('');
   const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
+  const [expandedWorktreeIds, setExpandedWorktreeIds] = useState<Set<string>>(new Set());
+  const [worktreeLists, setWorktreeLists] = useState<Record<string, WorktreeInfo[]>>({});
+  const [worktreeNewBranch, setWorktreeNewBranch] = useState<Record<string, string>>({});
+  const [worktreeLoading, setWorktreeLoading] = useState<Record<string, boolean>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isAiEnriching, setIsAiEnriching] = useState(false);
@@ -804,6 +808,71 @@ function App() {
       showToast('클립보드 복사 실패', 'error');
     }
   }, []);
+
+  const loadWorktrees = useCallback(async (portId: string, folderPath: string) => {
+    setWorktreeLoading(prev => ({ ...prev, [portId]: true }));
+    try {
+      const list = await API.listGitWorktrees(folderPath);
+      setWorktreeLists(prev => ({ ...prev, [portId]: list }));
+    } catch {
+      setWorktreeLists(prev => ({ ...prev, [portId]: [] }));
+    } finally {
+      setWorktreeLoading(prev => ({ ...prev, [portId]: false }));
+    }
+  }, []);
+
+  const toggleWorktreePanel = useCallback((portId: string, folderPath?: string) => {
+    setExpandedWorktreeIds(prev => {
+      const next = new Set(prev);
+      if (next.has(portId)) {
+        next.delete(portId);
+      } else {
+        next.add(portId);
+        if (folderPath) loadWorktrees(portId, folderPath);
+      }
+      return next;
+    });
+  }, [loadWorktrees]);
+
+  const handleWorktreeAdd = useCallback(async (item: PortInfo) => {
+    const branchName = worktreeNewBranch[item.id]?.trim();
+    if (!branchName || !item.folderPath) return;
+    try {
+      const result = await API.gitWorktreeAdd(item.folderPath, branchName);
+      showToast(`워크트리 생성됨: ${result.path.split('/').pop()}`, 'success');
+      setWorktreeNewBranch(prev => ({ ...prev, [item.id]: '' }));
+      await loadWorktrees(item.id, item.folderPath);
+    } catch (e) {
+      showToast(`워크트리 생성 실패: ${e}`, 'error');
+    }
+  }, [worktreeNewBranch, loadWorktrees]);
+
+  const handleWorktreeRemove = useCallback(async (item: PortInfo, wt: WorktreeInfo) => {
+    if (!item.folderPath) return;
+    const name = wt.path.split('/').pop();
+    try {
+      await API.gitWorktreeRemove(wt.path);
+      showToast(`워크트리 제거됨: ${name}`, 'success');
+      await loadWorktrees(item.id, item.folderPath);
+    } catch (e) {
+      showToast(`워크트리 제거 실패: ${e}`, 'error');
+    }
+  }, [loadWorktrees]);
+
+  const handleWorktreeMerge = useCallback(async (item: PortInfo, wt: WorktreeInfo) => {
+    if (!item.folderPath || !wt.branch) return;
+    const name = wt.path.split('/').pop();
+    try {
+      const output = await API.gitMergeBranch(item.folderPath, wt.branch);
+      showToast(`머지 완료: ${wt.branch} → main`, 'success');
+      if (output) console.log('[Merge output]', output);
+      await API.gitWorktreeRemove(wt.path);
+      showToast(`워크트리 제거됨: ${name}`, 'success');
+      await loadWorktrees(item.id, item.folderPath);
+    } catch (e) {
+      showToast(`머지 실패: ${e}`, 'error');
+    }
+  }, [loadWorktrees]);
 
   const openTmuxClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'tmux' });
