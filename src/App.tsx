@@ -3291,38 +3291,6 @@ function App() {
                         )}
                         {item.folderPath && (
                           <button
-                            onClick={async () => {
-                              try {
-                                const output = await API.gitPull(item.folderPath!);
-                                showToast(`git pull 완료: ${output.slice(0, 60)}`, 'success');
-                              } catch (error) {
-                                showToast('git pull 실패: ' + error, 'error');
-                              }
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-medium rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all duration-200"
-                          >
-                            <GitPullRequest className="w-3 h-3" />
-                            <span>풀</span>
-                          </button>
-                        )}
-                        {item.folderPath && (
-                          <button
-                            onClick={async () => {
-                              try {
-                                const output = await API.gitPush(item.folderPath!);
-                                showToast(`git push 완료: ${output.slice(0, 60)}`, 'success');
-                              } catch (error) {
-                                showToast('git push 실패: ' + error, 'error');
-                              }
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
-                          >
-                            <GitPullRequest className="w-3 h-3 rotate-180" />
-                            <span>푸시</span>
-                          </button>
-                        )}
-                        {item.folderPath && (
-                          <button
                             onClick={() => {
                               const prompt = `cd "${item.folderPath}" && git push`;
                               navigator.clipboard.writeText(prompt);
