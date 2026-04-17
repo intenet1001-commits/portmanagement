@@ -1291,8 +1291,10 @@ end tell`;
           return new Response(JSON.stringify({ success: false, error: output }), { headers });
         }
         return new Response(JSON.stringify({ success: true, output }), { headers });
-      } catch (e) {
-        return new Response(JSON.stringify({ success: false, error: String(e) }), { headers });
+      } catch (e: any) {
+        const msg = String(e);
+        const err = msg.includes('ENOENT') ? `폴더 접근 불가 (Google Drive/iCloud 미동기화 가능성): ${folderPath}` : msg;
+        return new Response(JSON.stringify({ success: false, error: err }), { headers });
       }
     }
 
@@ -1320,8 +1322,10 @@ end tell`;
           return new Response(JSON.stringify({ success: false, error: output }), { headers });
         }
         return new Response(JSON.stringify({ success: true, output }), { headers });
-      } catch (e) {
-        return new Response(JSON.stringify({ success: false, error: String(e) }), { headers });
+      } catch (e: any) {
+        const msg = String(e);
+        const err = msg.includes('ENOENT') ? `폴더 접근 불가 (Google Drive/iCloud 미동기화 가능성): ${folderPath}` : msg;
+        return new Response(JSON.stringify({ success: false, error: err }), { headers });
       }
     }
 
