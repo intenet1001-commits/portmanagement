@@ -222,6 +222,48 @@ const API = {
     }
   },
 
+  async gitWorktreeAdd(folderPath: string, branchName: string, worktreePath?: string): Promise<{ path: string }> {
+    if (isTauri()) {
+      const path = await invoke<string>('git_worktree_add', { folderPath, branchName, worktreePath: worktreePath ?? null });
+      return { path };
+    }
+    const res = await fetch('/api/git-worktree-add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath, branchName, worktreePath }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return { path: data.path };
+  },
+
+  async gitWorktreeRemove(worktreePath: string): Promise<void> {
+    if (isTauri()) {
+      return invoke('git_worktree_remove', { worktreePath });
+    }
+    const res = await fetch('/api/git-worktree-remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ worktreePath }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+  },
+
+  async gitMergeBranch(folderPath: string, branchName: string): Promise<string> {
+    if (isTauri()) {
+      return invoke<string>('git_merge_branch', { folderPath, branchName });
+    }
+    const res = await fetch('/api/git-merge-branch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath, branchName }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return data.output ?? '';
+  },
+
   async checkPortStatus(port: number): Promise<boolean> {
     if (isTauri()) {
       return invoke<boolean>('check_port_status', { port });
@@ -562,7 +604,14 @@ const mergePorts = (local: PortInfo[], remote: PortInfo[]): PortInfo[] => {
   const merged = local.map(p => {
     const r = remoteById.get(p.id);
     if (!r) return p;
-    return { ...p, ...r, isRunning: p.isRunning, aiName: r.aiName ?? p.aiName };
+    return {
+      ...p, ...r,
+      isRunning: p.isRunning,
+      aiName: r.aiName ?? p.aiName,
+      folderPath: p.folderPath ?? r.folderPath,
+      commandPath: p.commandPath ?? r.commandPath,
+      worktreePath: p.worktreePath ?? r.worktreePath,
+    };
   });
   const localIds = new Set(local.map(p => p.id));
   const newFromRemote = remote.filter(p => !localIds.has(p.id));
@@ -758,7 +807,8 @@ function App() {
 
   const openTmuxClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'tmux' });
-    setWorktreePickerValue(item.worktreePath ?? '');
+    // Only pre-fill if saved path is absolute — relative names (e.g. '합산') are invalid for -w
+    setWorktreePickerValue((item.worktreePath?.startsWith('/') ? item.worktreePath : '') ?? '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
@@ -799,7 +849,7 @@ function App() {
 
   const openTerminalClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'claude' });
-    setWorktreePickerValue(item.worktreePath ?? '');
+    setWorktreePickerValue((item.worktreePath?.startsWith('/') ? item.worktreePath : '') ?? '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
@@ -2180,26 +2230,45 @@ function App() {
       {/* 워크트리 경로 피커 모달 */}
       {worktreePickerState && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-[#18181b] rounded-xl border border-zinc-700 p-5 w-[420px] shadow-2xl">
-            <h3 className="text-sm font-semibold text-zinc-200 mb-3">워크트리 선택</h3>
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 p-5 w-[460px] shadow-2xl">
+            {/* 헤더: 프로젝트명 + 모드 */}
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-[10px] font-medium text-violet-400 uppercase tracking-wider">
+                  {worktreePickerState.mode === 'tmux' ? 'tmux' : 'Claude'}
+                </span>
+                <span className="text-zinc-600 text-[10px]">·</span>
+                <span className="text-xs font-semibold text-zinc-200 truncate">
+                  {worktreePickerState.item.aiName || worktreePickerState.item.name}
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-500">워크트리를 선택하거나 직접 경로를 입력하세요</p>
+            </div>
 
             {/* 감지된 워크트리 목록 */}
             {detectedWorktrees.length > 0 && (
               <div className="mb-3 border border-zinc-700 rounded-lg overflow-hidden">
-                {detectedWorktrees.map((wt) => (
-                  <button
-                    key={wt.path}
-                    onClick={() => setWorktreePickerValue(wt.path)}
-                    className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-zinc-700/50 transition-colors border-b border-zinc-700/50 last:border-0 ${
-                      worktreePickerValue === wt.path ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-300'
-                    }`}
-                  >
-                    <span className="font-mono truncate">{wt.path}</span>
-                    {wt.branch && (
-                      <span className="text-zinc-500 ml-2 shrink-0">({wt.branch})</span>
-                    )}
-                  </button>
-                ))}
+                {detectedWorktrees.map((wt) => {
+                  const wtBasename = wt.path.replace(/\/$/, '').split('/').pop() ?? wt.path;
+                  const isSelected = worktreePickerValue === wt.path;
+                  return (
+                    <button
+                      key={wt.path}
+                      onClick={() => setWorktreePickerValue(wt.path)}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-zinc-700/50 transition-colors border-b border-zinc-700/50 last:border-0 ${
+                        isSelected ? 'bg-violet-600/20' : ''
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <span className={`font-semibold ${isSelected ? 'text-violet-300' : 'text-zinc-200'}`}>{wtBasename}</span>
+                        <span className="text-zinc-600 font-mono text-[10px] ml-2 truncate">{wt.path}</span>
+                      </div>
+                      {wt.branch && (
+                        <span className="text-zinc-500 ml-2 shrink-0 text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded">{wt.branch}</span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -2214,8 +2283,23 @@ function App() {
                 if (e.key === 'Escape') { setWorktreePickerState(null); setDetectedWorktrees([]); }
               }}
               placeholder="직접 경로 입력..."
-              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 mb-4"
+              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 mb-3"
             />
+
+            {/* 워크트리 제거 가이드 */}
+            <div className="mb-4 px-3 py-2.5 bg-zinc-900/60 rounded-lg border border-zinc-800">
+              <p className="text-[10px] text-zinc-500 font-medium mb-1.5">워크트리 제거 방법</p>
+              <div className="space-y-1">
+                <div className="flex items-start gap-1.5">
+                  <span className="text-zinc-600 text-[10px] mt-0.5">·</span>
+                  <code className="text-[10px] text-violet-400 font-mono">git worktree remove &lt;path&gt;</code>
+                </div>
+                <div className="flex items-start gap-1.5">
+                  <span className="text-zinc-600 text-[10px] mt-0.5">·</span>
+                  <span className="text-[10px] text-zinc-500"><code className="text-zinc-400 font-mono">git worktree prune</code> — 삭제된 폴더 정리</span>
+                </div>
+              </div>
+            </div>
 
             <div className="flex gap-2 justify-end items-center">
               <button
@@ -3081,6 +3165,25 @@ function App() {
                         <h3 className="text-sm font-medium text-white whitespace-nowrap">
                           {item.name}
                         </h3>
+                        {/* 폴더 이름 (name과 다를 때만) */}
+                        {item.folderPath && (() => {
+                          const parts = item.folderPath.replace(/\/$/, '').split('/');
+                          const basename = parts[parts.length - 1];
+                          return basename && basename !== item.name ? (
+                            <span className="text-[11px] text-zinc-500 font-mono whitespace-nowrap" title={item.folderPath}>
+                              {basename}
+                            </span>
+                          ) : null;
+                        })()}
+                        {/* 워크트리 뱃지 */}
+                        {item.worktreePath && (
+                          <span
+                            className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 text-[10px] font-medium rounded border border-amber-500/30 whitespace-nowrap"
+                            title={`Worktree: ${item.worktreePath}`}
+                          >
+                            WT: {item.worktreePath.replace(/\/$/, '').split('/').pop()}
+                          </span>
+                        )}
                         {item.aiName && (
                           <span
                             className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium rounded border border-emerald-500/30 whitespace-nowrap"
@@ -3226,7 +3329,16 @@ function App() {
                         </div>
                         {item.folderPath && (
                           <button
-                            onClick={() => API.openFolder(item.folderPath!)}
+                            onClick={async () => {
+                              try {
+                                const wt = item.worktreePath?.split(',')[0]?.trim();
+                                const target = (wt && wt.startsWith('/')) ? wt : item.folderPath!;
+                                await API.openFolder(target);
+                                showToast('폴더를 열었습니다', 'success');
+                              } catch (e) {
+                                showToast('폴더 열기 실패: ' + e, 'error');
+                              }
+                            }}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 text-xs font-medium rounded-lg border border-zinc-700/50 hover:border-zinc-600/50 transition-all duration-200"
                           >
                             <Folder className="w-3 h-3" />
@@ -3297,7 +3409,7 @@ function App() {
                                 await fetch(`${baseUrl}/api/open-terminal-git-push`, {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ folderPath: item.folderPath, name: item.name })
+                                  body: JSON.stringify({ folderPath: item.folderPath, name: item.name, githubUrl: item.githubUrl, worktreePath: item.worktreePath })
                                 });
                                 showToast('터미널에서 git push 실행 중', 'success');
                               } catch (error) {
@@ -3305,7 +3417,7 @@ function App() {
                               }
                             }}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
-                            title={`iTerm2에서 git push 실행`}
+                            title={item.githubUrl ? `git push → ${item.githubUrl}` : `git push (원격 그대로)`}
                           >
                             <Terminal className="w-3 h-3" />
                             <span>터미널푸시</span>
@@ -3319,7 +3431,7 @@ function App() {
                                 await fetch(`${baseUrl}/api/open-terminal-git-pull`, {
                                   method: 'POST',
                                   headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ folderPath: item.folderPath, name: item.name })
+                                  body: JSON.stringify({ folderPath: item.folderPath, name: item.name, githubUrl: item.githubUrl, worktreePath: item.worktreePath })
                                 });
                                 showToast('터미널에서 git pull 실행 중', 'success');
                               } catch (error) {
@@ -3327,7 +3439,7 @@ function App() {
                               }
                             }}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-medium rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all duration-200"
-                            title={`iTerm2에서 git pull 실행`}
+                            title={item.githubUrl ? `git pull ← ${item.githubUrl}` : `git pull (원격 그대로)`}
                           >
                             <Terminal className="w-3 h-3" />
                             <span>터미널풀</span>
