@@ -963,6 +963,36 @@ end tell`;
       }
     }
 
+    if (url.pathname === "/api/open-terminal-git-pull" && req.method === "POST") {
+      try {
+        const { folderPath, name } = await req.json();
+        const label = ((name || 'git-pull') as string).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const title = `[git-pull] ${label}`;
+        const cmd = `cd '${escapeSq(folderPath as string)}' && printf '\\033]0;${title}\\007' && git pull`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true, message: "터미널에서 git pull 실행" }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-terminal-git-push" && req.method === "POST") {
+      try {
+        const { folderPath, name } = await req.json();
+        const label = ((name || 'git-push') as string).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const title = `[git-push] ${label}`;
+        const cmd = `cd '${escapeSq(folderPath as string)}' && printf '\\033]0;${title}\\007' && git push`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true, message: "터미널에서 git push 실행" }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
     if (url.pathname === "/api/install-app" && req.method === "POST") {
       try {
         // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)

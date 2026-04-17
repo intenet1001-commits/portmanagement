@@ -3291,6 +3291,50 @@ function App() {
                         )}
                         {item.folderPath && (
                           <button
+                            onClick={async () => {
+                              try {
+                                const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                                await fetch(`${baseUrl}/api/open-terminal-git-push`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ folderPath: item.folderPath, name: item.name })
+                                });
+                                showToast('터미널에서 git push 실행 중', 'success');
+                              } catch (error) {
+                                showToast('터미널 열기 실패: ' + error, 'error');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
+                            title={`iTerm2에서 git push 실행`}
+                          >
+                            <Terminal className="w-3 h-3" />
+                            <span>터미널푸시</span>
+                          </button>
+                        )}
+                        {item.folderPath && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                                await fetch(`${baseUrl}/api/open-terminal-git-pull`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ folderPath: item.folderPath, name: item.name })
+                                });
+                                showToast('터미널에서 git pull 실행 중', 'success');
+                              } catch (error) {
+                                showToast('터미널 열기 실패: ' + error, 'error');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-medium rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all duration-200"
+                            title={`iTerm2에서 git pull 실행`}
+                          >
+                            <Terminal className="w-3 h-3" />
+                            <span>터미널풀</span>
+                          </button>
+                        )}
+                        {item.folderPath && (
+                          <button
                             onClick={() => {
                               const prompt = `cd "${item.folderPath}" && git push`;
                               navigator.clipboard.writeText(prompt);
