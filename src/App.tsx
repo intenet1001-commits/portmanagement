@@ -120,7 +120,20 @@ const API = {
   },
 
   async gitPull(folderPath: string): Promise<string> {
-    const response = await fetch('/api/git-pull', {
+    const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+    const response = await fetch(`${baseUrl}/api/git-pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath })
+    });
+    const result = await response.json();
+    if (!result.success) throw new Error(result.error);
+    return result.output as string;
+  },
+
+  async gitPush(folderPath: string): Promise<string> {
+    const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+    const response = await fetch(`${baseUrl}/api/git-push`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ folderPath })
@@ -3290,6 +3303,22 @@ function App() {
                           >
                             <GitPullRequest className="w-3 h-3" />
                             <span>풀</span>
+                          </button>
+                        )}
+                        {item.folderPath && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                const output = await API.gitPush(item.folderPath!);
+                                showToast(`git push 완료: ${output.slice(0, 60)}`, 'success');
+                              } catch (error) {
+                                showToast('git push 실패: ' + error, 'error');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
+                          >
+                            <GitPullRequest className="w-3 h-3 rotate-180" />
+                            <span>푸시</span>
                           </button>
                         )}
                         {item.folderPath && (

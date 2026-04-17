@@ -6,6 +6,21 @@ import { homedir } from "node:os";
 /** Escape single quotes for use inside single-quoted shell strings: ' → '\'' */
 const escapeSq = (s: string): string => s.replace(/'/g, "'\\''");
 
+function resolveGitPath(): string {
+  if (existsSync('/usr/bin/git')) return '/usr/bin/git';
+  if (existsSync('/opt/homebrew/bin/git')) return '/opt/homebrew/bin/git';
+  if (existsSync('/usr/local/bin/git')) return '/usr/local/bin/git';
+  try {
+    const r = Bun.spawnSync(['which', 'git'], {
+      env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' },
+    });
+    const p = r.stdout.toString().trim();
+    if (p) return p;
+  } catch {}
+  return 'git';
+}
+const GIT_PATH = resolveGitPath();
+
 // Resolve claude binary path once at startup (Homebrew first, then PATH fallback)
 function resolveClaudePath(): string | null {
   if (existsSync('/opt/homebrew/bin/claude')) return '/opt/homebrew/bin/claude';
@@ -1257,7 +1272,42 @@ end tell`;
         const { folderPath } = await req.json() as { folderPath: string };
         if (!folderPath) return new Response(JSON.stringify({ success: false, error: "folderPath 필요" }), { headers });
 
-        const proc = Bun.spawn(["git", "pull"], {
+        const branchProc = Bun.spawn([GIT_PATH, "rev-parse", "--abbrev-ref", "HEAD"], {
+          cwd: folderPath, stdout: "pipe", stderr: "pipe",
+        });
+        await branchProc.exited;
+        const branch = (await new Response(branchProc.stdout).text()).trim() || "main";
+
+        const proc = Bun.spawn([GIT_PATH, "pull", "origin", branch], {
+          cwd: folderPath,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await proc.exited;
+        const stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        const output = (stdout + stderr).trim();
+        if (proc.exitCode !== 0) {
+          return new Response(JSON.stringify({ success: false, error: output }), { headers });
+        }
+        return new Response(JSON.stringify({ success: true, output }), { headers });
+      } catch (e) {
+        return new Response(JSON.stringify({ success: false, error: String(e) }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-push" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json() as { folderPath: string };
+        if (!folderPath) return new Response(JSON.stringify({ success: false, error: "folderPath 필요" }), { headers });
+
+        const branchProc = Bun.spawn([GIT_PATH, "rev-parse", "--abbrev-ref", "HEAD"], {
+          cwd: folderPath, stdout: "pipe", stderr: "pipe",
+        });
+        await branchProc.exited;
+        const branch = (await new Response(branchProc.stdout).text()).trim() || "main";
+
+        const proc = Bun.spawn([GIT_PATH, "push", "origin", branch], {
           cwd: folderPath,
           stdout: "pipe",
           stderr: "pipe",
@@ -1278,7 +1328,7 @@ end tell`;
     if (url.pathname === "/api/list-git-worktrees" && req.method === "POST") {
       try {
         const { folderPath } = await req.json();
-        const proc = Bun.spawn(["git", "worktree", "list", "--porcelain"], {
+        const proc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], {
           cwd: folderPath,
           stdout: "pipe",
           stderr: "pipe",
