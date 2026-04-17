@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
@@ -3570,6 +3570,21 @@ function App() {
                             </a>
                           )
                         )}
+                        {/* Worktree 패널 토글 버튼 */}
+                        {item.folderPath && (
+                          <button
+                            onClick={() => toggleWorktreePanel(item.id, item.folderPath)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all duration-200 ${
+                              expandedWorktreeIds.has(item.id)
+                                ? 'bg-teal-500/20 text-teal-300 border-teal-500/40'
+                                : 'bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 border-zinc-700/50 hover:border-zinc-600/50'
+                            }`}
+                            title="Git Worktrees 보기/관리"
+                          >
+                            <GitBranch className="w-3 h-3" />
+                            <span>Worktree</span>
+                          </button>
+                        )}
                         {/* AI buttons (web mode only, folderPath required) */}
                         <button
                           onClick={() => startEdit(item)}
@@ -3582,6 +3597,77 @@ function App() {
                           className="p-1.5 hover:bg-red-500/10 rounded-lg transition-colors border border-transparent hover:border-red-500/30"
                         >
                           <Trash2 className="w-3.5 h-3.5 text-zinc-600 hover:text-red-400 transition-colors" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {/* Worktree 패널 */}
+                  {expandedWorktreeIds.has(item.id) && item.folderPath && (
+                    <div className="mt-2 p-3 bg-zinc-900/60 rounded-lg border border-zinc-700/50">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+                          <GitBranch className="w-3 h-3 text-teal-400" />
+                          Git Worktrees
+                        </h4>
+                        <button
+                          onClick={() => loadWorktrees(item.id, item.folderPath!)}
+                          className="p-1 hover:bg-zinc-800 rounded transition-colors"
+                          title="새로고침"
+                        >
+                          <RefreshCw className="w-3 h-3 text-zinc-500 hover:text-zinc-300" />
+                        </button>
+                      </div>
+                      {worktreeLoading[item.id] ? (
+                        <p className="text-xs text-zinc-500">로딩 중...</p>
+                      ) : (worktreeLists[item.id] ?? []).length === 0 ? (
+                        <p className="text-xs text-zinc-500">워크트리 없음</p>
+                      ) : (
+                        <div className="space-y-1.5 mb-2">
+                          {(worktreeLists[item.id] ?? []).map((wt, idx) => (
+                            <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-zinc-800/50 rounded text-xs">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className={`font-mono truncate ${wt.is_main ? 'text-zinc-300' : 'text-teal-300'}`}>
+                                  {wt.branch || wt.path.split('/').pop()}
+                                </span>
+                                {wt.is_main && <span className="text-[10px] text-zinc-500 shrink-0">(main)</span>}
+                              </div>
+                              {!wt.is_main && (
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button
+                                    onClick={() => handleWorktreeMerge(item, wt)}
+                                    className="px-1.5 py-0.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[10px] rounded border border-blue-500/20"
+                                    title={`Merge ${wt.branch} into main`}
+                                  >
+                                    Merge
+                                  </button>
+                                  <button
+                                    onClick={() => handleWorktreeRemove(item, wt)}
+                                    className="px-1.5 py-0.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] rounded border border-red-500/20"
+                                    title="워크트리 삭제"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1.5 mt-2">
+                        <input
+                          type="text"
+                          value={worktreeNewBranch[item.id] ?? ''}
+                          onChange={e => setWorktreeNewBranch(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          onKeyDown={e => e.key === 'Enter' && handleWorktreeAdd(item)}
+                          placeholder="새 브랜치명..."
+                          className="flex-1 px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-teal-500/50"
+                        />
+                        <button
+                          onClick={() => handleWorktreeAdd(item)}
+                          disabled={!worktreeNewBranch[item.id]?.trim()}
+                          className="px-2 py-1 bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 text-xs rounded border border-teal-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          + Add
                         </button>
                       </div>
                     </div>
