@@ -3324,15 +3324,29 @@ function App() {
                         {item.folderPath && (
                           <button
                             onClick={() => {
+                              const prompt = `cd "${item.folderPath}" && git push`;
+                              navigator.clipboard.writeText(prompt);
+                              showToast('푸시 프롬프트 복사됨', 'success');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 text-xs font-medium rounded-lg border border-zinc-700/50 hover:border-zinc-600/50 transition-all duration-200"
+                            title={`cd "${item.folderPath}" && git push`}
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>푸시복사</span>
+                          </button>
+                        )}
+                        {item.folderPath && (
+                          <button
+                            onClick={() => {
                               const prompt = `cd "${item.folderPath}" && git pull`;
                               navigator.clipboard.writeText(prompt);
-                              showToast('프롬프트 복사됨', 'success');
+                              showToast('풀 프롬프트 복사됨', 'success');
                             }}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 text-xs font-medium rounded-lg border border-zinc-700/50 hover:border-zinc-600/50 transition-all duration-200"
                             title={`cd "${item.folderPath}" && git pull`}
                           >
                             <Copy className="w-3 h-3" />
-                            <span>복사</span>
+                            <span>풀복사</span>
                           </button>
                         )}
                         {(item.commandPath || item.terminalCommand) && item.port && (
