@@ -48,12 +48,40 @@ const PORTS_DATA_FILE = join(APP_DATA_DIR, "ports.json");
 const WORKSPACE_ROOTS_FILE = join(APP_DATA_DIR, "workspace-roots.json");
 const PORTAL_DATA_FILE = join(APP_DATA_DIR, "portal.json");
 
+// 다른 기기에서 동기된 경로를 현재 기기 경로로 자동 수정
+function remapPathsToCurrentUser(ports: any[]): { ports: any[]; changed: boolean } {
+  const home = homedir();
+  const homeMatch = home.match(/^\/Users\/([^/]+)/);
+  if (!homeMatch) return { ports, changed: false };
+  const currentUser = homeMatch[1];
+
+  let changed = false;
+  const remapped = ports.map((p: any) => {
+    const fix = (path?: string) => {
+      if (!path || !path.startsWith('/Users/')) return path;
+      const m = path.match(/^\/Users\/([^/]+)(\/.*)?$/);
+      if (!m || m[1] === currentUser) return path;
+      const candidate = `/Users/${currentUser}${m[2] ?? ''}`;
+      if (existsSync(candidate)) { changed = true; return candidate; }
+      return path;
+    };
+    return { ...p, folderPath: fix(p.folderPath), commandPath: fix(p.commandPath) };
+  });
+  return { ports: remapped, changed };
+}
+
 // 포트 데이터 로드
 async function loadPortsData() {
   try {
     const file = Bun.file(PORTS_DATA_FILE);
     if (await file.exists()) {
-      return await file.json();
+      const data = await file.json();
+      const { ports: remapped, changed } = remapPathsToCurrentUser(data);
+      if (changed) {
+        console.log('[Data] Auto-remapped paths to current user home dir — saving');
+        await Bun.write(PORTS_DATA_FILE, JSON.stringify(remapped, null, 2));
+      }
+      return remapped;
     }
   } catch (error) {
     console.error("[Data] Error loading ports data:", error);
@@ -965,10 +993,20 @@ end tell`;
 
     if (url.pathname === "/api/open-terminal-git-pull" && req.method === "POST") {
       try {
-        const { folderPath, name } = await req.json();
-        const label = ((name || 'git-pull') as string).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const title = `[git-pull] ${label}`;
-        const cmd = `cd '${escapeSq(folderPath as string)}' && printf '\\033]0;${title}\\007' && git pull`;
+        const { folderPath, name, githubUrl, worktreePath } = await req.json();
+        // worktreePath 있으면 그 디렉터리에서 실행
+        const workDir = (worktreePath as string | undefined) || (folderPath as string);
+        const baseName = (name || 'git-pull') as string;
+        const worktreeName = worktreePath
+          ? (worktreePath as string).replace(/\/$/, '').split('/').pop()
+          : null;
+        const displayName = worktreeName ? `${baseName}(${worktreeName})` : baseName;
+        const title = `[git-pull] ${displayName}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        // GitHub URL이 있으면 origin remote 보장
+        const remoteCmd = githubUrl
+          ? `git remote set-url origin '${escapeSq(githubUrl as string)}' 2>/dev/null || git remote add origin '${escapeSq(githubUrl as string)}'; `
+          : '';
+        const cmd = `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && ${remoteCmd}git pull`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
         spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
@@ -980,10 +1018,20 @@ end tell`;
 
     if (url.pathname === "/api/open-terminal-git-push" && req.method === "POST") {
       try {
-        const { folderPath, name } = await req.json();
-        const label = ((name || 'git-push') as string).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const title = `[git-push] ${label}`;
-        const cmd = `cd '${escapeSq(folderPath as string)}' && printf '\\033]0;${title}\\007' && git push`;
+        const { folderPath, name, githubUrl, worktreePath } = await req.json();
+        // worktreePath 있으면 그 디렉터리에서 실행
+        const workDir = (worktreePath as string | undefined) || (folderPath as string);
+        const baseName = (name || 'git-push') as string;
+        const worktreeName = worktreePath
+          ? (worktreePath as string).replace(/\/$/, '').split('/').pop()
+          : null;
+        const displayName = worktreeName ? `${baseName}(${worktreeName})` : baseName;
+        const title = `[git-push] ${displayName}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        // GitHub URL이 있으면 origin remote 보장
+        const remoteCmd = githubUrl
+          ? `git remote set-url origin '${escapeSq(githubUrl as string)}' 2>/dev/null || git remote add origin '${escapeSq(githubUrl as string)}'; `
+          : '';
+        const cmd = `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && ${remoteCmd}git push`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
         spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
@@ -1395,6 +1443,79 @@ end tell`;
         return new Response(JSON.stringify({ success: true, worktrees }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ success: true, worktrees: [] }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-worktree-add" && req.method === "POST") {
+      try {
+        const { folderPath, branchName, worktreePath } = await req.json();
+        if (!folderPath || !branchName) {
+          return new Response(JSON.stringify({ error: "folderPath and branchName required" }), { status: 400, headers });
+        }
+        const targetPath = worktreePath || (() => {
+          const parts = (folderPath as string).replace(/\/$/, '').split('/');
+          parts[parts.length - 1] = parts[parts.length - 1] + '-' + (branchName as string).replace(/\//g, '-');
+          return parts.join('/');
+        })();
+        // Try existing branch first, then create new branch
+        let proc = Bun.spawn([GIT_PATH, "worktree", "add", targetPath, branchName], {
+          cwd: folderPath, stdout: "pipe", stderr: "pipe",
+        });
+        await proc.exited;
+        if (proc.exitCode !== 0) {
+          proc = Bun.spawn([GIT_PATH, "worktree", "add", "-b", branchName, targetPath], {
+            cwd: folderPath, stdout: "pipe", stderr: "pipe",
+          });
+          await proc.exited;
+        }
+        const stderr = await new Response(proc.stderr).text();
+        if (proc.exitCode !== 0) {
+          return new Response(JSON.stringify({ error: stderr.trim() || "git worktree add failed" }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true, path: targetPath }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-worktree-remove" && req.method === "POST") {
+      try {
+        const { worktreePath } = await req.json();
+        if (!worktreePath) {
+          return new Response(JSON.stringify({ error: "worktreePath required" }), { status: 400, headers });
+        }
+        const proc = Bun.spawn([GIT_PATH, "worktree", "remove", "--force", worktreePath], {
+          cwd: worktreePath, stdout: "pipe", stderr: "pipe",
+        });
+        await proc.exited;
+        const stderr = await new Response(proc.stderr).text();
+        if (proc.exitCode !== 0) {
+          return new Response(JSON.stringify({ error: stderr.trim() || "git worktree remove failed" }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-merge-branch" && req.method === "POST") {
+      try {
+        const { folderPath, branchName } = await req.json();
+        if (!folderPath || !branchName) {
+          return new Response(JSON.stringify({ error: "folderPath and branchName required" }), { status: 400, headers });
+        }
+        const proc = Bun.spawn([GIT_PATH, "merge", "--no-ff", branchName], {
+          cwd: folderPath, stdout: "pipe", stderr: "pipe",
+        });
+        await proc.exited;
+        const stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        if (proc.exitCode !== 0) {
+          return new Response(JSON.stringify({ error: stderr.trim() || stdout.trim() || "git merge failed" }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true, output: stdout.trim() }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
       }
     }
 
