@@ -1452,9 +1452,13 @@ end tell`;
         if (!folderPath || !branchName) {
           return new Response(JSON.stringify({ error: "folderPath and branchName required" }), { status: 400, headers });
         }
+        if (!(folderPath as string).startsWith('/')) {
+          return new Response(JSON.stringify({ error: "folderPath must be absolute" }), { status: 400, headers });
+        }
+        const safeBranch = (branchName as string).replace(/[^a-zA-Z0-9._-]/g, '-');
         const targetPath = worktreePath || (() => {
           const parts = (folderPath as string).replace(/\/$/, '').split('/');
-          parts[parts.length - 1] = parts[parts.length - 1] + '-' + (branchName as string).replace(/\//g, '-');
+          parts[parts.length - 1] = parts[parts.length - 1] + '-' + safeBranch;
           return parts.join('/');
         })();
         // Try existing branch first, then create new branch
@@ -1484,8 +1488,12 @@ end tell`;
         if (!worktreePath) {
           return new Response(JSON.stringify({ error: "worktreePath required" }), { status: 400, headers });
         }
+        if (!(worktreePath as string).startsWith('/')) {
+          return new Response(JSON.stringify({ error: "worktreePath must be absolute" }), { status: 400, headers });
+        }
+        const parentDir = (worktreePath as string).replace(/\/[^/]+$/, '') || '/tmp';
         const proc = Bun.spawn([GIT_PATH, "worktree", "remove", "--force", worktreePath], {
-          cwd: worktreePath, stdout: "pipe", stderr: "pipe",
+          cwd: parentDir, stdout: "pipe", stderr: "pipe",
         });
         await proc.exited;
         const stderr = await new Response(proc.stderr).text();
@@ -1504,6 +1512,9 @@ end tell`;
         if (!folderPath || !branchName) {
           return new Response(JSON.stringify({ error: "folderPath and branchName required" }), { status: 400, headers });
         }
+        if (!(folderPath as string).startsWith('/')) {
+          return new Response(JSON.stringify({ error: "folderPath must be absolute" }), { status: 400, headers });
+        }
         const proc = Bun.spawn([GIT_PATH, "merge", "--no-ff", branchName], {
           cwd: folderPath, stdout: "pipe", stderr: "pipe",
         });
@@ -1515,7 +1526,11 @@ end tell`;
         }
         return new Response(JSON.stringify({ success: true, output: stdout.trim() }), { headers });
       } catch (e: any) {
-        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+        const msg = String(e.message || e);
+        const err = msg.includes('ENOENT')
+          ? `폴더를 찾을 수 없습니다 (iCloud/Google Drive 동기화 문제?): ${folderPath}`
+          : msg;
+        return new Response(JSON.stringify({ error: err }), { status: 500, headers });
       }
     }
 
