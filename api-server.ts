@@ -1455,19 +1455,40 @@ end tell`;
         if (!(folderPath as string).startsWith('/')) {
           return new Response(JSON.stringify({ error: "folderPath must be absolute" }), { status: 400, headers });
         }
-        const safeBranch = (branchName as string).replace(/[^a-zA-Z0-9._-]/g, '-');
+        // Allow Unicode (Korean etc.) — only strip truly invalid git branch chars
+        const safeBranch = (branchName as string).replace(/[\s~^:?*\[\\]/g, '-').replace(/\.{2,}/g, '-').replace(/^[-.]|[-.]$/g, '');
         const targetPath = worktreePath || (() => {
           const parts = (folderPath as string).replace(/\/$/, '').split('/');
           parts[parts.length - 1] = parts[parts.length - 1] + '-' + safeBranch;
           return parts.join('/');
         })();
+        const isICloud = (folderPath as string).includes('com~apple~CloudDocs') || (folderPath as string).includes('Mobile Documents');
+        // Use --no-checkout on iCloud paths to avoid SIGBUS (signal 10)
+        const noCheckout = isICloud ? ["--no-checkout"] : [];
+        // Check if worktree for this branch already exists
+        const listProc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await listProc.exited;
+        const listOut = await new Response(listProc.stdout).text();
+        const existingPath = (() => {
+          const blocks = listOut.split('\n\n');
+          for (const block of blocks) {
+            const lines = block.trim().split('\n');
+            const pathLine = lines.find(l => l.startsWith('worktree '));
+            const branchLine = lines.find(l => l === `branch refs/heads/${branchName}`);
+            if (pathLine && branchLine) return pathLine.replace('worktree ', '').trim();
+          }
+          return null;
+        })();
+        if (existingPath) {
+          return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
+        }
         // Try existing branch first, then create new branch
-        let proc = Bun.spawn([GIT_PATH, "worktree", "add", targetPath, branchName], {
+        let proc = Bun.spawn([GIT_PATH, "worktree", "add", ...noCheckout, targetPath, branchName], {
           cwd: folderPath, stdout: "pipe", stderr: "pipe",
         });
         await proc.exited;
         if (proc.exitCode !== 0) {
-          proc = Bun.spawn([GIT_PATH, "worktree", "add", "-b", branchName, targetPath], {
+          proc = Bun.spawn([GIT_PATH, "worktree", "add", ...noCheckout, "-b", branchName, targetPath], {
             cwd: folderPath, stdout: "pipe", stderr: "pipe",
           });
           await proc.exited;

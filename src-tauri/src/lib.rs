@@ -1269,16 +1269,24 @@ fn git_worktree_add(folder_path: String, branch_name: String, worktree_path: Opt
     if !folder_path.starts_with('/') {
         return Err("folder_path must be absolute".to_string());
     }
-    let safe_branch = branch_name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '.' || c == '_' || c == '-' { c } else { '-' })
-        .collect::<String>();
+    // Allow Unicode branch names — only strip truly invalid git branch chars
+    let safe_branch: String = branch_name.chars()
+        .map(|c| if c.is_whitespace() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\') { '-' } else { c })
+        .collect();
+    let safe_branch = safe_branch.trim_matches('-').to_string();
     let target = worktree_path.filter(|p| !p.is_empty()).unwrap_or_else(|| {
         let base = folder_path.trim_end_matches('/');
         format!("{}-{}", base, safe_branch)
     });
+    // Use --no-checkout on iCloud paths to avoid SIGBUS (signal 10)
+    let is_icloud = folder_path.contains("com~apple~CloudDocs") || folder_path.contains("Mobile Documents");
+    let mut base_args: Vec<&str> = vec!["worktree", "add"];
+    if is_icloud { base_args.push("--no-checkout"); }
     // Try existing branch first
+    let mut args1 = base_args.clone();
+    args1.extend([target.as_str(), branch_name.as_str()]);
     let output = Command::new("git")
-        .args(["worktree", "add", &target, &branch_name])
+        .args(&args1)
         .current_dir(&folder_path)
         .output()
         .map_err(|e| format!("git not found: {}", e))?;
@@ -1286,8 +1294,10 @@ fn git_worktree_add(folder_path: String, branch_name: String, worktree_path: Opt
         return Ok(target);
     }
     // Fallback: create new branch
+    let mut args2 = base_args.clone();
+    args2.extend(["-b", branch_name.as_str(), target.as_str()]);
     let output2 = Command::new("git")
-        .args(["worktree", "add", "-b", &branch_name, &target])
+        .args(&args2)
         .current_dir(&folder_path)
         .output()
         .map_err(|e| format!("git not found: {}", e))?;
