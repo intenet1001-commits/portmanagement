@@ -841,9 +841,10 @@ const server = Bun.serve({
         const worktreeName1 = worktreePath ? worktreePath.replace(/\/$/, '').split('/').pop() : null;
         const title = worktreeName1 ? `[tmux] ${escapedSessionName} (${worktreeName1})` : `[tmux] ${escapedSessionName}`;
         const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
+        const claudeCmdDq = claudeCmd.replace(/"/g, "'");
         const cmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`
-          : `printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' '${claudeCmd}'`;
+          ? `cd '${escFolder}' && printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' "${claudeCmdDq}"`
+          : `printf '\\033]0;[tmux] ${escSession}\\007'; tmux new-session -A -s '${escSession}' "${claudeCmdDq}"`;
 
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -867,10 +868,11 @@ const server = Bun.serve({
         const worktreeName2 = worktreePath ? worktreePath.replace(/\/$/, '').split('/').pop() : null;
         const title = worktreeName2 ? `[tmux-fresh] ${escapedSessionName} (${worktreeName2})` : `[tmux-fresh] ${escapedSessionName}`;
         const claudeCmd = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
+        const claudeCmdDq2 = claudeCmd.replace(/"/g, "'");
         const killCmd = `tmux kill-session -t '${escSession}' 2>/dev/null || true`;
         const newCmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' '${claudeCmd}'`
-          : `printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' '${claudeCmd}'`;
+          ? `cd '${escFolder}' && printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' "${claudeCmdDq2}"`
+          : `printf '\\033]0;[tmux-fresh] ${escSession}\\007'; tmux new-session -s '${escSession}' "${claudeCmdDq2}"`;
         const cmd = `${killCmd}; ${newCmd}`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -896,9 +898,10 @@ const server = Bun.serve({
         const claudeCmd = worktreePath
           ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`
           : 'claude --dangerously-skip-permissions';
+        const claudeCmdDq3 = claudeCmd.replace(/"/g, "'");
         const cmd = escFolder
-          ? `cd '${escFolder}' && printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' '${claudeCmd}'`
-          : `printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' '${claudeCmd}'`;
+          ? `cd '${escFolder}' && printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' "${claudeCmdDq3}"`
+          : `printf '\\033]0;[tmux-bypass] ${escSession}\\007'; tmux new-session -A -s '${escSession}-bypass' "${claudeCmdDq3}"`;
 
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
@@ -1585,14 +1588,27 @@ end tell`;
         if (!(folderPath as string).startsWith('/')) {
           return new Response(JSON.stringify({ error: "folderPath must be absolute" }), { status: 400, headers });
         }
-        const proc = Bun.spawn([GIT_PATH, "merge", "--no-ff", branchName], {
+        // preflight: dirty working tree 거부
+        const statusProc = Bun.spawn([GIT_PATH, "status", "--porcelain"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await statusProc.exited;
+        const statusOut = await new Response(statusProc.stdout).text();
+        if (statusOut.trim()) {
+          return new Response(JSON.stringify({ error: "작업 트리가 깨끗하지 않습니다. 먼저 커밋/스태시하세요." }), { status: 400, headers });
+        }
+        const proc = Bun.spawn([GIT_PATH, "merge", "--no-ff", "--no-edit", branchName], {
           cwd: folderPath, stdout: "pipe", stderr: "pipe",
+          env: { ...process.env, GIT_EDITOR: "true", GIT_TERMINAL_PROMPT: "0" },
         });
         await proc.exited;
         const stdout = await new Response(proc.stdout).text();
         const stderr = await new Response(proc.stderr).text();
         if (proc.exitCode !== 0) {
-          return new Response(JSON.stringify({ error: stderr.trim() || stdout.trim() || "git merge failed" }), { status: 500, headers });
+          const msg = stderr.trim() || stdout.trim() || "git merge failed";
+          const friendly = msg.includes('signal: 10') || msg.includes('SIGBUS')
+            ? `iCloud 동기화로 머지 실패. Finder에서 iCloud 다운로드를 강제하거나 메인 레포를 iCloud 밖으로 이동하세요.`
+            : msg.includes('CONFLICT') ? `충돌 발생: ${msg}\n→ git merge --abort 로 취소 가능`
+            : msg;
+          return new Response(JSON.stringify({ error: friendly }), { status: 500, headers });
         }
         return new Response(JSON.stringify({ success: true, output: stdout.trim() }), { headers });
       } catch (e: any) {

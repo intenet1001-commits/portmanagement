@@ -870,7 +870,7 @@ function App() {
       showToast(`워크트리 제거됨: ${name}`, 'success');
       await loadWorktrees(item.id, item.folderPath);
     } catch (e) {
-      showToast(`머지 실패: ${e}`, 'error');
+      showToast(`머지 실패: ${(e as Error).message ?? e}`, 'error');
     }
   }, [loadWorktrees]);
 

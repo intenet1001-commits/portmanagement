@@ -1332,14 +1332,32 @@ fn git_merge_branch(folder_path: String, branch_name: String) -> Result<String, 
     if !folder_path.starts_with('/') {
         return Err("folder_path must be absolute".to_string());
     }
-    let output = Command::new("git")
-        .args(["merge", "--no-ff", &branch_name])
+    // preflight: dirty working tree 거부
+    let status_out = Command::new("git")
+        .args(["status", "--porcelain"])
         .current_dir(&folder_path)
+        .output()
+        .map_err(|e| format!("git not found: {}", e))?;
+    if !String::from_utf8_lossy(&status_out.stdout).trim().is_empty() {
+        return Err("작업 트리가 깨끗하지 않습니다. 먼저 커밋/스태시하세요.".to_string());
+    }
+    let output = Command::new("git")
+        .args(["merge", "--no-ff", "--no-edit", &branch_name])
+        .current_dir(&folder_path)
+        .env("GIT_EDITOR", "true")
+        .env("GIT_TERMINAL_PROMPT", "0")
         .output()
         .map_err(|e| format!("git not found: {}", e))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(stderr);
+        let msg = if stderr.contains("signal: 10") || stderr.contains("SIGBUS") {
+            "iCloud 동기화로 머지 실패. Finder에서 iCloud 다운로드를 강제하거나 메인 레포를 iCloud 밖으로 이동하세요.".to_string()
+        } else if stderr.contains("CONFLICT") {
+            format!("충돌 발생: {}\n→ git merge --abort 로 취소 가능", stderr)
+        } else {
+            stderr
+        };
+        return Err(msg);
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
