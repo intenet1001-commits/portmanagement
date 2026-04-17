@@ -1456,15 +1456,19 @@ end tell`;
           return new Response(JSON.stringify({ error: "folderPath must be absolute" }), { status: 400, headers });
         }
         // Allow Unicode (Korean etc.) — only strip truly invalid git branch chars
-        const safeBranch = (branchName as string).replace(/[\s~^:?*\[\\]/g, '-').replace(/\.{2,}/g, '-').replace(/^[-.]|[-.]$/g, '');
+        const safeBranch = (branchName as string).replace(/[\s~^:?*\[\\]/g, '-').replace(/\.{2,}/g, '-').replace(/^[-.]|[-.]$/g, '') || 'branch';
+        const isICloud = (folderPath as string).includes('com~apple~CloudDocs') || (folderPath as string).includes('Mobile Documents');
+        const home = process.env.HOME || `/Users/${process.env.USER}`;
+        const basename = (folderPath as string).replace(/\/$/, '').split('/').pop() || 'project';
         const targetPath = worktreePath || (() => {
+          if (isICloud) {
+            // iCloud 경로: git checkout이 SIGBUS → ~/worktrees/ (iCloud 밖)에 생성
+            return `${home}/worktrees/${basename}-${safeBranch}`;
+          }
           const parts = (folderPath as string).replace(/\/$/, '').split('/');
           parts[parts.length - 1] = parts[parts.length - 1] + '-' + safeBranch;
           return parts.join('/');
         })();
-        const isICloud = (folderPath as string).includes('com~apple~CloudDocs') || (folderPath as string).includes('Mobile Documents');
-        // Use --no-checkout on iCloud paths to avoid SIGBUS (signal 10)
-        const noCheckout = isICloud ? ["--no-checkout"] : [];
         // Check if worktree for this branch already exists
         const listProc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
         await listProc.exited;
@@ -1482,13 +1486,15 @@ end tell`;
         if (existingPath) {
           return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
         }
+        // iCloud 경로: --no-checkout으로 add 후 target에서 checkout (SIGBUS 우회)
+        const addFlags = isICloud ? ["--no-checkout"] : [];
         // Try existing branch first, then create new branch
-        let proc = Bun.spawn([GIT_PATH, "worktree", "add", ...noCheckout, targetPath, branchName], {
+        let proc = Bun.spawn([GIT_PATH, "worktree", "add", ...addFlags, targetPath, branchName], {
           cwd: folderPath, stdout: "pipe", stderr: "pipe",
         });
         await proc.exited;
         if (proc.exitCode !== 0) {
-          proc = Bun.spawn([GIT_PATH, "worktree", "add", ...noCheckout, "-b", branchName, targetPath], {
+          proc = Bun.spawn([GIT_PATH, "worktree", "add", ...addFlags, "-b", branchName, targetPath], {
             cwd: folderPath, stdout: "pipe", stderr: "pipe",
           });
           await proc.exited;
@@ -1496,6 +1502,12 @@ end tell`;
         const stderr = await new Response(proc.stderr).text();
         if (proc.exitCode !== 0) {
           return new Response(JSON.stringify({ error: stderr.trim() || "git worktree add failed" }), { status: 500, headers });
+        }
+        // iCloud: checkout from target dir (outside iCloud) to actually populate files
+        if (isICloud) {
+          const coProc = Bun.spawn([GIT_PATH, "checkout"], { cwd: targetPath, stdout: "pipe", stderr: "pipe" });
+          await coProc.exited;
+          // non-fatal: proceed even if checkout fails
         }
         return new Response(JSON.stringify({ success: true, path: targetPath }), { headers });
       } catch (e: any) {
@@ -1512,9 +1524,24 @@ end tell`;
         if (!(worktreePath as string).startsWith('/')) {
           return new Response(JSON.stringify({ error: "worktreePath must be absolute" }), { status: 400, headers });
         }
-        const parentDir = (worktreePath as string).replace(/\/[^/]+$/, '') || '/tmp';
+        // git worktree remove은 메인 레포 컨텍스트에서 실행 필요
+        // worktree/.git 파일에서 메인 레포 경로 추출
+        let mainRepoDir: string;
+        try {
+          const gitFile = await Bun.file(`${worktreePath}/.git`).text();
+          // content: "gitdir: /path/to/main/.git/worktrees/name\n"
+          const gitdirMatch = gitFile.match(/gitdir:\s*(.+)/);
+          if (gitdirMatch) {
+            // /path/to/main/.git/worktrees/name → /path/to/main
+            mainRepoDir = gitdirMatch[1].trim().replace(/\/\.git\/worktrees\/[^/]+$/, '');
+          } else {
+            mainRepoDir = (worktreePath as string).replace(/\/[^/]+$/, '') || '/tmp';
+          }
+        } catch {
+          mainRepoDir = (worktreePath as string).replace(/\/[^/]+$/, '') || '/tmp';
+        }
         const proc = Bun.spawn([GIT_PATH, "worktree", "remove", "--force", worktreePath], {
-          cwd: parentDir, stdout: "pipe", stderr: "pipe",
+          cwd: mainRepoDir, stdout: "pipe", stderr: "pipe",
         });
         await proc.exited;
         const stderr = await new Response(proc.stderr).text();
