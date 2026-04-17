@@ -1484,7 +1484,29 @@ end tell`;
           return null;
         })();
         if (existingPath) {
-          return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
+          // 이미 ~/worktrees/ 안이면 바로 반환
+          if (existingPath.startsWith(`${home}/worktrees/`)) {
+            return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
+          }
+          // 파일이 있으면 반환, 없으면(no-checkout 잔재) 제거 후 ~/worktrees/ 재생성
+          const { readdirSync, rmSync } = await import('fs');
+          let hasFiles = false;
+          try { hasFiles = readdirSync(existingPath).some(e => e !== '.git'); } catch {}
+          if (hasFiles) {
+            return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
+          }
+          // 빈 워크트리 제거: .git 파일에서 메인 레포 경로 추출
+          try {
+            const gitContent = await Bun.file(`${existingPath}/.git`).text();
+            const m = gitContent.match(/gitdir:\s*(.+)/);
+            if (m) {
+              const mainRepo = m[1].trim().replace(/\/\.git\/worktrees\/[^/]+$/, '');
+              const rmProc = Bun.spawn([GIT_PATH, "worktree", "remove", "--force", existingPath], { cwd: mainRepo, stdout: "pipe", stderr: "pipe" });
+              await rmProc.exited;
+            }
+          } catch {}
+          try { rmSync(existingPath, { recursive: true, force: true }); } catch {}
+          // fall through → ~/worktrees/ 에 새로 생성
         }
         // iCloud 경로: --no-checkout으로 add 후 target에서 checkout (SIGBUS 우회)
         const addFlags = isICloud ? ["--no-checkout"] : [];
