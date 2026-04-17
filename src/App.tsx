@@ -945,19 +945,36 @@ function App() {
     if (!worktreePickerState) return;
     const { item, mode } = worktreePickerState;
 
-    // save the entered path back to the item (for pre-fill next time)
-    if (worktreePath !== undefined) {
-      setPorts(prev => prev.map(p => p.id === item.id ? { ...p, worktreePath: worktreePath || undefined } : p));
-    }
-
     setWorktreePickerState(null);
     setDetectedWorktrees([]);
 
-    const updatedItem = { ...item, worktreePath };
+    let resolvedPath = worktreePath;
+
+    // 브랜치명(상대경로)을 입력한 경우 → git worktree 자동 생성
+    if (worktreePath && !worktreePath.startsWith('/') && item.folderPath) {
+      try {
+        showToast(`워크트리 생성 중: ${worktreePath}...`, 'success');
+        const result = await API.gitWorktreeAdd(item.folderPath, worktreePath);
+        resolvedPath = result.path;
+        // 워크트리 목록 갱신
+        loadWorktrees(item.id, item.folderPath);
+        showToast(`워크트리 생성 완료: ${resolvedPath}`, 'success');
+      } catch (e) {
+        showToast(`워크트리 생성 실패: ${e}`, 'error');
+        return;
+      }
+    }
+
+    // save the resolved absolute path back to the item
+    if (resolvedPath !== undefined) {
+      setPorts(prev => prev.map(p => p.id === item.id ? { ...p, worktreePath: resolvedPath || undefined } : p));
+    }
+
+    const updatedItem = { ...item, worktreePath: resolvedPath };
     if (mode === 'tmux') {
-      await _executeTmuxClaude(updatedItem, worktreePath);
+      await _executeTmuxClaude(updatedItem, resolvedPath);
     } else {
-      await _executeTerminalClaude(updatedItem, worktreePath);
+      await _executeTerminalClaude(updatedItem, resolvedPath);
     }
   };
 
