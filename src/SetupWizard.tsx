@@ -757,10 +757,16 @@ function PortalVercelWizard({ onBack, onClose }: { onBack: () => void; onClose: 
     setTimeout(() => setCopied(p => ({ ...p, [key]: false })), 1500);
   }
 
-  const hashCmdMac = `printf 'your-password' | shasum -a 256 | awk '{print $1}'`;
-  const hashCmdWin = `$bytes = [System.Text.Encoding]::UTF8.GetBytes("your-password")
-$hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
-($hash | ForEach-Object { $_.ToString("x2") }) -join ""`;
+  const [sqlMode, setSqlMode] = useState<'cli' | 'web'>('cli');
+  const [password, setPassword] = useState('');
+  const [passwordHash, setPasswordHash] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    if (!password) { setPasswordHash(''); return; }
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(password))
+      .then(buf => setPasswordHash(Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')));
+  }, [password]);
 
   const vercelCmds = `npm install -g vercel
 vercel login
@@ -806,48 +812,96 @@ vercel --prod`;
 
     /* 1: Supabase SQL */
     <div key={1} className="space-y-4">
-      <InfoBox color="blue">
-        Supabase 대시보드 → <strong>SQL Editor</strong> 에서 아래 SQL을 실행합니다.<br />
-        이미 로컬 앱 마법사로 Supabase를 설정했다면, portal_items · portal_categories 두 테이블만 추가하면 됩니다.
-      </InfoBox>
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <p className="text-xs text-zinc-400">Supabase SQL Editor에 붙여넣기</p>
-          <button onClick={() => copy('sql', PORTAL_SQL)}
-            className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1 transition-colors">
-            <Copy className="w-3 h-3" />{copied['sql'] ? '복사됨!' : 'SQL 복사'}
-          </button>
-        </div>
-        <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 overflow-x-auto leading-relaxed whitespace-pre-wrap">{PORTAL_SQL}</pre>
+      {/* CLI / Web toggle */}
+      <div className="flex gap-1 p-1 bg-zinc-800/60 rounded-lg w-fit">
+        <button onClick={() => setSqlMode('cli')}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${sqlMode === 'cli' ? 'bg-violet-600 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
+          <Terminal className="w-3 h-3 inline mr-1" />CLI 방식
+        </button>
+        <button onClick={() => setSqlMode('web')}
+          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${sqlMode === 'web' ? 'bg-zinc-700 text-white' : 'text-zinc-400 hover:text-zinc-200'}`}>
+          <Globe className="w-3 h-3 inline mr-1" />웹 대시보드
+        </button>
       </div>
+
+      {sqlMode === 'cli' ? (
+        <div className="space-y-3">
+          <InfoBox color="blue">
+            Supabase CLI가 설치·로그인된 경우 터미널에서 바로 테이블을 생성할 수 있습니다.<br />
+            <span className="text-zinc-400">Step 1에서 이미 프로젝트를 link했다면 그대로 진행하세요.</span>
+          </InfoBox>
+          <CodeBlock label="① 마이그레이션 파일 생성" code="supabase migration new portal_tables" comment="supabase/migrations/ 폴더에 SQL 파일이 생성됩니다" />
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs text-zinc-400">② 생성된 파일에 아래 SQL 붙여넣기</p>
+              <button onClick={() => copy('sql', PORTAL_SQL)}
+                className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1 transition-colors">
+                <Copy className="w-3 h-3" />{copied['sql'] ? '복사됨!' : 'SQL 복사'}
+              </button>
+            </div>
+            <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 overflow-x-auto leading-relaxed whitespace-pre-wrap max-h-40">{PORTAL_SQL}</pre>
+          </div>
+          <CodeBlock label="③ 원격 DB에 적용" code="supabase db push" comment="linked된 Supabase 프로젝트에 테이블이 생성됩니다" />
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <InfoBox color="blue">
+            Supabase 대시보드 → <strong>SQL Editor</strong> 에서 아래 SQL을 실행합니다.<br />
+            이미 로컬 앱 마법사로 Supabase를 설정했다면, portal_items · portal_categories 두 테이블만 추가하면 됩니다.
+          </InfoBox>
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs text-zinc-400">Supabase SQL Editor에 붙여넣기</p>
+              <button onClick={() => copy('sql', PORTAL_SQL)}
+                className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1 transition-colors">
+                <Copy className="w-3 h-3" />{copied['sql'] ? '복사됨!' : 'SQL 복사'}
+              </button>
+            </div>
+            <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 overflow-x-auto leading-relaxed whitespace-pre-wrap max-h-48">{PORTAL_SQL}</pre>
+          </div>
+        </div>
+      )}
     </div>,
 
     /* 2: Password hash */
     <div key={2} className="space-y-5">
       <InfoBox color="blue">
-        포털 접근용 비밀번호를 SHA-256으로 해시합니다. 비밀번호 없이 공개 운영하려면 이 단계를 건너뛰세요.
+        포털 접근 비밀번호를 설정합니다. 입력하면 해시가 자동으로 생성됩니다.<br />
+        <span className="text-zinc-400">비밀번호 없이 공개 운영하려면 비워두고 다음으로 넘어가세요.</span>
       </InfoBox>
-      <OsToggle os={os} onChange={setOs} />
-      {os === 'mac' ? (
+      <div>
+        <label className="block text-xs text-zinc-400 mb-2">비밀번호 입력</label>
+        <div className="flex gap-2">
+          <input
+            type={showPassword ? 'text' : 'password'}
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            placeholder="포털 접근 비밀번호"
+            className="flex-1 px-3 py-2 text-sm bg-black/40 border border-zinc-700 text-white placeholder-zinc-600 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 transition-all"
+          />
+          <button onClick={() => setShowPassword(p => !p)}
+            className="px-3 py-2 text-xs bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-400 rounded-lg transition-colors">
+            {showPassword ? '숨기기' : '표시'}
+          </button>
+        </div>
+      </div>
+      {passwordHash ? (
         <div>
           <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-zinc-400">터미널에서 실행 (<code className="text-violet-400">your-password</code>를 실제 비밀번호로 교체)</p>
-            <button onClick={() => copy('hash', hashCmdMac)} className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1"><Copy className="w-3 h-3" />{copied['hash'] ? '복사됨!' : '복사'}</button>
+            <p className="text-xs text-zinc-400">SHA-256 해시 (다음 단계에서 사용)</p>
+            <button onClick={() => copy('hash', passwordHash)}
+              className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1 transition-colors">
+              <Copy className="w-3 h-3" />{copied['hash'] ? '복사됨!' : '복사'}
+            </button>
           </div>
-          <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 font-mono">{hashCmdMac}</pre>
+          <div className="bg-black/50 border border-zinc-700 rounded-xl px-4 py-3 font-mono text-xs text-emerald-300 break-all">{passwordHash}</div>
+          <p className="text-[10px] text-zinc-600 mt-1">비밀번호 원문은 저장되지 않습니다. 해시값만 Vercel 환경 변수에 저장됩니다.</p>
         </div>
       ) : (
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <p className="text-xs text-zinc-400">PowerShell에서 실행 (<code className="text-violet-400">your-password</code>를 실제 비밀번호로 교체)</p>
-            <button onClick={() => copy('hash', hashCmdWin)} className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1"><Copy className="w-3 h-3" />{copied['hash'] ? '복사됨!' : '복사'}</button>
-          </div>
-          <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 font-mono whitespace-pre-wrap">{hashCmdWin}</pre>
+        <div className="bg-zinc-800/40 border border-zinc-700/50 rounded-xl px-4 py-3 text-xs text-zinc-500">
+          비밀번호를 입력하면 해시가 여기에 표시됩니다.
         </div>
       )}
-      <InfoBox color="green">
-        출력된 64자리 hex 값을 복사해 둡니다. 다음 단계에서 사용합니다.
-      </InfoBox>
     </div>,
 
     /* 3: Vercel deploy */
@@ -868,7 +922,12 @@ vercel --prod`;
         <div className="space-y-1">
           <p><code className="text-violet-400">VITE_SUPABASE_URL</code> — Supabase 대시보드 → Project Settings → API → Project URL</p>
           <p><code className="text-violet-400">VITE_SUPABASE_ANON_KEY</code> — 같은 페이지 anon/public key</p>
-          <p><code className="text-violet-400">VITE_PORTAL_PASSWORD_HASH</code> — Step 3에서 생성한 64자리 해시 (비밀번호 없이 공개 시 빈 값)</p>
+          <p><code className="text-violet-400">VITE_PORTAL_PASSWORD_HASH</code> —{' '}
+            {passwordHash
+              ? <span className="text-emerald-400 font-mono break-all">{passwordHash.slice(0, 20)}…  (Step 3에서 생성됨 ✓)</span>
+              : <span>Step 3에서 생성한 해시 (비밀번호 없이 공개 시 빈 값)</span>
+            }
+          </p>
         </div>
       </div>
     </div>,
