@@ -9,7 +9,7 @@ interface SetupWizardProps {
   onSkip: () => void;
 }
 
-type Mode = 'choose' | 'first' | 'additional';
+type Mode = 'choose' | 'first' | 'additional' | 'portal';
 type OS = 'mac' | 'windows';
 
 // ─── CLI Auto-fill Component ──────────────────────────────────────────────────
@@ -718,6 +718,217 @@ bun run start`;
   );
 }
 
+// ─── Portal Vercel Wizard ─────────────────────────────────────────────────────
+
+const PORTAL_SQL = `create table if not exists portal_items (
+  id text primary key,
+  device_id text,
+  name text not null,
+  type text not null,
+  url text,
+  path text,
+  category text,
+  description text,
+  pinned boolean default false,
+  visit_count integer default 0,
+  last_visited text,
+  created_at text
+);
+
+create table if not exists portal_categories (
+  id text primary key,
+  device_id text,
+  name text not null,
+  color text,
+  "order" integer default 0
+);
+
+alter table portal_items disable row level security;
+alter table portal_categories disable row level security;`;
+
+function PortalVercelWizard({ onBack, onClose }: { onBack: () => void; onClose: () => void }) {
+  const [step, setStep] = useState(0);
+  const [os, setOs] = useState<OS>('mac');
+  const [copied, setCopied] = useState<Record<string, boolean>>({});
+
+  function copy(key: string, text: string) {
+    navigator.clipboard.writeText(text);
+    setCopied(p => ({ ...p, [key]: true }));
+    setTimeout(() => setCopied(p => ({ ...p, [key]: false })), 1500);
+  }
+
+  const hashCmdMac = `printf 'your-password' | shasum -a 256 | awk '{print $1}'`;
+  const hashCmdWin = `$bytes = [System.Text.Encoding]::UTF8.GetBytes("your-password")
+$hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
+($hash | ForEach-Object { $_.ToString("x2") }) -join ""`;
+
+  const vercelCmds = `npm install -g vercel
+vercel login
+vercel
+vercel env add VITE_SUPABASE_URL
+vercel env add VITE_SUPABASE_ANON_KEY
+vercel env add VITE_PORTAL_PASSWORD_HASH
+vercel --prod`;
+
+  const steps = [
+    { title: 'Fork & Vercel CLI 설치' },
+    { title: 'Supabase 테이블 생성' },
+    { title: '비밀번호 해시 생성' },
+    { title: 'Vercel 환경 변수 & 배포' },
+    { title: '기기 연결' },
+  ];
+
+  const stepContent = [
+    /* 0: Fork & CLI */
+    <div key={0} className="space-y-5">
+      <InfoBox color="blue">
+        GitHub에서 이 저장소를 Fork하고, Vercel CLI를 설치합니다.
+      </InfoBox>
+      <div className="space-y-3">
+        <div>
+          <p className="text-xs text-zinc-400 mb-2">① 저장소 Fork</p>
+          <a href="https://github.com/intenet1001-commits/portmanagement/fork"
+            target="_blank" rel="noopener"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-lg text-sm text-white transition-colors">
+            <ExternalLink className="w-3.5 h-3.5" /> GitHub에서 Fork 열기
+          </a>
+        </div>
+        <div>
+          <p className="text-xs text-zinc-400 mb-2">② Vercel CLI 설치</p>
+          <CodeBlock label="터미널에서 실행" code="npm install -g vercel" />
+        </div>
+        <div>
+          <p className="text-xs text-zinc-400 mb-2">③ Vercel 로그인 (브라우저 인증)</p>
+          <CodeBlock label="" code="vercel login" />
+        </div>
+      </div>
+    </div>,
+
+    /* 1: Supabase SQL */
+    <div key={1} className="space-y-4">
+      <InfoBox color="blue">
+        Supabase 대시보드 → <strong>SQL Editor</strong> 에서 아래 SQL을 실행합니다.<br />
+        이미 로컬 앱 마법사로 Supabase를 설정했다면, portal_items · portal_categories 두 테이블만 추가하면 됩니다.
+      </InfoBox>
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <p className="text-xs text-zinc-400">Supabase SQL Editor에 붙여넣기</p>
+          <button onClick={() => copy('sql', PORTAL_SQL)}
+            className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1 transition-colors">
+            <Copy className="w-3 h-3" />{copied['sql'] ? '복사됨!' : 'SQL 복사'}
+          </button>
+        </div>
+        <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 overflow-x-auto leading-relaxed whitespace-pre-wrap">{PORTAL_SQL}</pre>
+      </div>
+    </div>,
+
+    /* 2: Password hash */
+    <div key={2} className="space-y-5">
+      <InfoBox color="blue">
+        포털 접근용 비밀번호를 SHA-256으로 해시합니다. 비밀번호 없이 공개 운영하려면 이 단계를 건너뛰세요.
+      </InfoBox>
+      <OsToggle os={os} onChange={setOs} />
+      {os === 'mac' ? (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs text-zinc-400">터미널에서 실행 (<code className="text-violet-400">your-password</code>를 실제 비밀번호로 교체)</p>
+            <button onClick={() => copy('hash', hashCmdMac)} className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1"><Copy className="w-3 h-3" />{copied['hash'] ? '복사됨!' : '복사'}</button>
+          </div>
+          <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 font-mono">{hashCmdMac}</pre>
+        </div>
+      ) : (
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-xs text-zinc-400">PowerShell에서 실행 (<code className="text-violet-400">your-password</code>를 실제 비밀번호로 교체)</p>
+            <button onClick={() => copy('hash', hashCmdWin)} className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1"><Copy className="w-3 h-3" />{copied['hash'] ? '복사됨!' : '복사'}</button>
+          </div>
+          <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 font-mono whitespace-pre-wrap">{hashCmdWin}</pre>
+        </div>
+      )}
+      <InfoBox color="green">
+        출력된 64자리 hex 값을 복사해 둡니다. 다음 단계에서 사용합니다.
+      </InfoBox>
+    </div>,
+
+    /* 3: Vercel deploy */
+    <div key={3} className="space-y-4">
+      <InfoBox color="blue">
+        Fork한 저장소 루트에서 아래 명령을 순서대로 실행합니다.<br />
+        <code className="text-violet-400">vercel env add</code> 실행 시 값 입력 후 Enter, <strong>Production</strong> 환경 선택.
+      </InfoBox>
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <p className="text-xs text-zinc-400">터미널 — 저장소 루트에서 실행</p>
+          <button onClick={() => copy('vercel', vercelCmds)} className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1"><Copy className="w-3 h-3" />{copied['vercel'] ? '복사됨!' : '전체 복사'}</button>
+        </div>
+        <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 font-mono leading-loose">{vercelCmds}</pre>
+      </div>
+      <div className="rounded-xl border border-zinc-700 p-4 space-y-2 text-xs text-zinc-400">
+        <p className="font-medium text-zinc-300">입력 값 안내</p>
+        <div className="space-y-1">
+          <p><code className="text-violet-400">VITE_SUPABASE_URL</code> — Supabase 대시보드 → Project Settings → API → Project URL</p>
+          <p><code className="text-violet-400">VITE_SUPABASE_ANON_KEY</code> — 같은 페이지 anon/public key</p>
+          <p><code className="text-violet-400">VITE_PORTAL_PASSWORD_HASH</code> — Step 3에서 생성한 64자리 해시 (비밀번호 없이 공개 시 빈 값)</p>
+        </div>
+      </div>
+    </div>,
+
+    /* 4: Connect device */
+    <div key={4} className="space-y-4">
+      <InfoBox color="green">
+        배포가 완료됐습니다! 이제 로컬 앱과 연결합니다.
+      </InfoBox>
+      <ol className="space-y-4 text-sm text-zinc-300">
+        <li className="flex gap-3">
+          <span className="w-6 h-6 rounded-full bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-xs text-blue-400 shrink-0 mt-0.5">1</span>
+          <div>
+            <p className="font-medium">로컬 앱에서 Push 실행</p>
+            <p className="text-xs text-zinc-500 mt-1">북마크 탭 → <strong>Push</strong> 버튼 클릭 → Supabase에 이 기기 데이터 등록</p>
+          </div>
+        </li>
+        <li className="flex gap-3">
+          <span className="w-6 h-6 rounded-full bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-xs text-blue-400 shrink-0 mt-0.5">2</span>
+          <div>
+            <p className="font-medium">배포된 URL 접속</p>
+            <p className="text-xs text-zinc-500 mt-1">비밀번호 입력 → 기기 목록에서 이 기기 선택 → 데이터 자동 Pull</p>
+          </div>
+        </li>
+        <li className="flex gap-3">
+          <span className="w-6 h-6 rounded-full bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-xs text-blue-400 shrink-0 mt-0.5">3</span>
+          <div>
+            <p className="font-medium">이후 동기화</p>
+            <p className="text-xs text-zinc-500 mt-1">로컬 앱 북마크 탭 → Push / 웹 포털 헤더 → Pull</p>
+          </div>
+        </li>
+      </ol>
+      <div className="pt-2">
+        <button onClick={onClose}
+          className="w-full py-2.5 bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold rounded-lg transition-colors flex items-center justify-center gap-2">
+          완료 <Check className="w-4 h-4" />
+        </button>
+      </div>
+    </div>,
+  ];
+
+  const canNext = [true, true, true, true, true];
+
+  return (
+    <WizardLayout
+      title="북마크 포털 배포"
+      progressColor="blue"
+      steps={steps}
+      step={step}
+      setStep={setStep}
+      canNext={canNext}
+      onBack={onBack}
+      onComplete={onClose}
+      canComplete={true}
+    >
+      {stepContent[step]}
+    </WizardLayout>
+  );
+}
+
 // ─── Shared Wizard Layout ──────────────────────────────────────────────────────
 
 function WizardLayout({
@@ -825,7 +1036,7 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                 <h2 className="text-2xl font-bold text-white">어떤 상황인가요?</h2>
                 <p className="text-zinc-400 text-sm">상황에 맞는 맞춤 가이드로 안내합니다.</p>
               </div>
-              <div className="grid grid-cols-2 gap-4 w-full max-w-xl">
+              <div className="grid grid-cols-3 gap-4 w-full max-w-2xl">
                 <button onClick={() => setMode('first')}
                   className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-blue-500/50 rounded-2xl p-7 text-left transition-all duration-200">
                   <div className="w-10 h-10 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-blue-500/20 transition-all">
@@ -848,11 +1059,23 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
+                <button onClick={() => setMode('portal')}
+                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-violet-500/50 rounded-2xl p-7 text-left transition-all duration-200">
+                  <div className="w-10 h-10 bg-violet-500/10 border border-violet-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-violet-500/20 transition-all">
+                    <Globe className="w-5 h-5 text-violet-400" />
+                  </div>
+                  <h3 className="text-base font-semibold text-white mb-1">북마크 포털 배포</h3>
+                  <p className="text-sm text-zinc-500 leading-relaxed">Vercel로 북마크를<br />외부에서도 접근 가능하게</p>
+                  <div className="flex items-center gap-1 text-violet-400 text-xs mt-4 group-hover:gap-2 transition-all">
+                    시작하기 <ChevronRight className="w-3.5 h-3.5" />
+                  </div>
+                </button>
               </div>
             </div>
           )}
           {mode === 'first' && <FirstSetupWizard onComplete={onComplete} onBack={() => setMode('choose')} />}
           {mode === 'additional' && <AdditionalDeviceWizard onComplete={onComplete} onBack={() => setMode('choose')} />}
+          {mode === 'portal' && <PortalVercelWizard onBack={() => setMode('choose')} onClose={onSkip} />}
         </div>
       </div>
     </div>
