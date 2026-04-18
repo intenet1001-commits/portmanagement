@@ -586,6 +586,27 @@ const getSessionName = (item: PortInfo): string => {
   return item.name.replace(/\s+/g, '-');
 };
 
+/**
+ * 워크트리용 다음 사용 가능한 포트.
+ * mainPort가 있으면 mainPort×10 + 1,2,3... 순으로 탐색 (예: 9025 → 90251, 90252...)
+ * mainPort 없으면 10001+ 범위에서 탐색
+ */
+const getNextWorktreePort = (ports: PortInfo[], mainPort?: number): number => {
+  const used = new Set(ports.map(p => p.port).filter((p): p is number => p != null));
+  if (mainPort) {
+    const base = mainPort * 10;
+    if (base <= 65534) {
+      for (let i = 1; i <= 9; i++) {
+        if (!used.has(base + i)) return base + i;
+      }
+    }
+  }
+  for (let p = 10001; p <= 19999; p++) {
+    if (!used.has(p)) return p;
+  }
+  return 10001;
+};
+
 /** Race a promise against a timeout. Rejects with Error if ms elapses first. */
 const withTimeout = <T,>(promise: PromiseLike<T>, ms: number): Promise<T> =>
   Promise.race([
@@ -739,6 +760,11 @@ function App() {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
   const [worktreePickerValue, setWorktreePickerValue] = useState('');
+  // 머지 확인 모달
+  const [mergeConfirm, setMergeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo; mainBranch: string; commits: string; stat: string; isDirty: boolean } | null>(null);
+  const [mergeError, setMergeError] = useState<{ message: string; hasConflict: boolean; folderPath: string } | null>(null);
+  const [mergeLoading, setMergeLoading] = useState(false);
+  const [deleteWorktreeConfirm, setDeleteWorktreeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo } | null>(null);
   const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
   const [expandedWorktreeIds, setExpandedWorktreeIds] = useState<Set<string>>(new Set());
   const [worktreeLists, setWorktreeLists] = useState<Record<string, WorktreeInfo[]>>({});
@@ -847,32 +873,75 @@ function App() {
     }
   }, [worktreeNewBranch, loadWorktrees]);
 
-  const handleWorktreeRemove = useCallback(async (item: PortInfo, wt: WorktreeInfo) => {
+  const handleWorktreeRemove = useCallback((item: PortInfo, wt: WorktreeInfo) => {
     if (!item.folderPath) return;
+    setDeleteWorktreeConfirm({ item, wt });
+  }, []);
+
+  const executeWorktreeDelete = useCallback(async () => {
+    if (!deleteWorktreeConfirm) return;
+    const { item, wt } = deleteWorktreeConfirm;
     const name = wt.path.split('/').pop();
+    setDeleteWorktreeConfirm(null);
     try {
       await API.gitWorktreeRemove(wt.path);
       showToast(`워크트리 제거됨: ${name}`, 'success');
-      await loadWorktrees(item.id, item.folderPath);
+      await loadWorktrees(item.id, item.folderPath!);
     } catch (e) {
       showToast(`워크트리 제거 실패: ${e}`, 'error');
     }
-  }, [loadWorktrees]);
+  }, [deleteWorktreeConfirm, loadWorktrees]);
 
   const handleWorktreeMerge = useCallback(async (item: PortInfo, wt: WorktreeInfo) => {
-    if (!item.folderPath || !wt.branch) return;
-    const name = wt.path.split('/').pop();
+    if (!item.folderPath) { showToast('folderPath가 없습니다', 'error'); return; }
+    if (!wt.branch) { showToast('브랜치 이름을 알 수 없습니다 (워크트리 새로고침 후 재시도)', 'error'); return; }
+    // 프리뷰 로드 후 확인 모달 표시
+    setMergeLoading(true);
     try {
-      const output = await API.gitMergeBranch(item.folderPath, wt.branch);
-      showToast(`머지 완료: ${wt.branch} → main`, 'success');
+      const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+      const res = await fetch(`${baseUrl}/api/git-merge-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath: item.folderPath, branchName: wt.branch }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        // 진행 중인 머지 → 바로 에러 모달 (Abort 버튼 포함)
+        if (data.hasMergeInProgress) {
+          setMergeError({ message: data.error, hasConflict: true, folderPath: item.folderPath! });
+        } else {
+          throw new Error(data.error ?? '프리뷰 실패');
+        }
+        return;
+      }
+      setMergeConfirm({ item, wt, mainBranch: data.mainBranch, commits: data.commits, stat: data.stat, isDirty: data.isDirty });
+    } catch (e) {
+      showToast(`프리뷰 실패: ${(e as Error).message}`, 'error');
+    } finally {
+      setMergeLoading(false);
+    }
+  }, []);
+
+  const executeMerge = useCallback(async () => {
+    if (!mergeConfirm) return;
+    const { item, wt } = mergeConfirm;
+    setMergeLoading(true);
+    try {
+      const output = await API.gitMergeBranch(item.folderPath!, wt.branch!);
+      showToast(`머지 완료: ${wt.branch} → ${mergeConfirm.mainBranch}`, 'success');
       if (output) console.log('[Merge output]', output);
       await API.gitWorktreeRemove(wt.path);
-      showToast(`워크트리 제거됨: ${name}`, 'success');
-      await loadWorktrees(item.id, item.folderPath);
+      showToast(`워크트리 제거됨: ${wt.path.split('/').pop()}`, 'success');
+      await loadWorktrees(item.id, item.folderPath!);
+      setMergeConfirm(null);
     } catch (e) {
-      showToast(`머지 실패: ${(e as Error).message ?? e}`, 'error');
+      const msg = (e as Error).message ?? String(e);
+      setMergeConfirm(null);
+      setMergeError({ message: msg, hasConflict: msg.includes('충돌') || msg.includes('CONFLICT'), folderPath: item.folderPath! });
+    } finally {
+      setMergeLoading(false);
     }
-  }, [loadWorktrees]);
+  }, [mergeConfirm, loadWorktrees]);
 
   const openTmuxClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'tmux' });
@@ -2313,6 +2382,153 @@ function App() {
           <button onClick={() => { fetch('/api/ports').then(() => setApiServerOnline(true)).catch(() => {}); }} className="ml-4 px-2 py-0.5 bg-black/20 rounded hover:bg-black/30 text-xs">재확인</button>
         </div>
       )}
+      {/* 머지 확인 모달 */}
+      {deleteWorktreeConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-red-500/15 p-2 rounded-lg border border-red-500/30">
+                <Trash2 className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-sm">워크트리 삭제</h3>
+                <p className="text-zinc-400 text-xs mt-0.5">이 작업은 되돌릴 수 없습니다</p>
+              </div>
+            </div>
+            <div className="bg-zinc-900/60 rounded-lg p-3 border border-zinc-800">
+              <p className="text-xs text-zinc-300">
+                <span className="text-red-400 font-mono">{deleteWorktreeConfirm.wt.branch ?? deleteWorktreeConfirm.wt.path.split('/').pop()}</span> 워크트리를 삭제하시겠습니까?
+              </p>
+              <p className="text-xs text-zinc-500 mt-1 font-mono break-all">{deleteWorktreeConfirm.wt.path}</p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setDeleteWorktreeConfirm(null)}
+                className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 rounded-lg transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={executeWorktreeDelete}
+                className="px-4 py-1.5 text-xs bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 rounded-lg transition-colors"
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mergeConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-lg p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-blue-500/15 p-2 rounded-lg border border-blue-500/30">
+                <GitBranch className="w-5 h-5 text-blue-400" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-white">머지 확인</h2>
+                <p className="text-xs text-zinc-400 mt-0.5 font-mono">
+                  <span className="text-teal-400">{mergeConfirm.wt.branch}</span>
+                  <span className="text-zinc-500"> → </span>
+                  <span className="text-zinc-300">{mergeConfirm.mainBranch}</span>
+                </p>
+              </div>
+            </div>
+            {mergeConfirm.isDirty && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300">
+                <span>⚠️</span>
+                <span>워킹 트리에 미커밋 변경사항이 있습니다. <span className="font-medium">--autostash</span>로 자동 스태시 후 머지하고 팝합니다.</span>
+              </div>
+            )}
+            {mergeConfirm.commits ? (
+              <div className="bg-black/40 rounded-lg p-3 border border-zinc-800">
+                <p className="text-[10px] text-zinc-500 mb-1.5 font-medium uppercase tracking-wide">머지될 커밋</p>
+                <pre className="text-xs text-zinc-300 font-mono whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{mergeConfirm.commits}</pre>
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-500 italic">커밋 없음 (이미 최신 상태)</p>
+            )}
+            {mergeConfirm.stat && (
+              <div className="bg-black/40 rounded-lg p-3 border border-zinc-800">
+                <p className="text-[10px] text-zinc-500 mb-1.5 font-medium uppercase tracking-wide">변경 파일</p>
+                <pre className="text-xs text-zinc-400 font-mono whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">{mergeConfirm.stat}</pre>
+              </div>
+            )}
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                onClick={async () => {
+                  const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                  await fetch(`${baseUrl}/api/open-terminal-git-merge`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folderPath: mergeConfirm.item.folderPath, branchName: mergeConfirm.wt.branch, name: mergeConfirm.item.name }),
+                  });
+                  setMergeConfirm(null);
+                  showToast('터미널에서 git merge 실행 중', 'success');
+                }}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors"
+              >
+                터미널에서 머지
+              </button>
+              <button onClick={() => setMergeConfirm(null)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
+                취소
+              </button>
+              <button
+                onClick={executeMerge}
+                disabled={mergeLoading}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {mergeLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5" />}
+                Merge
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 머지 에러 모달 (충돌 등) */}
+      {mergeError && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#18181b] rounded-xl border border-red-800/50 w-full max-w-lg p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-red-500/15 p-2 rounded-lg border border-red-500/30">
+                <XIcon className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-white">머지 실패</h2>
+                {mergeError.hasConflict && <p className="text-xs text-red-400 mt-0.5">충돌 발생 — 해결 후 커밋하거나 Abort하세요</p>}
+              </div>
+            </div>
+            <div className="bg-black/40 rounded-lg p-3 border border-red-900/30">
+              <pre className="text-xs text-red-300 font-mono whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto">{mergeError.message}</pre>
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              {mergeError.hasConflict && (
+                <button
+                  onClick={async () => {
+                    try {
+                      const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                      await fetch(`${baseUrl}/api/git-merge-abort`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ folderPath: mergeError.folderPath }),
+                      });
+                      showToast('머지 중단됨 (merge --abort)', 'success');
+                      setMergeError(null);
+                    } catch (e) { showToast('abort 실패: ' + e, 'error'); }
+                  }}
+                  className="px-4 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-400 text-sm rounded-lg border border-red-500/30 transition-colors"
+                >
+                  Abort Merge
+                </button>
+              )}
+              <button onClick={() => setMergeError(null)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 워크트리 경로 피커 모달 */}
       {worktreePickerState && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
@@ -2336,6 +2552,7 @@ function App() {
               <div className="mb-3 border border-zinc-700 rounded-lg overflow-hidden">
                 {detectedWorktrees.map((wt) => {
                   const wtBasename = wt.path.replace(/\/$/, '').split('/').pop() ?? wt.path;
+                  const displayName = wt.branch || wtBasename;
                   const isSelected = worktreePickerValue === wt.path;
                   return (
                     <button
@@ -2346,10 +2563,13 @@ function App() {
                       }`}
                     >
                       <div className="min-w-0">
-                        <span className={`font-semibold ${isSelected ? 'text-violet-300' : 'text-zinc-200'}`}>{wtBasename}</span>
-                        <span className="text-zinc-600 font-mono text-[10px] ml-2 truncate">{wt.path}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-semibold ${isSelected ? 'text-violet-300' : wt.is_main ? 'text-zinc-300' : 'text-teal-300'}`}>{displayName}</span>
+                          {wt.is_main && <span className="text-[10px] text-zinc-500">(main)</span>}
+                        </div>
+                        <span className="text-zinc-600 font-mono text-[10px] truncate block">{wtBasename}</span>
                       </div>
-                      {wt.branch && (
+                      {wt.branch && wt.branch !== displayName && (
                         <span className="text-zinc-500 ml-2 shrink-0 text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded">{wt.branch}</span>
                       )}
                     </button>
@@ -2867,6 +3087,23 @@ function App() {
                 onChange={(e) => setGithubUrl(e.target.value)}
                 onKeyPress={handleKeyPress}
                 className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+              />
+              <input
+                type="text"
+                placeholder="워크트리 경로 (선택사항) — 입력 시 포트 자동 배정 (메인포트×10+n)"
+                value={worktreePath}
+                onChange={(e) => {
+                  setWorktreePath(e.target.value);
+                  // 워크트리 경로 입력 시 포트가 비어있으면 메인포트 기반 자동 배정
+                  if (!port && e.target.value.trim()) {
+                    const mainPort = folderPath
+                      ? ports.find(p => p.folderPath === folderPath)?.port
+                      : undefined;
+                    setPort(getNextWorktreePort(ports, mainPort).toString());
+                  }
+                }}
+                onKeyPress={handleKeyPress}
+                className="w-full px-3 py-2 text-sm bg-black/30 border border-amber-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-all"
               />
               <div className="flex gap-2">
                 <input
@@ -3648,24 +3885,128 @@ function App() {
                                 </span>
                                 {wt.is_main && <span className="text-[10px] text-zinc-500 shrink-0">(main)</span>}
                               </div>
-                              {!wt.is_main && (
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <button
-                                    onClick={() => handleWorktreeMerge(item, wt)}
-                                    className="px-1.5 py-0.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[10px] rounded border border-blue-500/20"
-                                    title={`Merge ${wt.branch} into main`}
-                                  >
-                                    Merge
-                                  </button>
-                                  <button
-                                    onClick={() => handleWorktreeRemove(item, wt)}
-                                    className="px-1.5 py-0.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] rounded border border-red-500/20"
-                                    title="워크트리 삭제"
-                                  >
-                                    Remove
-                                  </button>
-                                </div>
-                              )}
+                              {!wt.is_main && (() => {
+                                // 이 워크트리에 대응하는 PortInfo 탐색 (main item 제외, worktreePath 매칭)
+                                const wtPort = ports.find(p => p.id !== item.id && p.worktreePath === wt.path);
+                                // 전용 PortInfo 없어도 main 포트 기반으로 포트 추론 (단, *10 결과가 65535 초과 시 undefined)
+                                const nonMainWorktrees = (worktreeLists[item.id] ?? []).filter(w => !w.is_main);
+                                const wtIndex = nonMainWorktrees.findIndex(w => w.path === wt.path);
+                                const rawInferred = item.port ? item.port * 10 + (wtIndex + 1) : undefined;
+                                const inferredPort = rawInferred && rawInferred <= 65535
+                                  ? rawInferred
+                                  : wtIndex >= 0 ? getNextWorktreePort(ports, item.port) + wtIndex : undefined;
+                                const effectivePort = wtPort?.port ?? inferredPort;
+                                return (
+                                  <div className="flex items-center gap-1 shrink-0 flex-wrap">
+                                    {/* 실행: 전용 PortInfo있으면 executeCommand, 없으면 PORT=N 터미널 */}
+                                    <button
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (wtPort && (wtPort.commandPath || wtPort.terminalCommand)) {
+                                          executeCommand(wtPort);
+                                          showToast(`실행: ${wt.branch} (포트 ${effectivePort})`, 'success');
+                                        } else {
+                                          try {
+                                            const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                                            await fetch(`${baseUrl}/api/open-terminal-worktree-run`, {
+                                              method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                              body: JSON.stringify({ worktreePath: wt.path, name: item.name, terminalCommand: item.terminalCommand, port: effectivePort })
+                                            });
+                                            showToast(`터미널 열기: ${wt.branch} (포트 ${effectivePort ?? '?'})`, 'success');
+                                          } catch (err) { showToast('실행 실패: ' + err, 'error'); }
+                                        }
+                                      }}
+                                      className="px-1.5 py-0.5 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-[10px] rounded border border-green-500/20"
+                                      title={`dev server 실행 (포트 ${effectivePort ?? '?'})`}
+                                    >
+                                      실행{effectivePort ? `(${effectivePort})` : ''}
+                                    </button>
+                                    {/* 열기: effectivePort 기반 브라우저 열기 (서버 실행 확인 후) */}
+                                    {effectivePort && (
+                                      <button
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
+                                          const targetUrl = `http://localhost:${effectivePort}`;
+                                          try {
+                                            const isRunning = await API.checkPortStatus(effectivePort);
+                                            if (!isRunning) {
+                                              showToast(`포트 ${effectivePort}에 서버가 실행중이지 않습니다. 먼저 실행해주세요.`, 'error');
+                                              return;
+                                            }
+                                            if (isTauri()) {
+                                              await API.openInChrome(targetUrl);
+                                            } else {
+                                              const r = await fetch('/api/open-in-chrome', {
+                                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({ url: targetUrl })
+                                              });
+                                              if (!r.ok) throw new Error((await r.json()).error);
+                                            }
+                                          } catch (err) {
+                                            showToast(`열기 실패: ${err}`, 'error');
+                                          }
+                                        }}
+                                        className="px-1.5 py-0.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-[10px] rounded border border-purple-500/20"
+                                        title={`http://localhost:${effectivePort} 열기`}
+                                      >
+                                        열기
+                                      </button>
+                                    )}
+                                    {/* 커밋: wt.path에서 git add -A && commit */}
+                                    <button
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        try {
+                                          const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                                          await fetch(`${baseUrl}/api/open-terminal-git-commit`, {
+                                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ worktreePath: wt.path, folderPath: item.folderPath, name: item.name })
+                                          });
+                                          showToast(`커밋: ${wt.branch}`, 'success');
+                                        } catch (err) { showToast('커밋 실패: ' + err, 'error'); }
+                                      }}
+                                      className="px-1.5 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-[10px] rounded border border-amber-500/20"
+                                      title={`git add -A && commit (${wt.path})`}
+                                    >
+                                      커밋
+                                    </button>
+                                    {/* 푸시: wt.path에서 feature branch push */}
+                                    <button
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        try {
+                                          const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                                          await fetch(`${baseUrl}/api/open-terminal-git-push`, {
+                                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ folderPath: wt.path, name: `${item.name}(${wt.branch})`, githubUrl: item.githubUrl })
+                                          });
+                                          showToast(`푸시: ${wt.branch}`, 'success');
+                                        } catch (err) { showToast('푸시 실패: ' + err, 'error'); }
+                                      }}
+                                      className="px-1.5 py-0.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[10px] rounded border border-blue-500/20"
+                                      title={`git push: ${wt.branch} → remote`}
+                                    >
+                                      푸시
+                                    </button>
+                                    {/* 머지: wt.branch → main (confirm modal) */}
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleWorktreeMerge(item, wt); }}
+                                      className="px-1.5 py-0.5 bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 text-[10px] rounded border border-teal-500/20"
+                                      title={`${wt.branch} → main 머지`}
+                                    >
+                                      머지
+                                    </button>
+                                    {/* 삭제: worktree 제거 */}
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleWorktreeRemove(item, wt); }}
+                                      className="px-1.5 py-0.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] rounded border border-red-500/20"
+                                      title="워크트리 삭제"
+                                    >
+                                      삭제
+                                    </button>
+                                  </div>
+                                );
+                              })()}
                             </div>
                           ))}
                         </div>
