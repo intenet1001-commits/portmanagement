@@ -1033,12 +1033,15 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="text-xs text-zinc-600 group-hover:text-zinc-500">{count}</span>
-                    <button
+                    <span
+                      role="button"
+                      tabIndex={0}
                       onClick={e => { e.stopPropagation(); deleteCategory(cat.id); }}
-                      className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity ml-0.5"
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); deleteCategory(cat.id); } }}
+                      className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity ml-0.5 cursor-pointer"
                     >
                       <X className="w-3 h-3" />
-                    </button>
+                    </span>
                   </div>
                 </button>
               );

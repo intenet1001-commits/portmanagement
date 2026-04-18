@@ -1327,13 +1327,26 @@ fn git_worktree_remove(worktree_path: String) -> Result<(), String> {
     if !worktree_path.starts_with('/') {
         return Err("worktree_path must be absolute".to_string());
     }
-    let parent = std::path::Path::new(&worktree_path)
-        .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|| "/tmp".to_string());
+    // Find main repo from the worktree's .git file (e.g. "gitdir: /main/.git/worktrees/name")
+    let git_file = format!("{}/.git", worktree_path);
+    let main_repo_dir = std::fs::read_to_string(&git_file)
+        .ok()
+        .and_then(|content| {
+            content.lines()
+                .find_map(|l| l.strip_prefix("gitdir: ").map(|s| s.trim().to_string()))
+        })
+        .and_then(|gitdir| {
+            gitdir.find("/.git/worktrees/").map(|idx| gitdir[..idx].to_string())
+        })
+        .unwrap_or_else(|| {
+            std::path::Path::new(&worktree_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| "/tmp".to_string())
+        });
     let output = Command::new("git")
         .args(["worktree", "remove", "--force", &worktree_path])
-        .current_dir(&parent)
+        .current_dir(&main_repo_dir)
         .output()
         .map_err(|e| format!("git not found: {}", e))?;
     if !output.status.success() {
@@ -1347,17 +1360,9 @@ fn git_merge_branch(folder_path: String, branch_name: String) -> Result<String, 
     if !folder_path.starts_with('/') {
         return Err("folder_path must be absolute".to_string());
     }
-    // preflight: dirty working tree 거부
-    let status_out = Command::new("git")
-        .args(["status", "--porcelain"])
-        .current_dir(&folder_path)
-        .output()
-        .map_err(|e| format!("git not found: {}", e))?;
-    if !String::from_utf8_lossy(&status_out.stdout).trim().is_empty() {
-        return Err("작업 트리가 깨끗하지 않습니다. 먼저 커밋/스태시하세요.".to_string());
-    }
+    // --autostash: 변경 사항 자동 스태시 후 머지, 이후 자동 팝
     let output = Command::new("git")
-        .args(["merge", "--no-ff", "--no-edit", &branch_name])
+        .args(["merge", "--no-ff", "--no-edit", "--autostash", &branch_name])
         .current_dir(&folder_path)
         .env("GIT_EDITOR", "true")
         .env("GIT_TERMINAL_PROMPT", "0")
