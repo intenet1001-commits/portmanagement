@@ -2876,7 +2876,7 @@ function App() {
                   </h2>
                   <p className="text-xs text-zinc-400 mt-0.5">
                     {isBuilding
-                      ? buildType === 'windows' ? 'GitHub Actions 진행 중...' : '빌드 진행 중...'
+                      ? '빌드 진행 중...'
                       : '빌드 완료'}
                   </p>
                 </div>
