@@ -75,12 +75,40 @@ const PORTS_DATA_FILE = join(APP_DATA_DIR, "ports.json");
 const WORKSPACE_ROOTS_FILE = join(APP_DATA_DIR, "workspace-roots.json");
 const PORTAL_DATA_FILE = join(APP_DATA_DIR, "portal.json");
 
+// 다른 기기에서 동기된 경로를 현재 기기 경로로 자동 수정
+function remapPathsToCurrentUser(ports: any[]): { ports: any[]; changed: boolean } {
+  const home = homedir();
+  const homeMatch = home.match(/^\/Users\/([^/]+)/);
+  if (!homeMatch) return { ports, changed: false };
+  const currentUser = homeMatch[1];
+
+  let changed = false;
+  const remapped = ports.map((p: any) => {
+    const fix = (path?: string) => {
+      if (!path || !path.startsWith('/Users/')) return path;
+      const m = path.match(/^\/Users\/([^/]+)(\/.*)?$/);
+      if (!m || m[1] === currentUser) return path;
+      const candidate = `/Users/${currentUser}${m[2] ?? ''}`;
+      if (existsSync(candidate)) { changed = true; return candidate; }
+      return path;
+    };
+    return { ...p, folderPath: fix(p.folderPath), commandPath: fix(p.commandPath) };
+  });
+  return { ports: remapped, changed };
+}
+
 // 포트 데이터 로드
 async function loadPortsData() {
   try {
     const file = Bun.file(PORTS_DATA_FILE);
     if (await file.exists()) {
-      return await file.json();
+      const data = await file.json();
+      const { ports: remapped, changed } = remapPathsToCurrentUser(data);
+      if (changed) {
+        console.log('[Data] Auto-remapped paths to current user home dir — saving');
+        await Bun.write(PORTS_DATA_FILE, JSON.stringify(remapped, null, 2));
+      }
+      return remapped;
     }
   } catch (error) {
     console.error("[Data] Error loading ports data:", error);
@@ -922,6 +950,132 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/open-terminal-git-pull" && req.method === "POST") {
+      try {
+        const { folderPath, name, githubUrl } = await req.json();
+        // pull은 항상 메인 folderPath에서 실행
+        const workDir = folderPath as string;
+        const baseName = (name || 'git-pull') as string;
+        const displayName = baseName;
+        const title = `[git-pull] ${displayName}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        // GitHub URL이 있으면 origin remote 보장
+        const remoteCmd = githubUrl
+          ? `git remote set-url origin '${escapeSq(githubUrl as string)}' 2>/dev/null || git remote add origin '${escapeSq(githubUrl as string)}'; `
+          : '';
+        const cmd = `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && ${remoteCmd}git pull`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true, message: "터미널에서 git pull 실행" }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-terminal-git-push" && req.method === "POST") {
+      try {
+        const { folderPath, name, githubUrl } = await req.json();
+        // push는 항상 메인 folderPath에서 실행
+        const workDir = folderPath as string;
+        const baseName = (name || 'git-push') as string;
+        const displayName = baseName;
+        const title = `[git-push] ${displayName}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        // GitHub URL이 있으면 origin remote 보장
+        const remoteCmd = githubUrl
+          ? `git remote set-url origin '${escapeSq(githubUrl as string)}' 2>/dev/null || git remote add origin '${escapeSq(githubUrl as string)}'; `
+          : '';
+        const cmd = `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && ${remoteCmd}git push || git push --set-upstream origin $(git branch --show-current)`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true, message: "터미널에서 git push 실행" }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-terminal-git-commit" && req.method === "POST") {
+      try {
+        const { worktreePath, folderPath, name } = await req.json();
+        // 커밋은 worktreePath 우선, 없으면 folderPath
+        const workDir = (worktreePath as string | undefined) || (folderPath as string);
+        const baseName = (name || 'git-commit') as string;
+        const worktreeName = worktreePath
+          ? (worktreePath as string).replace(/\/$/, '').split('/').pop()
+          : null;
+        const displayName = worktreeName ? `${baseName}(${worktreeName})` : baseName;
+        const title = `[git-commit] ${displayName}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        // git add -A → commit (메시지 입력 프롬프트)
+        const cmd = `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && git add -A && git status && echo "" && read -p "커밋 메시지: " msg && git commit -m "$msg"`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true, message: "터미널에서 git commit 실행" }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-in-chrome" && req.method === "POST") {
+      try {
+        const { url: targetUrl } = await req.json();
+        if (!targetUrl) return new Response(JSON.stringify({ error: "url required" }), { status: 400, headers });
+        spawn({ cmd: ["open", "-a", "Google Chrome", targetUrl as string], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-terminal-worktree-run" && req.method === "POST") {
+      try {
+        const { worktreePath, name, terminalCommand, port, folderPath } = await req.json();
+        if (!worktreePath) {
+          return new Response(JSON.stringify({ error: "worktreePath required" }), { status: 400, headers });
+        }
+        const workDir = worktreePath as string;
+        const baseName = (name || 'run') as string;
+        const wtName = workDir.replace(/\/$/, '').split('/').pop() || baseName;
+        const portLabel = port ? `(${port})` : '';
+        const displayName = `${baseName}${portLabel}(${wtName})`;
+        const title = `[run] ${displayName}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        // PORT= 환경변수 prefix + terminalCommand, 없으면 package.json/pyproject.toml 감지 후 자동 실행
+        const portPrefix = port ? `PORT=${port} ` : '';
+        let runCmd = (terminalCommand as string | undefined) || '';
+        const targetPort = port as number | undefined;
+        if (!runCmd) {
+          if (existsSync(join(workDir, 'package.json'))) {
+            // Next.js: use next dev -p directly to bypass hardcoded port in package.json
+            if (existsSync(join(workDir, 'next.config.ts')) || existsSync(join(workDir, 'next.config.js')) || existsSync(join(workDir, 'next.config.mjs'))) {
+              runCmd = targetPort ? `./node_modules/.bin/next dev -p ${targetPort}` : 'npm run dev';
+            } else {
+              runCmd = 'npm run dev';
+            }
+          } else if (existsSync(join(workDir, 'pyproject.toml'))) runCmd = 'uv run python app.py';
+          else if (existsSync(join(workDir, 'Cargo.toml'))) runCmd = 'cargo run';
+        } else if (targetPort) {
+          // Replace hardcoded -p NNNN in terminalCommand with target port
+          runCmd = runCmd.replace(/-p\s+\d+/, `-p ${targetPort}`);
+        }
+        // Auto-symlink node_modules if worktree lacks it but main project has it
+        const mainFolder = folderPath as string | undefined;
+        const symlinkSetup = (!existsSync(join(workDir, 'node_modules')) && mainFolder && existsSync(join(mainFolder, 'node_modules')))
+          ? `ln -s '${escapeSq(join(mainFolder, 'node_modules'))}' node_modules && `
+          : '';
+        // For ./node_modules/.bin/next, PORT prefix is embedded in -p flag — skip prefix
+        const effectivePrefix = runCmd.startsWith('./node_modules/.bin/next dev') ? '' : portPrefix;
+        const cmd = runCmd
+          ? `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && ${symlinkSetup}${effectivePrefix}${runCmd}`
+          : `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007'`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true, message: "워크트리 터미널 실행" }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
     if (url.pathname === "/api/install-app" && req.method === "POST") {
       try {
         // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
@@ -1226,10 +1380,96 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/git-pull" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json() as { folderPath: string };
+        if (!folderPath) return new Response(JSON.stringify({ success: false, error: "folderPath 필요" }), { headers });
+
+        const branchProc = Bun.spawn([GIT_PATH, "rev-parse", "--abbrev-ref", "HEAD"], {
+          cwd: folderPath, stdout: "pipe", stderr: "pipe",
+        });
+        await branchProc.exited;
+        const branch = (await new Response(branchProc.stdout).text()).trim() || "main";
+
+        const proc = Bun.spawn([GIT_PATH, "pull", "origin", branch], {
+          cwd: folderPath,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await proc.exited;
+        const stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        const output = (stdout + stderr).trim();
+        if (proc.exitCode !== 0) {
+          return new Response(JSON.stringify({ success: false, error: output }), { headers });
+        }
+        return new Response(JSON.stringify({ success: true, output }), { headers });
+      } catch (e: any) {
+        const msg = String(e);
+        const err = msg.includes('ENOENT') ? `폴더 접근 불가 (Google Drive/iCloud 미동기화 가능성): ${folderPath}` : msg;
+        return new Response(JSON.stringify({ success: false, error: err }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-push" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json() as { folderPath: string };
+        if (!folderPath) return new Response(JSON.stringify({ success: false, error: "folderPath 필요" }), { headers });
+
+        const branchProc = Bun.spawn([GIT_PATH, "rev-parse", "--abbrev-ref", "HEAD"], {
+          cwd: folderPath, stdout: "pipe", stderr: "pipe",
+        });
+        await branchProc.exited;
+        const branch = (await new Response(branchProc.stdout).text()).trim() || "main";
+
+        const proc = Bun.spawn([GIT_PATH, "push", "origin", branch], {
+          cwd: folderPath,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        await proc.exited;
+        const stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        const output = (stdout + stderr).trim();
+        if (proc.exitCode !== 0) {
+          return new Response(JSON.stringify({ success: false, error: output }), { headers });
+        }
+        return new Response(JSON.stringify({ success: true, output }), { headers });
+      } catch (e: any) {
+        const msg = String(e);
+        const err = msg.includes('ENOENT') ? `폴더 접근 불가 (Google Drive/iCloud 미동기화 가능성): ${folderPath}` : msg;
+        return new Response(JSON.stringify({ success: false, error: err }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-commit" && req.method === "POST") {
+      try {
+        const { worktreePath, message } = await req.json() as { worktreePath: string; message: string };
+        if (!worktreePath) return new Response(JSON.stringify({ success: false, error: "worktreePath 필요" }), { headers });
+        if (!message?.trim()) return new Response(JSON.stringify({ success: false, error: "커밋 메시지 필요" }), { headers });
+
+        const addProc = Bun.spawn([GIT_PATH, "add", "-A"], { cwd: worktreePath, stdout: "pipe", stderr: "pipe" });
+        await addProc.exited;
+
+        const proc = Bun.spawn([GIT_PATH, "commit", "-m", message.trim()], { cwd: worktreePath, stdout: "pipe", stderr: "pipe" });
+        await proc.exited;
+        const stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        const output = (stdout + stderr).trim();
+        if (proc.exitCode !== 0) return new Response(JSON.stringify({ success: false, error: output }), { headers });
+        return new Response(JSON.stringify({ success: true, output }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ success: false, error: String(e) }), { headers });
+      }
+    }
+
     if (url.pathname === "/api/list-git-worktrees" && req.method === "POST") {
       try {
         const { folderPath } = await req.json();
-        const proc = Bun.spawn(["git", "worktree", "list", "--porcelain"], {
+        if (!folderPath) {
+          return new Response(JSON.stringify({ error: "folderPath required" }), { status: 400, headers });
+        }
+        const proc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], {
           cwd: folderPath,
           stdout: "pipe",
           stderr: "pipe",
@@ -1262,6 +1502,277 @@ const server = Bun.serve({
         return new Response(JSON.stringify({ success: true, worktrees }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ success: true, worktrees: [] }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-worktree-add" && req.method === "POST") {
+      try {
+        const { folderPath, branchName, worktreePath } = await req.json();
+        if (!folderPath || !branchName) {
+          return new Response(JSON.stringify({ error: "folderPath and branchName required" }), { status: 400, headers });
+        }
+        if (!(folderPath as string).startsWith('/')) {
+          return new Response(JSON.stringify({ error: "folderPath must be absolute" }), { status: 400, headers });
+        }
+        // Allow Unicode (Korean etc.) — only strip truly invalid git branch chars
+        const safeBranch = (branchName as string).replace(/[\s~^:?*\[\\]/g, '-').replace(/\.{2,}/g, '-').replace(/^[-.]|[-.]$/g, '') || 'branch';
+        // Directory name must be ASCII-only — claude -w rejects non-ASCII paths
+        const dirSafeBranch = safeBranch.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-').replace(/^[-.]|[-.]$/g, '') || `wt${Date.now().toString(36).slice(-6)}`;
+        const isICloud = (folderPath as string).includes('com~apple~CloudDocs') || (folderPath as string).includes('Mobile Documents');
+        const home = process.env.HOME || `/Users/${process.env.USER}`;
+        const basename = (folderPath as string).replace(/\/$/, '').split('/').pop() || 'project';
+        const targetPath = worktreePath || (() => {
+          if (isICloud) {
+            // iCloud 경로: git checkout이 SIGBUS → ~/worktrees/ (iCloud 밖)에 생성
+            return `${home}/worktrees/${basename}-${dirSafeBranch}`;
+          }
+          const parts = (folderPath as string).replace(/\/$/, '').split('/');
+          parts[parts.length - 1] = parts[parts.length - 1] + '-' + dirSafeBranch;
+          return parts.join('/');
+        })();
+        // Check if worktree for this branch already exists
+        const listProc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await listProc.exited;
+        const listOut = await new Response(listProc.stdout).text();
+        const existingPath = (() => {
+          const blocks = listOut.split('\n\n');
+          for (const block of blocks) {
+            const lines = block.trim().split('\n');
+            const pathLine = lines.find(l => l.startsWith('worktree '));
+            const branchLine = lines.find(l => l === `branch refs/heads/${branchName}`);
+            if (pathLine && branchLine) return pathLine.replace('worktree ', '').trim();
+          }
+          return null;
+        })();
+        if (existingPath) {
+          // 이미 ~/worktrees/ 안이고 ASCII 경로면 바로 반환
+          const isAscii = (s: string) => /^[\x00-\x7F]*$/.test(s);
+          if (existingPath.startsWith(`${home}/worktrees/`) && isAscii(existingPath)) {
+            return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
+          }
+          // 파일이 있으면 반환, 없으면(no-checkout 잔재) 제거 후 ~/worktrees/ 재생성
+          const { readdirSync, rmSync } = await import('fs');
+          let hasFiles = false;
+          try { hasFiles = readdirSync(existingPath).some(e => e !== '.git'); } catch {}
+          if (hasFiles && isAscii(existingPath)) {
+            return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
+          }
+          // 비ASCII 경로(한국어 등) → claude -w가 거부 → 제거 후 ASCII 경로로 재생성
+          // 빈 워크트리 제거: .git 파일에서 메인 레포 경로 추출
+          try {
+            const gitContent = await Bun.file(`${existingPath}/.git`).text();
+            const m = gitContent.match(/gitdir:\s*(.+)/);
+            if (m) {
+              const mainRepo = m[1].trim().replace(/\/\.git\/worktrees\/[^/]+$/, '');
+              const rmProc = Bun.spawn([GIT_PATH, "worktree", "remove", "--force", existingPath], { cwd: mainRepo, stdout: "pipe", stderr: "pipe" });
+              await rmProc.exited;
+            }
+          } catch {}
+          try { rmSync(existingPath, { recursive: true, force: true }); } catch {}
+          // fall through → ~/worktrees/ 에 새로 생성
+        }
+        // iCloud 경로: --no-checkout으로 add 후 target에서 checkout (SIGBUS 우회)
+        const addFlags = isICloud ? ["--no-checkout"] : [];
+        // Try existing branch first, then create new branch
+        let proc = Bun.spawn([GIT_PATH, "worktree", "add", ...addFlags, targetPath, branchName], {
+          cwd: folderPath, stdout: "pipe", stderr: "pipe",
+        });
+        await proc.exited;
+        if (proc.exitCode !== 0) {
+          proc = Bun.spawn([GIT_PATH, "worktree", "add", ...addFlags, "-b", branchName, targetPath], {
+            cwd: folderPath, stdout: "pipe", stderr: "pipe",
+          });
+          await proc.exited;
+        }
+        const stderr = await new Response(proc.stderr).text();
+        if (proc.exitCode !== 0) {
+          return new Response(JSON.stringify({ error: stderr.trim() || "git worktree add failed" }), { status: 500, headers });
+        }
+        // iCloud: checkout from target dir (outside iCloud) to actually populate files
+        if (isICloud) {
+          const coProc = Bun.spawn([GIT_PATH, "checkout"], { cwd: targetPath, stdout: "pipe", stderr: "pipe" });
+          await coProc.exited;
+          // non-fatal: proceed even if checkout fails
+        }
+        return new Response(JSON.stringify({ success: true, path: targetPath }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-worktree-remove" && req.method === "POST") {
+      try {
+        const { worktreePath } = await req.json();
+        if (!worktreePath) {
+          return new Response(JSON.stringify({ error: "worktreePath required" }), { status: 400, headers });
+        }
+        if (!(worktreePath as string).startsWith('/')) {
+          return new Response(JSON.stringify({ error: "worktreePath must be absolute" }), { status: 400, headers });
+        }
+        if (!existsSync(worktreePath as string)) {
+          return new Response(JSON.stringify({ error: `Worktree path does not exist: ${worktreePath}` }), { status: 400, headers });
+        }
+        // git worktree remove은 메인 레포 컨텍스트에서 실행 필요
+        // worktree/.git 파일에서 메인 레포 경로 추출
+        let mainRepoDir: string;
+        try {
+          const gitFile = await Bun.file(`${worktreePath}/.git`).text();
+          // content: "gitdir: /path/to/main/.git/worktrees/name\n"
+          const gitdirMatch = gitFile.match(/gitdir:\s*(.+)/);
+          if (gitdirMatch) {
+            // /path/to/main/.git/worktrees/name → /path/to/main
+            mainRepoDir = gitdirMatch[1].trim().replace(/\/\.git\/worktrees\/[^/]+$/, '');
+          } else {
+            mainRepoDir = (worktreePath as string).replace(/\/[^/]+$/, '') || '/tmp';
+          }
+        } catch {
+          mainRepoDir = (worktreePath as string).replace(/\/[^/]+$/, '') || '/tmp';
+        }
+        const proc = Bun.spawn([GIT_PATH, "worktree", "remove", "--force", worktreePath], {
+          cwd: mainRepoDir, stdout: "pipe", stderr: "pipe",
+        });
+        await proc.exited;
+        const stderr = await new Response(proc.stderr).text();
+        if (proc.exitCode !== 0) {
+          return new Response(JSON.stringify({ error: stderr.trim() || "git worktree remove failed" }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-merge-preview" && req.method === "POST") {
+      try {
+        const { folderPath, branchName } = await req.json();
+        if (!folderPath || !branchName) return new Response(JSON.stringify({ error: "missing params" }), { status: 400, headers });
+        // 진행 중인 머지가 있는지 확인 (MERGE_HEAD)
+        const mergeInProgress = existsSync(`${folderPath}/.git/MERGE_HEAD`);
+        if (mergeInProgress) {
+          return new Response(JSON.stringify({
+            error: "이미 진행 중인 머지가 있습니다.\n충돌을 해결하고 'git add' 후 커밋하거나, 'Abort Merge'로 취소하세요.",
+            hasMergeInProgress: true
+          }), { status: 409, headers });
+        }
+        // 메인 브랜치 이름 파악
+        const mainProc = Bun.spawn([GIT_PATH, "rev-parse", "--abbrev-ref", "HEAD"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await mainProc.exited;
+        const mainBranch = (await new Response(mainProc.stdout).text()).trim();
+        // 머지될 커밋 목록
+        const logProc = Bun.spawn([GIT_PATH, "log", `${mainBranch}..${branchName}`, "--oneline", "--no-decorate"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await logProc.exited;
+        const commits = (await new Response(logProc.stdout).text()).trim();
+        // 파일 변경 통계
+        const statProc = Bun.spawn([GIT_PATH, "diff", "--stat", `${mainBranch}...${branchName}`], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await statProc.exited;
+        const stat = (await new Response(statProc.stdout).text()).trim();
+        // 워킹 트리 dirty 여부 (경고용, 차단 아님 — --autostash로 자동 처리됨)
+        const statusProc = Bun.spawn([GIT_PATH, "status", "--porcelain"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await statusProc.exited;
+        const isDirty = (await new Response(statusProc.stdout).text()).trim().length > 0;
+        return new Response(JSON.stringify({ mainBranch, commits, stat, isDirty }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-merge-abort" && req.method === "POST") {
+      try {
+        const { folderPath, force } = await req.json();
+        const proc = Bun.spawn([GIT_PATH, "merge", "--abort"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await proc.exited;
+        const stderr = await new Response(proc.stderr).text();
+        if (proc.exitCode !== 0) {
+          if (force) {
+            // fallback: reset --merge to clean up stuck state
+            const resetProc = Bun.spawn([GIT_PATH, "reset", "--merge"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+            await resetProc.exited;
+            const resetStderr = await new Response(resetProc.stderr).text();
+            if (resetProc.exitCode !== 0) return new Response(JSON.stringify({ error: resetStderr.trim() || stderr.trim() }), { status: 500, headers });
+            return new Response(JSON.stringify({ success: true, method: "reset-merge" }), { headers });
+          }
+          return new Response(JSON.stringify({ error: stderr.trim() }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true, method: "merge-abort" }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-conflicts" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json();
+        const proc = Bun.spawn([GIT_PATH, "diff", "--name-only", "--diff-filter=U"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await proc.exited;
+        const stdout = (await new Response(proc.stdout).text()).trim();
+        const files = stdout ? stdout.split("\n").filter(Boolean) : [];
+        return new Response(JSON.stringify({ files }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ files: [], error: error.message }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-terminal-at-folder" && req.method === "POST") {
+      try {
+        const { folderPath, title: titleArg } = await req.json();
+        const title = (titleArg || folderPath).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const cmd = `cd '${escapeSq(folderPath as string)}' && printf '\\033]0;${title}\\007' && git status`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.3\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-terminal-git-merge" && req.method === "POST") {
+      try {
+        const { folderPath, branchName, name } = await req.json();
+        const label = ((name || branchName) as string).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const title = `[git-merge] ${label}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const cmd = `cd '${escapeSq(folderPath as string)}' && printf '\\033]0;${title}\\007' && git merge --no-ff --autostash '${escapeSq(branchName as string)}'`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-merge-branch" && req.method === "POST") {
+      try {
+        const { folderPath, branchName } = await req.json();
+        if (!folderPath || !branchName) {
+          return new Response(JSON.stringify({ error: "folderPath and branchName required" }), { status: 400, headers });
+        }
+        if (!(folderPath as string).startsWith('/')) {
+          return new Response(JSON.stringify({ error: "folderPath must be absolute" }), { status: 400, headers });
+        }
+        // --autostash: 변경 사항 자동 스태시 후 머지, 이후 자동 팝
+        const proc = Bun.spawn([GIT_PATH, "merge", "--no-ff", "--no-edit", "--autostash", branchName], {
+          cwd: folderPath, stdout: "pipe", stderr: "pipe",
+          env: { ...process.env, GIT_EDITOR: "true", GIT_TERMINAL_PROMPT: "0" },
+        });
+        await proc.exited;
+        const stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        if (proc.exitCode !== 0) {
+          const msg = stderr.trim() || stdout.trim() || "git merge failed";
+          const friendly = msg.includes('signal: 10') || msg.includes('SIGBUS')
+            ? `iCloud 동기화로 머지 실패. Finder에서 iCloud 다운로드를 강제하거나 메인 레포를 iCloud 밖으로 이동하세요.`
+            : msg.includes('CONFLICT') ? `충돌 발생: ${msg}\n→ git merge --abort 로 취소 가능`
+            : msg;
+          return new Response(JSON.stringify({ error: friendly }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true, output: stdout.trim() }), { headers });
+      } catch (e: any) {
+        const msg = String(e.message || e);
+        const err = msg.includes('ENOENT')
+          ? `폴더를 찾을 수 없습니다 (iCloud/Google Drive 동기화 문제?): ${folderPath}`
+          : msg;
+        return new Response(JSON.stringify({ error: err }), { status: 500, headers });
       }
     }
 

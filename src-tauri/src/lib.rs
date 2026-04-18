@@ -819,6 +819,12 @@ fn open_folder(folder_path: String) -> Result<String, String> {
     if folder_path.is_empty() {
         return Err("폴더 경로가 비어 있습니다".to_string());
     }
+    if !folder_path.starts_with('/') {
+        return Err(format!("절대 경로가 필요합니다: \"{}\"", folder_path));
+    }
+    if !std::path::Path::new(&folder_path).exists() {
+        return Err(format!("폴더를 찾을 수 없습니다: \"{}\"", folder_path));
+    }
 
     Command::new("open")
         .arg(&folder_path)
@@ -890,27 +896,40 @@ fn escape_sq(s: &str) -> String {
 fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        // 명령어 생성
         let esc_session = escape_sq(&session_name);
-        let escaped_title = format!("[tmux] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
+        // 워크트리 basename 추출 → 창 제목에 포함
+        let wt_basename = worktree_path.as_ref().and_then(|wt| {
+            wt.trim_end_matches('/').rsplit('/').next().map(|s| s.to_string())
+        });
+        let display_name = if let Some(ref wt) = wt_basename {
+            format!("{} ({})", session_name, wt)
+        } else {
+            session_name.clone()
+        };
+        let esc_display = escape_sq(&display_name);
+        let escaped_title = format!("[tmux] {}", display_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
-                .filter(|p| !p.is_empty())
+                .filter(|p| !p.is_empty() && p.starts_with('/'))
                 .map(|p| format!("-w '{}'", escape_sq(p)))
                 .collect::<Vec<_>>()
                 .join(" ");
-            format!("claude {}", flags)
+            if flags.is_empty() { "claude".to_string() } else { if flags.is_empty() { "claude".to_string() } else { format!("claude {}", flags) } }
         } else {
             "claude".to_string()
         };
-        let cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;[tmux] {}\\007'; tmux new-session -A -s '{}' '{}'", escape_sq(fp), esc_session, esc_session, claude_cmd)
+        let cd_target = worktree_path.as_ref()
+            .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+            .filter(|p| p.starts_with('/'))
+            .or_else(|| folder_path.clone());
+        let claude_cmd_dq = claude_cmd.replace('"', "'");
+        let cmd = if let Some(ref cd) = cd_target {
+            format!("cd '{}' && printf '\\033]0;[tmux] {}\\007'; tmux new-session -A -s '{}' \"{}\"", escape_sq(cd), esc_display, esc_session, claude_cmd_dq)
         } else {
-            format!("printf '\\033]0;[tmux] {}\\007'; tmux new-session -A -s '{}' '{}'", esc_session, esc_session, claude_cmd)
+            format!("printf '\\033]0;[tmux] {}\\007'; tmux new-session -A -s '{}' \"{}\"", esc_display, esc_session, claude_cmd_dq)
         };
 
-        // iTerm에서 명령어 자동 실행
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
             "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
@@ -931,24 +950,37 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
     #[cfg(target_os = "macos")]
     {
         let esc_session = escape_sq(&session_name);
-        let escaped_title = format!("[tmux-fresh] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
+        let wt_basename = worktree_path.as_ref().and_then(|wt| {
+            wt.trim_end_matches('/').rsplit('/').next().map(|s| s.to_string())
+        });
+        let display_name = if let Some(ref wt) = wt_basename {
+            format!("{} ({})", session_name, wt)
+        } else {
+            session_name.clone()
+        };
+        let esc_display = escape_sq(&display_name);
+        let escaped_title = format!("[tmux-fresh] {}", display_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
-                .filter(|p| !p.is_empty())
+                .filter(|p| !p.is_empty() && p.starts_with('/'))
                 .map(|p| format!("-w '{}'", escape_sq(p)))
                 .collect::<Vec<_>>()
                 .join(" ");
-            format!("claude {}", flags)
+            if flags.is_empty() { "claude".to_string() } else { format!("claude {}", flags) }
         } else {
             "claude".to_string()
         };
-        // Kill existing session first (ignore error), then create fresh (no -A)
         let kill_cmd = format!("tmux kill-session -t '{}' 2>/dev/null || true", esc_session);
-        let new_cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' '{}'", escape_sq(fp), esc_session, esc_session, claude_cmd)
+        let cd_target = worktree_path.as_ref()
+            .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+            .filter(|p| p.starts_with('/'))
+            .or_else(|| folder_path.clone());
+        let claude_cmd_dq = claude_cmd.replace('"', "'");
+        let new_cmd = if let Some(ref cd) = cd_target {
+            format!("cd '{}' && printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' \"{}\"", escape_sq(cd), esc_display, esc_session, claude_cmd_dq)
         } else {
-            format!("printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' '{}'", esc_session, esc_session, claude_cmd)
+            format!("printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' \"{}\"", esc_display, esc_session, claude_cmd_dq)
         };
         let cmd = format!("{}; {}", kill_cmd, new_cmd);
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
@@ -970,22 +1002,36 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
     #[cfg(target_os = "macos")]
     {
         let esc_session = escape_sq(&session_name);
-        let escaped_title = format!("[tmux-bypass] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
+        let wt_basename = worktree_path.as_ref().and_then(|wt| {
+            wt.trim_end_matches('/').rsplit('/').next().map(|s| s.to_string())
+        });
+        let display_name = if let Some(ref wt) = wt_basename {
+            format!("{} ({})", session_name, wt)
+        } else {
+            session_name.clone()
+        };
+        let esc_display = escape_sq(&display_name);
+        let escaped_title = format!("[tmux-bypass] {}", display_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
-                .filter(|p| !p.is_empty())
+                .filter(|p| !p.is_empty() && p.starts_with('/'))
                 .map(|p| format!("-w '{}'", escape_sq(p)))
                 .collect::<Vec<_>>()
                 .join(" ");
-            format!("claude --dangerously-skip-permissions {}", flags)
+            if flags.is_empty() { "claude --dangerously-skip-permissions".to_string() } else { format!("claude --dangerously-skip-permissions {}", flags) }
         } else {
             "claude --dangerously-skip-permissions".to_string()
         };
-        let cmd = if let Some(ref fp) = folder_path {
-            format!("cd '{}' && printf '\\033]0;[tmux-bypass] {}\\007'; tmux new-session -A -s '{}-bypass' '{}'", escape_sq(fp), esc_session, esc_session, claude_cmd)
+        let cd_target = worktree_path.as_ref()
+            .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+            .filter(|p| p.starts_with('/'))
+            .or_else(|| folder_path.clone());
+        let claude_cmd_dq = claude_cmd.replace('"', "'");
+        let cmd = if let Some(ref cd) = cd_target {
+            format!("cd '{}' && printf '\\033]0;[tmux-bypass] {}\\007'; tmux new-session -A -s '{}-bypass' \"{}\"", escape_sq(cd), esc_display, esc_session, claude_cmd_dq)
         } else {
-            format!("printf '\\033]0;[tmux-bypass] {}\\007'; tmux new-session -A -s '{}-bypass' '{}'", esc_session, esc_session, claude_cmd)
+            format!("printf '\\033]0;[tmux-bypass] {}\\007'; tmux new-session -A -s '{}-bypass' \"{}\"", esc_display, esc_session, claude_cmd_dq)
         };
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
@@ -1008,16 +1054,20 @@ fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>
     let claude_cmd = if let Some(ref wt) = worktree_path {
         let flags: String = wt.split(',')
             .map(|p| p.trim())
-            .filter(|p| !p.is_empty())
+            .filter(|p| !p.is_empty() && p.starts_with('/'))
             .map(|p| format!("-w '{}'", escape_sq(p)))
             .collect::<Vec<_>>()
             .join(" ");
-        format!("claude --dangerously-skip-permissions {}", flags)
+        if flags.is_empty() { "claude --dangerously-skip-permissions".to_string() } else { format!("claude --dangerously-skip-permissions {}", flags) }
     } else {
         "claude --dangerously-skip-permissions".to_string()
     };
-    let cmd = if let Some(ref fp) = folder_path {
-        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(fp), escaped_name, claude_cmd)
+    let cd_target = worktree_path.as_ref()
+        .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+        .filter(|p| p.starts_with('/'))
+        .or_else(|| folder_path.clone());
+    let cmd = if let Some(ref cd) = cd_target {
+        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(cd), escaped_name, claude_cmd)
     } else {
         format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
     };
@@ -1041,16 +1091,20 @@ fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, workt
     let claude_cmd = if let Some(ref wt) = worktree_path {
         let flags: String = wt.split(',')
             .map(|p| p.trim())
-            .filter(|p| !p.is_empty())
+            .filter(|p| !p.is_empty() && p.starts_with('/'))
             .map(|p| format!("-w '{}'", escape_sq(p)))
             .collect::<Vec<_>>()
             .join(" ");
-        format!("claude {}", flags)
+        if flags.is_empty() { "claude".to_string() } else { format!("claude {}", flags) }
     } else {
         "claude".to_string()
     };
-    let cmd = if let Some(ref fp) = folder_path {
-        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(fp), escaped_name, claude_cmd)
+    let cd_target = worktree_path.as_ref()
+        .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+        .filter(|p| p.starts_with('/'))
+        .or_else(|| folder_path.clone());
+    let cmd = if let Some(ref cd) = cd_target {
+        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(cd), escaped_name, claude_cmd)
     } else {
         format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
     };
@@ -1208,6 +1262,124 @@ struct WorktreeInfo {
     path: String,
     branch: Option<String>,
     is_main: bool,
+}
+
+#[tauri::command]
+fn git_worktree_add(folder_path: String, branch_name: String, worktree_path: Option<String>) -> Result<String, String> {
+    if !folder_path.starts_with('/') {
+        return Err("folder_path must be absolute".to_string());
+    }
+    // Allow Unicode branch names — only strip truly invalid git branch chars
+    let safe_branch: String = branch_name.chars()
+        .map(|c| if c.is_whitespace() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\') { '-' } else { c })
+        .collect();
+    let safe_branch = safe_branch.trim_matches('-').to_string();
+    // Directory name must be ASCII-only — claude -w rejects non-ASCII paths
+    let dir_safe_branch: String = safe_branch.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' { c } else { '-' })
+        .collect();
+    let dir_safe_branch = dir_safe_branch.trim_matches('-').to_string();
+    let dir_safe_branch = if dir_safe_branch.is_empty() {
+        format!("wt{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() % 1000000)
+    } else { dir_safe_branch };
+    let is_icloud = folder_path.contains("com~apple~CloudDocs") || folder_path.contains("Mobile Documents");
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let target = worktree_path.filter(|p| !p.is_empty()).unwrap_or_else(|| {
+        if is_icloud {
+            let base = folder_path.trim_end_matches('/').rsplit('/').next().unwrap_or("project");
+            format!("{}/worktrees/{}-{}", home, base, dir_safe_branch)
+        } else {
+            let base = folder_path.trim_end_matches('/');
+            format!("{}-{}", base, dir_safe_branch)
+        }
+    });
+    // Use --no-checkout on iCloud paths to avoid SIGBUS (signal 10)
+    let is_icloud = folder_path.contains("com~apple~CloudDocs") || folder_path.contains("Mobile Documents");
+    let mut base_args: Vec<&str> = vec!["worktree", "add"];
+    if is_icloud { base_args.push("--no-checkout"); }
+    // Try existing branch first
+    let mut args1 = base_args.clone();
+    args1.extend([target.as_str(), branch_name.as_str()]);
+    let output = Command::new("git")
+        .args(&args1)
+        .current_dir(&folder_path)
+        .output()
+        .map_err(|e| format!("git not found: {}", e))?;
+    if output.status.success() {
+        return Ok(target);
+    }
+    // Fallback: create new branch
+    let mut args2 = base_args.clone();
+    args2.extend(["-b", branch_name.as_str(), target.as_str()]);
+    let output2 = Command::new("git")
+        .args(&args2)
+        .current_dir(&folder_path)
+        .output()
+        .map_err(|e| format!("git not found: {}", e))?;
+    if !output2.status.success() {
+        return Err(String::from_utf8_lossy(&output2.stderr).trim().to_string());
+    }
+    Ok(target)
+}
+
+#[tauri::command]
+fn git_worktree_remove(worktree_path: String) -> Result<(), String> {
+    if !worktree_path.starts_with('/') {
+        return Err("worktree_path must be absolute".to_string());
+    }
+    // Find main repo from the worktree's .git file (e.g. "gitdir: /main/.git/worktrees/name")
+    let git_file = format!("{}/.git", worktree_path);
+    let main_repo_dir = std::fs::read_to_string(&git_file)
+        .ok()
+        .and_then(|content| {
+            content.lines()
+                .find_map(|l| l.strip_prefix("gitdir: ").map(|s| s.trim().to_string()))
+        })
+        .and_then(|gitdir| {
+            gitdir.find("/.git/worktrees/").map(|idx| gitdir[..idx].to_string())
+        })
+        .unwrap_or_else(|| {
+            std::path::Path::new(&worktree_path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|| "/tmp".to_string())
+        });
+    let output = Command::new("git")
+        .args(["worktree", "remove", "--force", &worktree_path])
+        .current_dir(&main_repo_dir)
+        .output()
+        .map_err(|e| format!("git not found: {}", e))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn git_merge_branch(folder_path: String, branch_name: String) -> Result<String, String> {
+    if !folder_path.starts_with('/') {
+        return Err("folder_path must be absolute".to_string());
+    }
+    // --autostash: 변경 사항 자동 스태시 후 머지, 이후 자동 팝
+    let output = Command::new("git")
+        .args(["merge", "--no-ff", "--no-edit", "--autostash", &branch_name])
+        .current_dir(&folder_path)
+        .env("GIT_EDITOR", "true")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|e| format!("git not found: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let msg = if stderr.contains("signal: 10") || stderr.contains("SIGBUS") {
+            "iCloud 동기화로 머지 실패. Finder에서 iCloud 다운로드를 강제하거나 메인 레포를 iCloud 밖으로 이동하세요.".to_string()
+        } else if stderr.contains("CONFLICT") {
+            format!("충돌 발생: {}\n→ git merge --abort 로 취소 가능", stderr)
+        } else {
+            stderr
+        };
+        return Err(msg);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 #[tauri::command]
@@ -1441,6 +1613,9 @@ pub fn run() {
         open_terminal_claude_bypass,
         run_claude_with_prompt,
         export_dmg,
+        git_worktree_add,
+        git_worktree_remove,
+        git_merge_branch,
         list_git_worktrees,
         check_file_exists,
         create_folder,

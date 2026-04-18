@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1774059597020,
+  "lastScanned": 1776322888830,
   "projectRoot": "/Users/gwanli/Documents/GitHub/myproduct_v4/portmanagement",
   "techStack": {
     "languages": [
@@ -47,17 +47,17 @@
     "lintCommand": null,
     "devCommand": "npm run dev",
     "scripts": {
-      "dev": "bun api-server.ts & vite",
-      "api": "bun api-server.ts",
-      "start": "bun api-server.ts & vite",
+      "dev": "bun --watch api-server.ts & vite",
+      "api": "bun --watch api-server.ts",
+      "start": "bun --watch api-server.ts & vite",
       "build": "vite build",
       "preview": "vite preview",
       "tauri": "tauri",
       "tauri:dev": "tauri dev",
       "update-version": "bun update-version.ts",
       "fix-dmg": "bun fix-dmg.ts",
-      "tauri:build": "bun update-version.ts && tauri build",
-      "tauri:build:dmg": "bun update-version.ts && tauri build --bundles dmg; bun fix-dmg.ts"
+      "tauri:build": "bun update-version.ts && bun run build && tauri build",
+      "tauri:build:dmg": "bun update-version.ts && bun run build && tauri build --bundles dmg; bun fix-dmg.ts"
     }
   },
   "conventions": {
@@ -71,7 +71,8 @@
     "workspaces": [],
     "mainDirectories": [
       "docs",
-      "src"
+      "src",
+      "tests"
     ],
     "gitBranches": {
       "defaultBranch": "main",
@@ -84,7 +85,7 @@
       "path": "dist",
       "purpose": "Distribution/build output",
       "fileCount": 1,
-      "lastAccessed": 1774059596990,
+      "lastAccessed": 1776322888817,
       "keyFiles": [
         "index.html"
       ]
@@ -92,27 +93,34 @@
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
-      "fileCount": 0,
-      "lastAccessed": 1774059596992,
-      "keyFiles": []
+      "fileCount": 5,
+      "lastAccessed": 1776322888818,
+      "keyFiles": [
+        "PLAN.md",
+        "architecture.md",
+        "domain-analysis.md",
+        "implementation-checklist.md",
+        "tdd-strategy.md"
+      ]
     },
     "src": {
       "path": "src",
       "purpose": "Source code",
-      "fileCount": 4,
-      "lastAccessed": 1774059597007,
+      "fileCount": 6,
+      "lastAccessed": 1776322888823,
       "keyFiles": [
         "App.tsx",
+        "PortalManager.tsx",
+        "SetupWizard.tsx",
         "index.css",
-        "main.tsx",
-        "tauri.d.ts"
+        "main.tsx"
       ]
     },
     "src-tauri": {
       "path": "src-tauri",
       "purpose": null,
       "fileCount": 6,
-      "lastAccessed": 1774059597010,
+      "lastAccessed": 1776322888823,
       "keyFiles": [
         "Cargo.lock",
         "Cargo.toml",
@@ -120,11 +128,24 @@
         "tauri.conf.json"
       ]
     },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 5,
+      "lastAccessed": 1776322888823,
+      "keyFiles": [
+        "error-resilience-test.py",
+        "functional-test.mjs",
+        "perf-measure.mjs",
+        "touch-validate.mjs",
+        "touch-validate.py"
+      ]
+    },
     "uploaded-commands": {
       "path": "uploaded-commands",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1774059597011,
+      "lastAccessed": 1776322888823,
       "keyFiles": [
         "실행.command"
       ]
@@ -132,147 +153,100 @@
     "dist/assets": {
       "path": "dist/assets",
       "purpose": "Static assets",
-      "fileCount": 8,
-      "lastAccessed": 1774059597013,
+      "fileCount": 2,
+      "lastAccessed": 1776322888824,
       "keyFiles": [
-        "index-BJgQX54j.css",
-        "index-BQvAQ3kX.js",
-        "index-CAm4Ynj0.js"
+        "index-5nQB7HzF.js",
+        "index-Dl58Dat7.css"
       ]
     },
     "src/lib": {
       "path": "src/lib",
       "purpose": "Library code",
       "fileCount": 1,
-      "lastAccessed": 1774059597014,
+      "lastAccessed": 1776322888824,
       "keyFiles": [
         "utils.ts"
-      ]
-    },
-    "src-tauri/src": {
-      "path": "src-tauri/src",
-      "purpose": "Source code",
-      "fileCount": 2,
-      "lastAccessed": 1774059597015,
-      "keyFiles": [
-        "lib.rs",
-        "main.rs"
       ]
     }
   },
   "hotPaths": [
     {
+      "path": "src/PortalManager.tsx",
+      "accessCount": 64,
+      "lastAccessed": 1776326157989,
+      "type": "directory"
+    },
+    {
       "path": "src/App.tsx",
+      "accessCount": 56,
+      "lastAccessed": 1776332131983,
+      "type": "directory"
+    },
+    {
+      "path": "api-server.ts",
       "accessCount": 18,
-      "lastAccessed": 1774072818333,
+      "lastAccessed": 1776348375895,
+      "type": "directory"
+    },
+    {
+      "path": "README.md",
+      "accessCount": 12,
+      "lastAccessed": 1776345676772,
+      "type": "file"
+    },
+    {
+      "path": "src/SetupWizard.tsx",
+      "accessCount": 12,
+      "lastAccessed": 1776348251163,
       "type": "file"
     },
     {
       "path": "src-tauri/src/lib.rs",
-      "accessCount": 6,
-      "lastAccessed": 1774071712340,
-      "type": "file"
-    },
-    {
-      "path": "api-server.ts",
-      "accessCount": 6,
-      "lastAccessed": 1774071946650,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri/tauri.conf.json",
-      "accessCount": 4,
-      "lastAccessed": 1774071924005,
-      "type": "file"
-    },
-    {
-      "path": "fix-dmg.ts",
-      "accessCount": 2,
-      "lastAccessed": 1774071639733,
-      "type": "file"
-    },
-    {
-      "path": "CLAUDE.md",
-      "accessCount": 1,
-      "lastAccessed": 1774059673529,
-      "type": "file"
-    },
-    {
-      "path": "package.json",
-      "accessCount": 1,
-      "lastAccessed": 1774071639120,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri/.cargo/config.toml",
-      "accessCount": 1,
-      "lastAccessed": 1774071644417,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri/src",
-      "accessCount": 1,
-      "lastAccessed": 1774071656205,
+      "accessCount": 8,
+      "lastAccessed": 1776325229795,
       "type": "directory"
     },
     {
-      "path": "tsconfig.json",
-      "accessCount": 1,
-      "lastAccessed": 1774072145716,
+      "path": "src",
+      "accessCount": 4,
+      "lastAccessed": 1776325692607,
+      "type": "directory"
+    },
+    {
+      "path": "실행.bat",
+      "accessCount": 2,
+      "lastAccessed": 1776345572337,
       "type": "file"
     },
     {
-      "path": "tests/results/page-map.json",
+      "path": "실행.command",
       "accessCount": 1,
-      "lastAccessed": 1774072437687,
+      "lastAccessed": 1776343987960,
       "type": "file"
     },
     {
-      "path": "tests/results/functional-report.json",
+      "path": "start.bat",
       "accessCount": 1,
-      "lastAccessed": 1774072438629,
+      "lastAccessed": 1776345578321,
       "type": "file"
     },
     {
-      "path": "tests/results/visual-report.json",
+      "path": "vite.config.ts",
       "accessCount": 1,
-      "lastAccessed": 1774072438759,
+      "lastAccessed": 1776348250164,
       "type": "file"
     },
     {
-      "path": "tests/results/api-report.json",
+      "path": "tests/windows-diagnostics.ps1",
       "accessCount": 1,
-      "lastAccessed": 1774072439141,
+      "lastAccessed": 1776348607074,
       "type": "file"
     },
     {
-      "path": "tests/results/performance-report.json",
+      "path": "tests/windows-playwright-test.js",
       "accessCount": 1,
-      "lastAccessed": 1774072439518,
-      "type": "file"
-    },
-    {
-      "path": "tests/results/social-share-report.json",
-      "accessCount": 1,
-      "lastAccessed": 1774072439841,
-      "type": "file"
-    },
-    {
-      "path": "tests/results/touch-report.json",
-      "accessCount": 1,
-      "lastAccessed": 1774072440623,
-      "type": "file"
-    },
-    {
-      "path": "tests/results/image-report.json",
-      "accessCount": 1,
-      "lastAccessed": 1774072440654,
-      "type": "file"
-    },
-    {
-      "path": "tests/results/REPORT.md",
-      "accessCount": 1,
-      "lastAccessed": 1774072540478,
+      "lastAccessed": 1776348644173,
       "type": "file"
     }
   ],

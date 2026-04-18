@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
@@ -119,6 +119,30 @@ const API = {
     }
   },
 
+  async gitPull(folderPath: string): Promise<string> {
+    const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+    const response = await fetch(`${baseUrl}/api/git-pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath })
+    });
+    const result = await response.json();
+    if (!result.success) throw new Error(result.error);
+    return result.output as string;
+  },
+
+  async gitPush(folderPath: string): Promise<string> {
+    const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+    const response = await fetch(`${baseUrl}/api/git-push`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath })
+    });
+    const result = await response.json();
+    if (!result.success) throw new Error(result.error);
+    return result.output as string;
+  },
+
   async installAppToApplications(): Promise<string> {
     if (isTauri()) {
       return invoke<string>('install_app_to_applications');
@@ -196,6 +220,48 @@ const API = {
       const data = await res.json();
       return data.worktrees ?? [];
     }
+  },
+
+  async gitWorktreeAdd(folderPath: string, branchName: string, worktreePath?: string): Promise<{ path: string }> {
+    if (isTauri()) {
+      const path = await invoke<string>('git_worktree_add', { folderPath, branchName, worktreePath: worktreePath ?? null });
+      return { path };
+    }
+    const res = await fetch('/api/git-worktree-add', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath, branchName, worktreePath }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return { path: data.path };
+  },
+
+  async gitWorktreeRemove(worktreePath: string): Promise<void> {
+    if (isTauri()) {
+      return invoke('git_worktree_remove', { worktreePath });
+    }
+    const res = await fetch('/api/git-worktree-remove', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ worktreePath }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+  },
+
+  async gitMergeBranch(folderPath: string, branchName: string): Promise<string> {
+    if (isTauri()) {
+      return invoke<string>('git_merge_branch', { folderPath, branchName });
+    }
+    const res = await fetch('/api/git-merge-branch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath, branchName }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    return data.output ?? '';
   },
 
   async checkPortStatus(port: number): Promise<boolean> {
@@ -397,7 +463,7 @@ const API = {
   },
 };
 
-const CLAUDE_AI_NAME_PROMPT = `포트관리기의 프로젝트 목록에 "AI 추천 이름(aiName)"을 채워줘.
+const CLAUDE_AI_NAME_PROMPT = `포트관리기의 프로젝트 목록에 "AI 추천 이름(aiName)"과 "카테고리(category)"를 채워줘.
 
 ## 대상 파일
 ~/Library/Application Support/com.portmanager.portmanager/ports.json
@@ -409,38 +475,44 @@ const CLAUDE_AI_NAME_PROMPT = `포트관리기의 프로젝트 목록에 "AI 추
 
 2. **읽기**: JSON을 파싱해서 배열을 메모리에 로드.
 
-3. **각 항목에 aiName 설정**:
+3. **각 항목에 aiName + category 설정**:
    - 이미 \`aiName\`이 있으면 건드리지 말 것 (idempotent — 재실행해도 기존 별칭 유지)
-   - \`aiName\`이 없는 항목에만 새 별칭 생성
+   - 이미 \`category\`가 있으면 건드리지 말 것
+   - 없는 항목에만 새로 생성
    - 참고 필드: name, folderPath(basename), description, githubUrl, deployUrl, commandPath, terminalCommand
 
-4. **별칭 규칙**:
+4. **aiName 규칙**:
    - 2~4 단어의 짧은 영어 (공백 구분, 예: "port manager", "tax calculator", "link page generator")
    - 프로젝트의 핵심 기능을 드러내는 키워드
    - 한국어 프로젝트는 의미를 영어로 번역
    - 이미 영어 이름이면 더 검색 친화적인 키워드 한 개로 압축
    - 모두 소문자
 
-5. **필드 보존 규칙 (매우 중요)**:
+5. **category 규칙**:
+   - 단일 소문자 영어 단어 (예: converter, dashboard, manager, tracker, bot, guide, calculator, automation, monitor, generator)
+   - 프로젝트가 **무엇을 하는지** 핵심을 담을 것
+   - aiName을 primary signal로 참고
+
+6. **필드 보존 규칙 (매우 중요)**:
    - 다음 필드는 **원본 값 그대로 유지**해야 함 — 존재한다면 삭제/수정 금지:
-     id, name, port, commandPath, terminalCommand, folderPath, deployUrl, githubUrl, worktreePath, category, description, isRunning
+     id, name, port, commandPath, terminalCommand, folderPath, deployUrl, githubUrl, worktreePath, description, isRunning
    - \`worktreePath: null\` 같은 명시적 null 값도 그대로 유지 (삭제 금지)
    - \`isRunning: false\` 같은 boolean도 그대로 유지
-   - 원래 없던 필드를 새로 추가하지 말 것 (aiName 제외)
+   - 원래 없던 필드를 새로 추가하지 말 것 (aiName, category 제외)
 
-6. **원자적 쓰기 (atomic write)**:
+7. **원자적 쓰기 (atomic write)**:
    - 임시 파일에 먼저 쓴 후 rename으로 교체 (중간 인터럽트 시 원본 손상 방지)
    - 예시 절차:
      a. \`ports.json.tmp\`에 전체 JSON 직렬화 (2-space indent)
      b. fs.rename(\`ports.json.tmp\`, \`ports.json\`)
    - 들여쓰기는 원본과 동일하게 2-space
 
-7. **검증**:
+8. **검증**:
    - 쓰기 후 다시 읽어서 파싱 가능한지 확인
    - 항목 수가 원본과 동일한지 확인
    - 파싱 실패 시 백업(\`.bak\`)에서 복원
 
-8. **보고**: 완료 후 한 줄로 "N개 항목에 aiName 추가, M개 기존 유지, 총 K개 검증 완료" 형식으로 보고.
+9. **보고**: 완료 후 한 줄로 "N개 항목에 aiName 추가, M개 category 추가, 총 K개 검증 완료" 형식으로 보고.
 
 완료되면 포트관리기에서 "새로고침" 버튼을 누르면 별칭이 에메랄드 배지로 표시되고 검색에서 매칭됩니다.`;
 
@@ -457,6 +529,7 @@ interface PortInfo {
   category?: string;
   description?: string;
   aiName?: string;  // AI-generated English alias for search
+  favorite?: boolean;
   isRunning?: boolean;
 }
 
@@ -520,6 +593,42 @@ const getSessionName = (item: PortInfo): string => {
   return item.name.replace(/\s+/g, '-');
 };
 
+/**
+ * 워크트리용 다음 사용 가능한 포트.
+ * mainPort가 있으면 mainPort×10 + 1,2,3... 순으로 탐색 (예: 9025 → 90251, 90252...)
+ * mainPort 없으면 10001+ 범위에서 탐색
+ */
+const getNextWorktreePort = (ports: PortInfo[], mainPort?: number): number => {
+  const used = new Set(ports.map(p => p.port).filter((p): p is number => p != null));
+  if (mainPort) {
+    const base = mainPort * 10;
+    if (base <= 65534) {
+      for (let i = 1; i <= 9; i++) {
+        if (!used.has(base + i)) return base + i;
+      }
+    }
+  }
+  for (let p = 10001; p <= 19999; p++) {
+    if (!used.has(p)) return p;
+  }
+  return 10001;
+};
+
+/**
+ * 워크트리 경로 기반 안정적인 포트 할당.
+ * 알파벳순 정렬 인덱스 대신 경로 해시를 사용해 새 워크트리 추가 시 기존 포트 유지.
+ * 범위: 10001–10499
+ */
+const worktreePortFromPath = (worktreePath: string, usedPorts: Set<number>): number => {
+  const name = worktreePath.split('/').pop() ?? worktreePath;
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) >>> 0;
+  const base = 10001 + (h % 499);
+  for (let p = base; p <= 10499; p++) { if (!usedPorts.has(p)) return p; }
+  for (let p = 10001; p < base; p++) { if (!usedPorts.has(p)) return p; }
+  return base;
+};
+
 /** Race a promise against a timeout. Rejects with Error if ms elapses first. */
 const withTimeout = <T,>(promise: PromiseLike<T>, ms: number): Promise<T> =>
   Promise.race([
@@ -538,7 +647,14 @@ const mergePorts = (local: PortInfo[], remote: PortInfo[]): PortInfo[] => {
   const merged = local.map(p => {
     const r = remoteById.get(p.id);
     if (!r) return p;
-    return { ...p, ...r, isRunning: p.isRunning, aiName: r.aiName ?? p.aiName };
+    return {
+      ...p, ...r,
+      isRunning: p.isRunning,
+      aiName: r.aiName ?? p.aiName,
+      folderPath: p.folderPath ?? r.folderPath,
+      commandPath: p.commandPath ?? r.commandPath,
+      worktreePath: p.worktreePath ?? r.worktreePath,
+    };
   });
   const localIds = new Set(local.map(p => p.id));
   const newFromRemote = remote.filter(p => !localIds.has(p.id));
@@ -637,7 +753,10 @@ function App() {
   const [deployUrl, setDeployUrl] = useState('');
   const [githubUrl, setGithubUrl] = useState('');
   const [worktreePath, setWorktreePath] = useState('');
-  const [activeTab, setActiveTab] = useState<'ports' | 'portal'>('ports');
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  const [activeTab, setActiveTab] = useState<'ports' | 'portal'>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 768 ? 'portal' : 'ports'
+  );
   const [openPortalSettings, setOpenPortalSettings] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [sortBy, setSortBy] = useState<SortType>(
@@ -666,7 +785,19 @@ function App() {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
   const [worktreePickerValue, setWorktreePickerValue] = useState('');
+  // 머지 확인 모달
+  const [mergeConfirm, setMergeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo; mainBranch: string; commits: string; stat: string; isDirty: boolean } | null>(null);
+  const [mergeError, setMergeError] = useState<{ message: string; hasConflict: boolean; folderPath: string; item?: PortInfo; wt?: WorktreeInfo } | null>(null);
+  const [mergeConflictFiles, setMergeConflictFiles] = useState<string[]>([]);
+  const [mergePushConfirm, setMergePushConfirm] = useState<{ item: PortInfo; mainBranch: string } | null>(null);
+  const [mergeLoading, setMergeLoading] = useState(false);
+  const [deleteWorktreeConfirm, setDeleteWorktreeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo } | null>(null);
+  const [commitModal, setCommitModal] = useState<{ item: PortInfo; wt: WorktreeInfo; msg: string } | null>(null);
   const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
+  const [expandedWorktreeIds, setExpandedWorktreeIds] = useState<Set<string>>(new Set());
+  const [worktreeLists, setWorktreeLists] = useState<Record<string, WorktreeInfo[]>>({});
+  const [worktreeNewBranch, setWorktreeNewBranch] = useState<Record<string, string>>({});
+  const [worktreeLoading, setWorktreeLoading] = useState<Record<string, boolean>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isAiEnriching, setIsAiEnriching] = useState(false);
@@ -682,6 +813,7 @@ function App() {
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>([]);
   const dirHandlesRef = useRef<Map<string, FileSystemDirectoryHandle>>(new Map());
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  const [showOptionalFields, setShowOptionalFields] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [activeRootId, setActiveRootId] = useState<string | null>(null);
   const [registerAsProject, setRegisterAsProject] = useState(true);
@@ -691,6 +823,8 @@ function App() {
   // Fix P2g: gate delete pass — only safe to delete remote rows after a successful auto-pull
   // (otherwise local state has only this Mac's rows and would delete other Macs' remote data)
   const autopullSucceeded = useRef(false);
+  const appLogRef = useRef<string[]>([]);
+  const [logCopied, setLogCopied] = useState(false);
 
   // API 서버 헬스 체크 (웹 모드 전용)
   useEffect(() => {
@@ -710,6 +844,35 @@ function App() {
     const interval = setInterval(check, 30_000);
     return () => clearInterval(interval);
   }, []);
+
+  // 앱 로그 캡처 (console.error / warn + 미처리 예외)
+  useEffect(() => {
+    const ts = () => new Date().toTimeString().slice(0, 8);
+    const push = (line: string) => {
+      appLogRef.current.push(line);
+      if (appLogRef.current.length > 300) appLogRef.current.shift();
+    };
+    const origError = console.error.bind(console);
+    const origWarn = console.warn.bind(console);
+    console.error = (...a) => { push(`[ERR ${ts()}] ${a.map(String).join(' ')}`); origError(...a); };
+    console.warn = (...a) => { push(`[WRN ${ts()}] ${a.map(String).join(' ')}`); origWarn(...a); };
+    const onErr = (e: ErrorEvent) => push(`[UNCAUGHT ${ts()}] ${e.message} @ ${e.filename}:${e.lineno}`);
+    const onRej = (e: PromiseRejectionEvent) => push(`[UNHANDLED ${ts()}] ${String(e.reason)}`);
+    window.addEventListener('error', onErr);
+    window.addEventListener('unhandledrejection', onRej);
+    return () => {
+      console.error = origError; console.warn = origWarn;
+      window.removeEventListener('error', onErr);
+      window.removeEventListener('unhandledrejection', onRej);
+    };
+  }, []);
+
+  const handleCopyLog = async () => {
+    const text = appLogRef.current.length ? appLogRef.current.join('\n') : '(로그 없음)';
+    await navigator.clipboard.writeText(text);
+    setLogCopied(true);
+    setTimeout(() => setLogCopied(false), 2000);
+  };
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -732,9 +895,132 @@ function App() {
     }
   }, []);
 
+  const loadWorktrees = useCallback(async (portId: string, folderPath: string) => {
+    setWorktreeLoading(prev => ({ ...prev, [portId]: true }));
+    try {
+      const list = await API.listGitWorktrees(folderPath);
+      setWorktreeLists(prev => ({ ...prev, [portId]: list }));
+    } catch {
+      setWorktreeLists(prev => ({ ...prev, [portId]: [] }));
+    } finally {
+      setWorktreeLoading(prev => ({ ...prev, [portId]: false }));
+    }
+  }, []);
+
+  const toggleWorktreePanel = useCallback((portId: string, folderPath?: string) => {
+    setExpandedWorktreeIds(prev => {
+      const next = new Set(prev);
+      if (next.has(portId)) {
+        next.delete(portId);
+      } else {
+        next.add(portId);
+        if (folderPath) loadWorktrees(portId, folderPath);
+      }
+      return next;
+    });
+  }, [loadWorktrees]);
+
+  const handleWorktreeAdd = useCallback(async (item: PortInfo) => {
+    const branchName = worktreeNewBranch[item.id]?.trim();
+    if (!branchName || !item.folderPath) return;
+    try {
+      const result = await API.gitWorktreeAdd(item.folderPath, branchName);
+      showToast(`워크트리 생성됨: ${result.path.split('/').pop()}`, 'success');
+      setWorktreeNewBranch(prev => ({ ...prev, [item.id]: '' }));
+      await loadWorktrees(item.id, item.folderPath);
+    } catch (e) {
+      showToast(`워크트리 생성 실패: ${e}`, 'error');
+    }
+  }, [worktreeNewBranch, loadWorktrees]);
+
+  const handleWorktreeRemove = useCallback((item: PortInfo, wt: WorktreeInfo) => {
+    if (!item.folderPath) return;
+    setDeleteWorktreeConfirm({ item, wt });
+  }, []);
+
+  const executeWorktreeDelete = useCallback(async () => {
+    if (!deleteWorktreeConfirm) return;
+    const { item, wt } = deleteWorktreeConfirm;
+    const name = wt.path.split('/').pop();
+    setDeleteWorktreeConfirm(null);
+    try {
+      await API.gitWorktreeRemove(wt.path);
+      showToast(`워크트리 제거됨: ${name}`, 'success');
+      await loadWorktrees(item.id, item.folderPath!);
+    } catch (e) {
+      showToast(`워크트리 제거 실패: ${e}`, 'error');
+    }
+  }, [deleteWorktreeConfirm, loadWorktrees]);
+
+  const handleWorktreeMerge = useCallback(async (item: PortInfo, wt: WorktreeInfo) => {
+    if (!item.folderPath) { showToast('folderPath가 없습니다', 'error'); return; }
+    if (!wt.branch) { showToast('브랜치 이름을 알 수 없습니다 (워크트리 새로고침 후 재시도)', 'error'); return; }
+    // 프리뷰 로드 후 확인 모달 표시
+    setMergeLoading(true);
+    try {
+      const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+      const res = await fetch(`${baseUrl}/api/git-merge-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath: item.folderPath, branchName: wt.branch }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        // 진행 중인 머지 → 바로 에러 모달 (Abort 버튼 포함)
+        if (data.hasMergeInProgress) {
+          setMergeError({ message: data.error, hasConflict: true, folderPath: item.folderPath!, item, wt });
+          // load conflicted files
+          fetch(`${baseUrl}/api/git-conflicts`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folderPath: item.folderPath }),
+          }).then(r => r.json()).then(d => setMergeConflictFiles(d.files ?? [])).catch(() => {});
+        } else {
+          throw new Error(data.error ?? '프리뷰 실패');
+        }
+        return;
+      }
+      setMergeConfirm({ item, wt, mainBranch: data.mainBranch, commits: data.commits, stat: data.stat, isDirty: data.isDirty });
+    } catch (e) {
+      showToast(`프리뷰 실패: ${(e as Error).message}`, 'error');
+    } finally {
+      setMergeLoading(false);
+    }
+  }, []);
+
+  const executeMerge = useCallback(async () => {
+    if (!mergeConfirm) return;
+    const { item, wt } = mergeConfirm;
+    setMergeLoading(true);
+    try {
+      const output = await API.gitMergeBranch(item.folderPath!, wt.branch!);
+      showToast(`머지 완료: ${wt.branch} → ${mergeConfirm.mainBranch}`, 'success');
+      if (output) console.log('[Merge output]', output);
+      await API.gitWorktreeRemove(wt.path);
+      showToast(`워크트리 제거됨: ${wt.path.split('/').pop()}`, 'success');
+      await loadWorktrees(item.id, item.folderPath!);
+      setMergeConfirm(null);
+      setMergePushConfirm({ item, mainBranch: mergeConfirm.mainBranch });
+    } catch (e) {
+      const msg = (e as Error).message ?? String(e);
+      setMergeConfirm(null);
+      const hasConflict = msg.includes('충돌') || msg.includes('CONFLICT');
+      setMergeError({ message: msg, hasConflict, folderPath: item.folderPath!, item, wt });
+      if (hasConflict) {
+        const baseUrl2 = isTauri() ? 'http://localhost:3001' : '';
+        fetch(`${baseUrl2}/api/git-conflicts`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath: item.folderPath }),
+        }).then(r => r.json()).then(d => setMergeConflictFiles(d.files ?? [])).catch(() => {});
+      }
+    } finally {
+      setMergeLoading(false);
+    }
+  }, [mergeConfirm, loadWorktrees]);
+
   const openTmuxClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'tmux' });
-    setWorktreePickerValue(item.worktreePath ?? '');
+    // Only pre-fill if saved path is absolute — relative names (e.g. '합산') are invalid for -w
+    setWorktreePickerValue((item.worktreePath?.startsWith('/') ? item.worktreePath : '') ?? '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
@@ -775,7 +1061,7 @@ function App() {
 
   const openTerminalClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'claude' });
-    setWorktreePickerValue(item.worktreePath ?? '');
+    setWorktreePickerValue((item.worktreePath?.startsWith('/') ? item.worktreePath : '') ?? '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
@@ -802,19 +1088,36 @@ function App() {
     if (!worktreePickerState) return;
     const { item, mode } = worktreePickerState;
 
-    // save the entered path back to the item (for pre-fill next time)
-    if (worktreePath !== undefined) {
-      setPorts(prev => prev.map(p => p.id === item.id ? { ...p, worktreePath: worktreePath || undefined } : p));
-    }
-
     setWorktreePickerState(null);
     setDetectedWorktrees([]);
 
-    const updatedItem = { ...item, worktreePath };
+    let resolvedPath = worktreePath;
+
+    // 브랜치명(상대경로)을 입력한 경우 → git worktree 자동 생성
+    if (worktreePath && !worktreePath.startsWith('/') && item.folderPath) {
+      try {
+        showToast(`워크트리 생성 중: ${worktreePath}...`, 'success');
+        const result = await API.gitWorktreeAdd(item.folderPath, worktreePath);
+        resolvedPath = result.path;
+        // 워크트리 목록 갱신
+        loadWorktrees(item.id, item.folderPath);
+        showToast(`워크트리 생성 완료: ${resolvedPath}`, 'success');
+      } catch (e) {
+        showToast(`워크트리 생성 실패: ${e}`, 'error');
+        return;
+      }
+    }
+
+    // save the resolved absolute path back to the item
+    if (resolvedPath !== undefined) {
+      setPorts(prev => prev.map(p => p.id === item.id ? { ...p, worktreePath: resolvedPath || undefined } : p));
+    }
+
+    const updatedItem = { ...item, worktreePath: resolvedPath };
     if (mode === 'tmux') {
-      await _executeTmuxClaude(updatedItem, worktreePath);
+      await _executeTmuxClaude(updatedItem, resolvedPath);
     } else {
-      await _executeTerminalClaude(updatedItem, worktreePath);
+      await _executeTerminalClaude(updatedItem, resolvedPath);
     }
   };
 
@@ -893,6 +1196,7 @@ function App() {
                   category: row.category ?? undefined,
                   description: row.description ?? undefined,
                   aiName: row.ai_name ?? undefined,
+                  favorite: row.favorite ?? false,
                   isRunning: false,
                 }));
                 const merged = mergePorts(updatedData, remoteRows);
@@ -981,6 +1285,16 @@ function App() {
   // 정렬 설정 localStorage 저장
   useEffect(() => { localStorage.setItem('portmanager-sortBy', sortBy); }, [sortBy]);
   useEffect(() => { localStorage.setItem('portmanager-sortOrder', sortOrder); }, [sortOrder]);
+
+  useEffect(() => {
+    const handler = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) setActiveTab('portal');
+    };
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
 
   // Cmd+F: 검색 포커스 / Esc: 검색 초기화
   useEffect(() => {
@@ -1200,6 +1514,12 @@ function App() {
     }
   };
 
+  const toggleFavorite = useCallback(async (item: PortInfo) => {
+    const updated = ports.map(p => p.id === item.id ? { ...p, favorite: !p.favorite } : p);
+    setPorts(updated);
+    await API.savePorts(updated);
+  }, [ports]);
+
   const executeCommand = async (item: PortInfo) => {
     const runTarget = item.terminalCommand || item.commandPath;
     if (!runTarget) {
@@ -1219,8 +1539,8 @@ function App() {
           p.id === item.id ? { ...p, isRunning: true } : p
         ));
         showToast(`${item.name} 서버가 시작되었습니다!`, 'success');
-        if (item.port && isTauri()) {
-          try { await API.openInChrome(`http://localhost:${item.port}`); } catch {}
+        if (item.port) {
+          window.open(`http://localhost:${item.port}`, '_blank');
         }
       }
     } catch (error) {
@@ -1446,6 +1766,7 @@ function App() {
         category: row.category ?? undefined,
         description: row.description ?? undefined,
         aiName: row.ai_name ?? undefined,
+        favorite: row.favorite ?? false,
         isRunning: false,
       }));
 
@@ -1531,6 +1852,7 @@ function App() {
         folder_path: p.folderPath ?? null,
         deploy_url: p.deployUrl ?? null,
         github_url: p.githubUrl ?? null,
+        favorite: p.favorite ?? false,
         device_id: deviceId,
         device_name: deviceNameVal,
       }));
@@ -2137,7 +2459,8 @@ function App() {
       default:
         break;
     }
-    return sortOrder === 'desc' ? [...filtered].reverse() : filtered;
+    const sorted = sortOrder === 'desc' ? [...filtered].reverse() : filtered;
+    return [...sorted.filter(p => p.favorite), ...sorted.filter(p => !p.favorite)];
   }, [ports, searchQuery, filterType, filterCategory, sortBy, sortOrder]);
 
   const searchFilteredPorts = useMemo(() => {
@@ -2153,29 +2476,356 @@ function App() {
           <button onClick={() => { fetch('/api/ports').then(() => setApiServerOnline(true)).catch(() => {}); }} className="ml-4 px-2 py-0.5 bg-black/20 rounded hover:bg-black/30 text-xs">재확인</button>
         </div>
       )}
+      {/* 머지 확인 모달 */}
+      {commitModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-amber-500/15 p-2 rounded-lg border border-amber-500/30">
+                <GitCommit className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-sm">커밋</h3>
+                <p className="text-zinc-400 text-xs mt-0.5 font-mono">{commitModal.wt.branch}</p>
+              </div>
+            </div>
+            <input
+              type="text"
+              autoFocus
+              placeholder="커밋 메시지 입력..."
+              value={commitModal.msg}
+              onChange={e => setCommitModal(m => m ? { ...m, msg: e.target.value } : m)}
+              onKeyDown={async e => {
+                if (e.key === 'Enter' && commitModal.msg.trim()) {
+                  const { item, wt, msg } = commitModal;
+                  setCommitModal(null);
+                  const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                  const res = await fetch(`${baseUrl}/api/git-commit`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ worktreePath: wt.path, message: msg.trim() })
+                  }).catch(() => null);
+                  const data = await res?.json().catch(() => null);
+                  if (data?.success) showToast(`✅ 커밋 완료: ${wt.branch}`, 'success');
+                  else showToast(`커밋 실패: ${data?.error ?? '알 수 없는 오류'}`, 'error');
+                } else if (e.key === 'Escape') setCommitModal(null);
+              }}
+              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/50"
+            />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setCommitModal(null)} className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 rounded-lg transition-colors">취소</button>
+              <button
+                disabled={!commitModal.msg.trim()}
+                onClick={async () => {
+                  const { item, wt, msg } = commitModal;
+                  setCommitModal(null);
+                  const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                  const res = await fetch(`${baseUrl}/api/git-commit`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ worktreePath: wt.path, message: msg.trim() })
+                  }).catch(() => null);
+                  const data = await res?.json().catch(() => null);
+                  if (data?.success) showToast(`✅ 커밋 완료: ${wt.branch}`, 'success');
+                  else showToast(`커밋 실패: ${data?.error ?? '알 수 없는 오류'}`, 'error');
+                }}
+                className="px-4 py-1.5 text-xs bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 rounded-lg transition-colors disabled:opacity-40"
+              >
+                커밋
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteWorktreeConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-red-500/15 p-2 rounded-lg border border-red-500/30">
+                <Trash2 className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-sm">워크트리 삭제</h3>
+                <p className="text-zinc-400 text-xs mt-0.5">이 작업은 되돌릴 수 없습니다</p>
+              </div>
+            </div>
+            <div className="bg-zinc-900/60 rounded-lg p-3 border border-zinc-800">
+              <p className="text-xs text-zinc-300">
+                <span className="text-red-400 font-mono">{deleteWorktreeConfirm.wt.branch ?? deleteWorktreeConfirm.wt.path.split('/').pop()}</span> 워크트리를 삭제하시겠습니까?
+              </p>
+              <p className="text-xs text-zinc-500 mt-1 font-mono break-all">{deleteWorktreeConfirm.wt.path}</p>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setDeleteWorktreeConfirm(null)}
+                className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 rounded-lg transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={executeWorktreeDelete}
+                className="px-4 py-1.5 text-xs bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 rounded-lg transition-colors"
+              >
+                삭제
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mergeConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-lg p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-blue-500/15 p-2 rounded-lg border border-blue-500/30">
+                <GitBranch className="w-5 h-5 text-blue-400" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-white">머지 확인</h2>
+                <p className="text-xs text-zinc-400 mt-0.5 font-mono">
+                  <span className="text-teal-400">{mergeConfirm.wt.branch}</span>
+                  <span className="text-zinc-500"> → </span>
+                  <span className="text-zinc-300">{mergeConfirm.mainBranch}</span>
+                </p>
+              </div>
+            </div>
+            {mergeConfirm.isDirty && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-xs text-amber-300">
+                <span>⚠️</span>
+                <span>워킹 트리에 미커밋 변경사항이 있습니다. <span className="font-medium">--autostash</span>로 자동 스태시 후 머지하고 팝합니다.</span>
+              </div>
+            )}
+            {mergeConfirm.commits ? (
+              <div className="bg-black/40 rounded-lg p-3 border border-zinc-800">
+                <p className="text-[10px] text-zinc-500 mb-1.5 font-medium uppercase tracking-wide">머지될 커밋</p>
+                <pre className="text-xs text-zinc-300 font-mono whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{mergeConfirm.commits}</pre>
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-500 italic">커밋 없음 (이미 최신 상태)</p>
+            )}
+            {mergeConfirm.stat && (
+              <div className="bg-black/40 rounded-lg p-3 border border-zinc-800">
+                <p className="text-[10px] text-zinc-500 mb-1.5 font-medium uppercase tracking-wide">변경 파일</p>
+                <pre className="text-xs text-zinc-400 font-mono whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">{mergeConfirm.stat}</pre>
+              </div>
+            )}
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                onClick={async () => {
+                  const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                  await fetch(`${baseUrl}/api/open-terminal-git-merge`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ folderPath: mergeConfirm.item.folderPath, branchName: mergeConfirm.wt.branch, name: mergeConfirm.item.name }),
+                  });
+                  setMergeConfirm(null);
+                  showToast('터미널에서 git merge 실행 중', 'success');
+                }}
+                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors"
+              >
+                터미널에서 머지
+              </button>
+              <button onClick={() => setMergeConfirm(null)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
+                취소
+              </button>
+              <button
+                onClick={executeMerge}
+                disabled={mergeLoading}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {mergeLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5" />}
+                Merge
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 머지 에러 모달 (충돌 등) */}
+      {mergeError && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#18181b] rounded-xl border border-red-800/50 w-full max-w-lg p-5 space-y-4">
+            {/* Header */}
+            <div className="flex items-center gap-3">
+              <div className="bg-red-500/15 p-2 rounded-lg border border-red-500/30 shrink-0">
+                <XIcon className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-white">머지 실패</h2>
+                <p className="text-xs text-red-400 mt-0.5">
+                  {mergeError.hasConflict ? '충돌(Conflict) 발생 — 아래 방법 중 하나를 선택하세요' : '머지 중 오류가 발생했습니다'}
+                </p>
+              </div>
+            </div>
+
+            {/* Conflict files list */}
+            {mergeConflictFiles.length > 0 && (
+              <div className="bg-black/40 rounded-lg p-3 border border-red-900/30 space-y-1">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5">충돌 파일 ({mergeConflictFiles.length}개)</p>
+                {mergeConflictFiles.map(f => (
+                  <div key={f} className="flex items-center gap-1.5">
+                    <span className="text-red-400 text-xs">⚠</span>
+                    <code className="text-xs text-red-300 font-mono">{f}</code>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Raw error (collapsed if conflict files shown) */}
+            {mergeConflictFiles.length === 0 && (
+              <div className="bg-black/40 rounded-lg p-3 border border-red-900/30">
+                <pre className="text-xs text-red-300 font-mono whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{mergeError.message}</pre>
+              </div>
+            )}
+
+            {/* Claude Code prompt box */}
+            {mergeError.hasConflict && mergeError.folderPath && (() => {
+              const files = mergeConflictFiles.length > 0
+                ? mergeConflictFiles.map(f => `- ${f}`).join('\n')
+                : '(충돌 파일 확인 중...)';
+              const prompt = `다음 경로에서 git 머지 충돌을 해결해줘:\n\`\`\`\n${mergeError.folderPath}\n\`\`\`\n\n충돌 파일:\n${files}\n\n각 파일의 충돌 마커(<<<<<<, =======, >>>>>>>)를 제거하고 올바르게 병합한 뒤,\n\`git add .\` → \`git commit --no-edit\` 순서로 머지를 완료해줘.`;
+              return (
+                <div className="bg-zinc-900/80 rounded-lg border border-zinc-700/60">
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700/40">
+                    <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-medium">Claude Code 프롬프트</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(prompt).then(() => showToast('프롬프트 복사됨 — Claude Code에 붙여넣기 하세요', 'success')).catch(() => showToast('복사 실패', 'error'));
+                      }}
+                      className="flex items-center gap-1.5 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
+                    >
+                      <Copy className="w-3 h-3" /> 복사
+                    </button>
+                  </div>
+                  <pre className="text-xs text-zinc-300 font-mono px-3 py-2.5 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">{prompt}</pre>
+                </div>
+              );
+            })()}
+
+            {/* Actions */}
+            <div className="flex gap-2 justify-end pt-1">
+              {mergeError.hasConflict && (
+                <>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                        const r = await fetch(`${baseUrl}/api/git-merge-abort`, {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ folderPath: mergeError.folderPath, force: false }),
+                        });
+                        if (!r.ok) {
+                          // retry with force
+                          const r2 = await fetch(`${baseUrl}/api/git-merge-abort`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ folderPath: mergeError.folderPath, force: true }),
+                          });
+                          if (!r2.ok) { const d = await r2.json(); showToast('abort 실패: ' + d.error, 'error'); return; }
+                        }
+                        showToast('머지 취소됨 — 브랜치가 원래 상태로 복원됐습니다', 'success');
+                        setMergeError(null);
+                        setMergeConflictFiles([]);
+                      } catch (e) { showToast('abort 실패: ' + e, 'error'); }
+                    }}
+                    className="px-3 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-400 text-sm rounded-lg border border-red-500/30 transition-colors"
+                  >
+                    Abort Merge
+                  </button>
+                </>
+              )}
+              <button onClick={() => { setMergeError(null); setMergeConflictFiles([]); }} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 머지 후 main 푸시 확인 모달 */}
+      {mergePushConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-blue-500/15 p-2 rounded-lg border border-blue-500/30">
+                <GitBranch className="w-5 h-5 text-blue-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-sm">머지 완료</h3>
+                <p className="text-zinc-400 text-xs mt-0.5"><span className="font-mono text-blue-300">{mergePushConfirm.mainBranch}</span> 브랜치를 remote에 푸시할까요?</p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                onClick={async () => {
+                  const { item, mainBranch } = mergePushConfirm;
+                  setMergePushConfirm(null);
+                  try {
+                    const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                    const res = await fetch(`${baseUrl}/api/git-push`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ folderPath: item.folderPath }),
+                    });
+                    const data = await res.json();
+                    if (data.success) showToast(`✅ ${mainBranch} 푸시 완료`, 'success');
+                    else showToast(`푸시 실패: ${data.error}`, 'error');
+                  } catch (e) { showToast('푸시 실패: ' + e, 'error'); }
+                }}
+                className="px-4 py-2 bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 text-sm rounded-lg border border-blue-500/30 transition-colors"
+              >
+                푸시
+              </button>
+              <button onClick={() => setMergePushConfirm(null)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
+                나중에
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 워크트리 경로 피커 모달 */}
       {worktreePickerState && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-[#18181b] rounded-xl border border-zinc-700 p-5 w-[420px] shadow-2xl">
-            <h3 className="text-sm font-semibold text-zinc-200 mb-3">워크트리 선택</h3>
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 p-5 w-[460px] shadow-2xl">
+            {/* 헤더: 프로젝트명 + 모드 */}
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-[10px] font-medium text-violet-400 uppercase tracking-wider">
+                  {worktreePickerState.mode === 'tmux' ? 'tmux' : 'Claude'}
+                </span>
+                <span className="text-zinc-600 text-[10px]">·</span>
+                <span className="text-xs font-semibold text-zinc-200 truncate">
+                  {worktreePickerState.item.aiName || worktreePickerState.item.name}
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-500">워크트리를 선택하거나 직접 경로를 입력하세요</p>
+            </div>
 
             {/* 감지된 워크트리 목록 */}
             {detectedWorktrees.length > 0 && (
               <div className="mb-3 border border-zinc-700 rounded-lg overflow-hidden">
-                {detectedWorktrees.map((wt) => (
-                  <button
-                    key={wt.path}
-                    onClick={() => setWorktreePickerValue(wt.path)}
-                    className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-zinc-700/50 transition-colors border-b border-zinc-700/50 last:border-0 ${
-                      worktreePickerValue === wt.path ? 'bg-violet-600/20 text-violet-300' : 'text-zinc-300'
-                    }`}
-                  >
-                    <span className="font-mono truncate">{wt.path}</span>
-                    {wt.branch && (
-                      <span className="text-zinc-500 ml-2 shrink-0">({wt.branch})</span>
-                    )}
-                  </button>
-                ))}
+                {detectedWorktrees.map((wt) => {
+                  const wtBasename = wt.path.replace(/\/$/, '').split('/').pop() ?? wt.path;
+                  const displayName = wt.branch || wtBasename;
+                  const isSelected = worktreePickerValue === wt.path;
+                  return (
+                    <button
+                      key={wt.path}
+                      onClick={() => setWorktreePickerValue(wt.path)}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-zinc-700/50 transition-colors border-b border-zinc-700/50 last:border-0 ${
+                        isSelected ? 'bg-violet-600/20' : ''
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-semibold ${isSelected ? 'text-violet-300' : wt.is_main ? 'text-zinc-300' : 'text-teal-300'}`}>{displayName}</span>
+                          {wt.is_main && <span className="text-[10px] text-zinc-500">(main)</span>}
+                        </div>
+                        <span className="text-zinc-600 font-mono text-[10px] truncate block">{wtBasename}</span>
+                      </div>
+                      {wt.branch && wt.branch !== displayName && (
+                        <span className="text-zinc-500 ml-2 shrink-0 text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded">{wt.branch}</span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -2190,8 +2840,23 @@ function App() {
                 if (e.key === 'Escape') { setWorktreePickerState(null); setDetectedWorktrees([]); }
               }}
               placeholder="직접 경로 입력..."
-              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 mb-4"
+              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 mb-3"
             />
+
+            {/* 워크트리 제거 가이드 */}
+            <div className="mb-4 px-3 py-2.5 bg-zinc-900/60 rounded-lg border border-zinc-800">
+              <p className="text-[10px] text-zinc-500 font-medium mb-1.5">워크트리 제거 방법</p>
+              <div className="space-y-1">
+                <div className="flex items-start gap-1.5">
+                  <span className="text-zinc-600 text-[10px] mt-0.5">·</span>
+                  <code className="text-[10px] text-violet-400 font-mono">git worktree remove &lt;path&gt;</code>
+                </div>
+                <div className="flex items-start gap-1.5">
+                  <span className="text-zinc-600 text-[10px] mt-0.5">·</span>
+                  <span className="text-[10px] text-zinc-500"><code className="text-zinc-400 font-mono">git worktree prune</code> — 삭제된 폴더 정리</span>
+                </div>
+              </div>
+            </div>
 
             <div className="flex gap-2 justify-end items-center">
               <button
@@ -2329,17 +2994,19 @@ function App() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <div className="flex gap-1 bg-[#18181b] border border-zinc-800 rounded-xl p-1 w-fit">
-              <button
-                onClick={() => setActiveTab('ports')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  activeTab === 'ports'
-                    ? 'bg-zinc-700 text-white shadow-sm'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                }`}
-              >
-                <Server className="w-3.5 h-3.5" />
-                프로젝트 관리
-              </button>
+              {!isMobile && (
+                <button
+                  onClick={() => setActiveTab('ports')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    activeTab === 'ports'
+                      ? 'bg-zinc-700 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                  }`}
+                >
+                  <Server className="w-3.5 h-3.5" />
+                  프로젝트 관리
+                </button>
+              )}
               <button
                 onClick={() => setActiveTab('portal')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
@@ -2349,7 +3016,7 @@ function App() {
                 }`}
               >
                 <BookMarked className="w-3.5 h-3.5" />
-                포털
+                {isMobile ? '북마크' : '포털'}
               </button>
             </div>
 
@@ -2438,6 +3105,20 @@ function App() {
             >
               <Rocket className="w-3.5 h-3.5" />
               <span>세팅</span>
+            </button>
+
+            {/* 로그 복사 버튼 */}
+            <button
+              onClick={handleCopyLog}
+              title="앱 오류 로그 클립보드 복사 (개선에 활용)"
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-xl border transition-all ${
+                logCopied
+                  ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                  : 'bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 border-zinc-800 hover:border-zinc-600'
+              }`}
+            >
+              {logCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{logCopied ? '복사됨' : '로그'}</span>
             </button>
           </div>
         </div>
@@ -2633,73 +3314,102 @@ function App() {
                 <span>추가</span>
               </button>
             </div>
-            <div className="space-y-2">
-              <input
-                type="text"
-                placeholder={`${execFileExt()} 파일 경로 (선택사항)`}
-                value={commandPath}
-                onChange={(e) => setCommandPath(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <input
-                type="text"
-                placeholder="터미널 명령어 (선택사항, 예: bunx cursor-talk-to-figma-socket)"
-                value={terminalCommand}
-                onChange={(e) => setTerminalCommand(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <input
-                type="text"
-                placeholder="프로젝트 폴더 경로 (선택사항)"
-                value={folderPath}
-                onChange={(e) => setFolderPath(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <input
-                type="text"
-                placeholder="배포 사이트 주소 (선택사항, 예: https://example.com)"
-                value={deployUrl}
-                onChange={(e) => setDeployUrl(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <input
-                type="text"
-                placeholder="GitHub 주소 (선택사항, 예: https://github.com/user/repo)"
-                value={githubUrl}
-                onChange={(e) => setGithubUrl(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="카테고리 (AI 자동)"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                />
-                <input
-                  type="text"
-                  placeholder="프로젝트 설명 (선택사항)"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                />
-              </div>
-              <div className="flex items-start gap-2 px-1">
-                <div className="text-base">💡</div>
-                <p className="text-[11px] text-zinc-500 leading-relaxed">
-                  <span className="font-medium text-zinc-400">쉬운 추가 방법:</span> Finder에서
-                  <span className="font-mono text-zinc-400"> 포트에추가.command </span>
-                  파일 위로 {execFileExt()} 파일을 드래그하세요
-                </p>
-              </div>
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowOptionalFields(v => !v)}
+                className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors mb-2 select-none"
+              >
+                <span className={`transition-transform duration-200 ${showOptionalFields ? 'rotate-90' : ''}`}>▶</span>
+                <span>추가 정보 {showOptionalFields ? '접기' : '펼치기'}</span>
+              </button>
+              {showOptionalFields && (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    placeholder={`${execFileExt()} 파일 경로 (선택사항)`}
+                    value={commandPath}
+                    onChange={(e) => setCommandPath(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <input
+                    type="text"
+                    placeholder="터미널 명령어 (선택사항, 예: bunx cursor-talk-to-figma-socket)"
+                    value={terminalCommand}
+                    onChange={(e) => setTerminalCommand(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <input
+                    type="text"
+                    placeholder="프로젝트 폴더 경로 (선택사항)"
+                    value={folderPath}
+                    onChange={(e) => setFolderPath(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <input
+                    type="text"
+                    placeholder="배포 사이트 주소 (선택사항, 예: https://example.com)"
+                    value={deployUrl}
+                    onChange={(e) => setDeployUrl(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <input
+                    type="text"
+                    placeholder="GitHub 주소 (선택사항, 예: https://github.com/user/repo)"
+                    value={githubUrl}
+                    onChange={(e) => setGithubUrl(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <input
+                    type="text"
+                    placeholder="워크트리 경로 (선택사항) — 입력 시 포트 자동 배정 (메인포트×10+n)"
+                    value={worktreePath}
+                    onChange={(e) => {
+                      setWorktreePath(e.target.value);
+                      // 워크트리 경로 입력 시 포트가 비어있으면 메인포트 기반 자동 배정
+                      if (!port && e.target.value.trim()) {
+                        const mainPort = folderPath
+                          ? ports.find(p => p.folderPath === folderPath)?.port
+                          : undefined;
+                        setPort(getNextWorktreePort(ports, mainPort).toString());
+                      }
+                    }}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-amber-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-all"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="카테고리 (AI 자동)"
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                      onKeyPress={handleKeyPress}
+                      className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                    />
+                    <input
+                      type="text"
+                      placeholder="프로젝트 설명 (선택사항)"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      onKeyPress={handleKeyPress}
+                      className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                    />
+                  </div>
+                  <div className="flex items-start gap-2 px-1">
+                    <div className="text-base">💡</div>
+                    <p className="text-[11px] text-zinc-500 leading-relaxed">
+                      <span className="font-medium text-zinc-400">쉬운 추가 방법:</span> Finder에서
+                      <span className="font-mono text-zinc-400"> 포트에추가.command </span>
+                      파일 위로 {execFileExt()} 파일을 드래그하세요
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -3054,9 +3764,35 @@ function App() {
                     <div className="flex flex-col gap-2">
                       {/* 정보 행 */}
                       <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleFavorite(item); }}
+                          className="flex-shrink-0 text-zinc-600 hover:text-yellow-400 transition-colors"
+                          title={item.favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+                        >
+                          <Star className={`w-3.5 h-3.5 ${item.favorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                        </button>
                         <h3 className="text-sm font-medium text-white whitespace-nowrap">
                           {item.name}
                         </h3>
+                        {/* 폴더 이름 (name과 다를 때만) */}
+                        {item.folderPath && (() => {
+                          const parts = item.folderPath.replace(/\/$/, '').split('/');
+                          const basename = parts[parts.length - 1];
+                          return basename && basename !== item.name ? (
+                            <span className="text-[11px] text-zinc-500 font-mono whitespace-nowrap" title={item.folderPath}>
+                              {basename}
+                            </span>
+                          ) : null;
+                        })()}
+                        {/* 워크트리 뱃지 */}
+                        {item.worktreePath && (
+                          <span
+                            className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 text-[10px] font-medium rounded border border-amber-500/30 whitespace-nowrap"
+                            title={`Worktree: ${item.worktreePath}`}
+                          >
+                            WT: {item.worktreePath.replace(/\/$/, '').split('/').pop()}
+                          </span>
+                        )}
                         {item.aiName && (
                           <span
                             className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium rounded border border-emerald-500/30 whitespace-nowrap"
@@ -3202,7 +3938,16 @@ function App() {
                         </div>
                         {item.folderPath && (
                           <button
-                            onClick={() => API.openFolder(item.folderPath!)}
+                            onClick={async () => {
+                              try {
+                                const wt = item.worktreePath?.split(',')[0]?.trim();
+                                const target = (wt && wt.startsWith('/')) ? wt : item.folderPath!;
+                                await API.openFolder(target);
+                                showToast('폴더를 열었습니다', 'success');
+                              } catch (e) {
+                                showToast('폴더 열기 실패: ' + e, 'error');
+                              }
+                            }}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 text-xs font-medium rounded-lg border border-zinc-700/50 hover:border-zinc-600/50 transition-all duration-200"
                           >
                             <Folder className="w-3 h-3" />
@@ -3210,23 +3955,7 @@ function App() {
                           </button>
                         )}
                         {item.deployUrl && (
-                          isTauri() ? (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await API.openInChrome(item.deployUrl);
-                                  showToast(`배포 사이트를 열었습니다`, 'success');
-                                } catch (error) {
-                                  showToast('배포 사이트 열기 실패: ' + error, 'error');
-                                }
-                              }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-xs font-medium rounded-lg border border-purple-500/30 hover:border-purple-500/50 transition-all duration-200"
-                            >
-                              <Globe className="w-3 h-3" />
-                              <span>배포</span>
-                            </button>
-                          ) : (
-                            <a
+                          <a
                               href={item.deployUrl}
                               target="_blank"
                               rel="noopener noreferrer"
@@ -3235,26 +3964,9 @@ function App() {
                               <Globe className="w-3 h-3" />
                               <span>배포</span>
                             </a>
-                          )
                         )}
                         {item.githubUrl && (
-                          isTauri() ? (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await API.openInChrome(item.githubUrl!);
-                                  showToast('GitHub를 열었습니다', 'success');
-                                } catch (error) {
-                                  showToast('GitHub 열기 실패: ' + error, 'error');
-                                }
-                              }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-700/30 hover:bg-zinc-700/50 text-zinc-300 text-xs font-medium rounded-lg border border-zinc-600/40 hover:border-zinc-500/60 transition-all duration-200"
-                            >
-                              <Github className="w-3 h-3" />
-                              <span>GitHub</span>
-                            </button>
-                          ) : (
-                            <a
+                          <a
                               href={item.githubUrl}
                               target="_blank"
                               rel="noopener noreferrer"
@@ -3263,35 +3975,104 @@ function App() {
                               <Github className="w-3 h-3" />
                               <span>GitHub</span>
                             </a>
-                          )
+                        )}
+                        {item.folderPath && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                                await fetch(`${baseUrl}/api/open-terminal-git-push`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ folderPath: item.folderPath, name: item.name, githubUrl: item.githubUrl, worktreePath: item.worktreePath })
+                                });
+                                showToast('터미널에서 git push 실행 중', 'success');
+                              } catch (error) {
+                                showToast('터미널 열기 실패: ' + error, 'error');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
+                            title={item.githubUrl ? `git push → ${item.githubUrl}` : `git push (원격 그대로)`}
+                          >
+                            <Terminal className="w-3 h-3" />
+                            <span>터미널푸시</span>
+                          </button>
+                        )}
+                        {item.folderPath && (
+                          <button
+                            onClick={async () => {
+                              try {
+                                const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                                await fetch(`${baseUrl}/api/open-terminal-git-pull`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({ folderPath: item.folderPath, name: item.name, githubUrl: item.githubUrl, worktreePath: item.worktreePath })
+                                });
+                                showToast('터미널에서 git pull 실행 중', 'success');
+                              } catch (error) {
+                                showToast('터미널 열기 실패: ' + error, 'error');
+                              }
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-medium rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all duration-200"
+                            title={item.githubUrl ? `git pull ← ${item.githubUrl}` : `git pull (원격 그대로)`}
+                          >
+                            <Terminal className="w-3 h-3" />
+                            <span>터미널풀</span>
+                          </button>
+                        )}
+                        {item.folderPath && (
+                          <button
+                            onClick={() => {
+                              const prompt = `cd "${item.folderPath}" && git push`;
+                              navigator.clipboard.writeText(prompt);
+                              showToast('푸시 프롬프트 복사됨', 'success');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 text-xs font-medium rounded-lg border border-zinc-700/50 hover:border-zinc-600/50 transition-all duration-200"
+                            title={`cd "${item.folderPath}" && git push`}
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>푸시복사</span>
+                          </button>
+                        )}
+                        {item.folderPath && (
+                          <button
+                            onClick={() => {
+                              const prompt = `cd "${item.folderPath}" && git pull`;
+                              navigator.clipboard.writeText(prompt);
+                              showToast('풀 프롬프트 복사됨', 'success');
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 text-xs font-medium rounded-lg border border-zinc-700/50 hover:border-zinc-600/50 transition-all duration-200"
+                            title={`cd "${item.folderPath}" && git pull`}
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>풀복사</span>
+                          </button>
                         )}
                         {(item.commandPath || item.terminalCommand) && item.port && (
-                          isTauri() ? (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await API.openInChrome(`http://localhost:${item.port}`);
-                                  showToast(`Chrome에서 포트 ${item.port}를 열었습니다`, 'success');
-                                } catch (error) {
-                                  showToast('Chrome 열기 실패: ' + error, 'error');
-                                }
-                              }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
-                            >
-                              <span>열기</span>
-                              <ExternalLink className="w-3 h-3" />
-                            </button>
-                          ) : (
-                            <a
-                              href={`http://localhost:${item.port}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
-                            >
-                              <span>열기</span>
-                              <ExternalLink className="w-3 h-3" />
-                            </a>
-                          )
+                          <a
+                            href={`http://localhost:${item.port}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
+                          >
+                            <span>열기</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                        {/* Worktree 패널 토글 버튼 */}
+                        {item.folderPath && (
+                          <button
+                            onClick={() => toggleWorktreePanel(item.id, item.folderPath)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all duration-200 ${
+                              expandedWorktreeIds.has(item.id)
+                                ? 'bg-teal-500/20 text-teal-300 border-teal-500/40'
+                                : 'bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 border-zinc-700/50 hover:border-zinc-600/50'
+                            }`}
+                            title="Git Worktrees 보기/관리"
+                          >
+                            <GitBranch className="w-3 h-3" />
+                            <span>Worktree</span>
+                          </button>
                         )}
                         {/* AI buttons (web mode only, folderPath required) */}
                         <button
@@ -3305,6 +4086,158 @@ function App() {
                           className="p-1.5 hover:bg-red-500/10 rounded-lg transition-colors border border-transparent hover:border-red-500/30"
                         >
                           <Trash2 className="w-3.5 h-3.5 text-zinc-600 hover:text-red-400 transition-colors" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {/* Worktree 패널 */}
+                  {expandedWorktreeIds.has(item.id) && item.folderPath && (
+                    <div className="mt-2 p-3 bg-zinc-900/60 rounded-lg border border-zinc-700/50">
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+                          <GitBranch className="w-3 h-3 text-teal-400" />
+                          Git Worktrees
+                        </h4>
+                        <button
+                          onClick={() => loadWorktrees(item.id, item.folderPath!)}
+                          className="p-1 hover:bg-zinc-800 rounded transition-colors"
+                          title="새로고침"
+                        >
+                          <RefreshCw className="w-3 h-3 text-zinc-500 hover:text-zinc-300" />
+                        </button>
+                      </div>
+                      {worktreeLoading[item.id] ? (
+                        <p className="text-xs text-zinc-500">로딩 중...</p>
+                      ) : (worktreeLists[item.id] ?? []).length === 0 ? (
+                        <p className="text-xs text-zinc-500">워크트리 없음</p>
+                      ) : (
+                        <div className="space-y-1.5 mb-2">
+                          {(worktreeLists[item.id] ?? []).map((wt, idx) => (
+                            <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-zinc-800/50 rounded text-xs">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className={`font-mono truncate ${wt.is_main ? 'text-zinc-300' : 'text-teal-300'}`}>
+                                  {wt.branch || wt.path.split('/').pop()}
+                                </span>
+                                {wt.is_main && <span className="text-[10px] text-zinc-500 shrink-0">(main)</span>}
+                              </div>
+                              {!wt.is_main && (() => {
+                                // 이 워크트리에 대응하는 PortInfo 탐색 (main item 제외, worktreePath 매칭)
+                                const wtPort = ports.find(p => p.id !== item.id && p.worktreePath === wt.path);
+                                // 전용 PortInfo 없어도 main 포트 기반으로 포트 추론 (단, *10 결과가 65535 초과 시 undefined)
+                                const nonMainWorktrees = (worktreeLists[item.id] ?? []).filter(w => !w.is_main);
+                                const wtIndex = nonMainWorktrees.findIndex(w => w.path === wt.path);
+                                const rawInferred = item.port ? item.port * 10 + (wtIndex + 1) : undefined;
+                                const usedPortSet = new Set(ports.map(p => p.port).filter((p): p is number => p != null));
+                                const inferredPort = rawInferred && rawInferred <= 65535
+                                  ? rawInferred
+                                  : wtIndex >= 0 ? worktreePortFromPath(wt.path, usedPortSet) : undefined;
+                                const effectivePort = wtPort?.port ?? inferredPort;
+                                return (
+                                  <div className="flex items-center gap-1 shrink-0 flex-wrap">
+                                    {/* 실행: 전용 PortInfo있으면 executeCommand, 없으면 PORT=N 터미널 */}
+                                    <button
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (wtPort && (wtPort.commandPath || wtPort.terminalCommand)) {
+                                          executeCommand(wtPort);
+                                          showToast(`실행: ${wt.branch} (포트 ${effectivePort})`, 'success');
+                                        } else {
+                                          try {
+                                            const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                                            await fetch(`${baseUrl}/api/open-terminal-worktree-run`, {
+                                              method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                              body: JSON.stringify({ worktreePath: wt.path, name: item.name, terminalCommand: item.terminalCommand, port: effectivePort, folderPath: item.folderPath })
+                                            });
+                                            showToast(`터미널 열기: ${wt.branch} (포트 ${effectivePort ?? '?'})`, 'success');
+                                          } catch (err) { showToast('실행 실패: ' + err, 'error'); }
+                                        }
+                                      }}
+                                      className="px-1.5 py-0.5 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-[10px] rounded border border-green-500/20"
+                                      title={`dev server 실행 (포트 ${effectivePort ?? '?'})`}
+                                    >
+                                      실행{effectivePort ? `(${effectivePort})` : ''}
+                                    </button>
+                                    {/* 열기: 새 탭으로 열기 */}
+                                    {effectivePort && (
+                                      <a
+                                        href={`http://localhost:${effectivePort}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={e => e.stopPropagation()}
+                                        className="px-1.5 py-0.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-[10px] rounded border border-purple-500/20"
+                                        title={`http://localhost:${effectivePort} 열기`}
+                                      >
+                                        열기
+                                      </a>
+                                    )}
+                                    {/* 구분선: 서버 제어 | git 제어 */}
+                                    <span className="w-px h-3 bg-zinc-600 mx-0.5 self-center" />
+                                    {/* 커밋: 메시지 입력 모달 → 백그라운드 git add -A && commit */}
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); setCommitModal({ item, wt, msg: '' }); }}
+                                      className="px-1.5 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-[10px] rounded border border-amber-500/20"
+                                      title={`git add -A && commit (${wt.path})`}
+                                    >
+                                      커밋
+                                    </button>
+                                    {/* 푸시: 백그라운드 silent push */}
+                                    <button
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        try {
+                                          const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                                          const res = await fetch(`${baseUrl}/api/git-push`, {
+                                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ folderPath: wt.path })
+                                          });
+                                          const data = await res.json();
+                                          if (data.success) showToast(`✅ 푸시 완료: ${wt.branch}`, 'success');
+                                          else showToast(`푸시 실패: ${data.error}`, 'error');
+                                        } catch (err) { showToast('푸시 실패: ' + err, 'error'); }
+                                      }}
+                                      className="px-1.5 py-0.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[10px] rounded border border-blue-500/20"
+                                      title={`git push: ${wt.branch} → remote`}
+                                    >
+                                      푸시
+                                    </button>
+                                    {/* 머지: wt.branch → main (confirm modal) */}
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleWorktreeMerge(item, wt); }}
+                                      className="px-1.5 py-0.5 bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 text-[10px] rounded border border-teal-500/20"
+                                      title={`${wt.branch} → main 머지`}
+                                    >
+                                      머지
+                                    </button>
+                                    {/* 삭제: worktree 제거 */}
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleWorktreeRemove(item, wt); }}
+                                      className="px-1.5 py-0.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] rounded border border-red-500/20"
+                                      title="워크트리 삭제"
+                                    >
+                                      삭제
+                                    </button>
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1.5 mt-2">
+                        <input
+                          type="text"
+                          value={worktreeNewBranch[item.id] ?? ''}
+                          onChange={e => setWorktreeNewBranch(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          onKeyDown={e => e.key === 'Enter' && handleWorktreeAdd(item)}
+                          placeholder="새 브랜치명..."
+                          className="flex-1 px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-teal-500/50"
+                        />
+                        <button
+                          onClick={() => handleWorktreeAdd(item)}
+                          disabled={!worktreeNewBranch[item.id]?.trim()}
+                          className="px-2 py-1 bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 text-xs rounded border border-teal-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          + Add
                         </button>
                       </div>
                     </div>

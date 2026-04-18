@@ -74,11 +74,25 @@ const DEFAULT_CATEGORIES: PortalCategory[] = [
 // ─── Tauri detection ──────────────────────────────────────────────────────────
 
 const isTauri = () => typeof window !== 'undefined' && ('__TAURI__' in window || '__TAURI_INTERNALS__' in window);
+const isDeployedWeb = () => typeof window !== 'undefined' && !isTauri() && !['localhost', '127.0.0.1'].includes(window.location.hostname);
+const PORTAL_WEB_KEY = 'portalData_v1';
 
 // ─── Portal API ───────────────────────────────────────────────────────────────
 
 const PortalAPI = {
   async load(): Promise<PortalData> {
+    // Deployed web (Vercel etc): localStorage is the only storage
+    if (isDeployedWeb()) {
+      try {
+        const raw = localStorage.getItem(PORTAL_WEB_KEY);
+        if (raw) {
+          const d: PortalData = JSON.parse(raw);
+          if (!d.categories?.length) d.categories = DEFAULT_CATEGORIES;
+          return d;
+        }
+      } catch { /* ignore */ }
+      return { items: [], categories: DEFAULT_CATEGORIES };
+    }
     try {
       if (isTauri()) {
         const val = await invoke<PortalData>('load_portal');
@@ -87,7 +101,8 @@ const PortalAPI = {
       const res = await fetch('/api/portal');
       if (!res.ok) return { items: [], categories: DEFAULT_CATEGORIES };
       const data: PortalData = await res.json();
-      // Mirror credentials to localStorage for offline fallback
+      // Mirror full data to localStorage for offline/Vercel fallback
+      localStorage.setItem('portalData', JSON.stringify(data));
       if (data.supabaseUrl || data.supabaseAnonKey) {
         localStorage.setItem('portalCreds', JSON.stringify({
           supabaseUrl: data.supabaseUrl,
@@ -97,7 +112,11 @@ const PortalAPI = {
       }
       return data;
     } catch {
-      // api-server is down — try to restore credentials from localStorage
+      // api-server is down (Vercel / offline) — restore from localStorage
+      const full = localStorage.getItem('portalData');
+      if (full) {
+        try { return JSON.parse(full); } catch { /* fall through */ }
+      }
       const cached = localStorage.getItem('portalCreds');
       if (cached) {
         try {
@@ -112,22 +131,32 @@ const PortalAPI = {
   },
 
   async save(data: PortalData): Promise<void> {
+    // Deployed web: persist to localStorage only
+    if (isDeployedWeb()) {
+      localStorage.setItem(PORTAL_WEB_KEY, JSON.stringify(data));
+      return;
+    }
     if (isTauri()) {
       await invoke('save_portal', { data });
       return;
     }
-    await fetch('/api/portal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    // Keep localStorage in sync so credentials survive api-server restarts
+    // Always persist to localStorage (Vercel / offline support)
+    localStorage.setItem('portalData', JSON.stringify(data));
     if (data.supabaseUrl || data.supabaseAnonKey) {
       localStorage.setItem('portalCreds', JSON.stringify({
         supabaseUrl: data.supabaseUrl,
         supabaseAnonKey: data.supabaseAnonKey,
         deviceId: data.deviceId,
       }));
+    }
+    try {
+      await fetch('/api/portal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+    } catch {
+      // api-server unavailable — data already saved to localStorage above
     }
   },
 
@@ -198,6 +227,7 @@ interface Props {
   onSettingsClosed?: () => void;
   actionsRef?: React.MutableRefObject<PortalActions | null>;
   isVisible?: boolean; // false → hide portal UI but keep modals alive
+  onChangeDevice?: () => void;
 }
 
 const AI_TABLE_PROMPT = `포트 관리 프로그램(portmanagement)의 Supabase 테이블을 설정해줘.
@@ -427,6 +457,65 @@ bun run start
 - 프로젝트 관리 탭 → Pull 버튼
 `;
 
+  const VERCEL_GUIDE = `# 포털 북마크 — Vercel 배포 가이드
+
+## 전제조건
+- Supabase 프로젝트 생성 완료 (이 앱에서 이미 사용 중인 것)
+- GitHub 계정 (포크 또는 본인 레포)
+- Node.js 설치됨
+
+## 1. Vercel 회원가입
+https://vercel.com → GitHub 계정으로 가입 (권장)
+
+## 2. Vercel CLI 설치
+npm install -g vercel
+# 또는
+bun install -g vercel
+
+## 3. Vercel 로그인
+vercel login
+# 브라우저에서 인증 후 터미널로 돌아오기
+
+## 4. 프로젝트 루트에 .env 파일 생성
+# portmanagement 폴더에 .env.local 파일 생성:
+VITE_SUPABASE_URL=https://[your-project].supabase.co
+VITE_SUPABASE_ANON_KEY=eyJ...
+
+## 5. vercel.json 생성 (SPA 라우팅 설정)
+# portmanagement 폴더 루트에:
+{
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+}
+
+## 6. 배포
+cd portmanagement
+vercel
+# 설정 질문:
+# - Set up and deploy? → Y
+# - Which scope? → 본인 계정 선택
+# - Link to existing project? → N (신규)
+# - Project name? → portal-bookmarks (원하는 이름)
+# - In which directory? → ./ (현재 폴더)
+# - Override settings? → N
+
+## 7. 환경변수 Vercel에 등록
+vercel env add VITE_SUPABASE_URL
+vercel env add VITE_SUPABASE_ANON_KEY
+# → 각각 값 입력 후 모든 환경(Production/Preview/Development) 선택
+
+## 8. 재배포 (환경변수 반영)
+vercel --prod
+
+## 9. 완료
+# 배포 URL: https://[project-name].vercel.app
+# 이후 변경사항: git push → vercel --prod 로 재배포
+
+## ⚠️ 주의사항
+- 포트 실행/중지, 빌드, 터미널 기능은 로컬 전용 → Vercel에서 미동작
+- 포털 북마크(URL 등록/조회/열기)만 정상 동작
+- Supabase Anon Key는 공개 노출 허용 설계 (Row Level Security 또는 device_id로 격리)
+`;
+
   const steps = [
     {
       title: '🆕 최초 세팅',
@@ -494,6 +583,24 @@ bun run start
         </div>
       ),
     },
+    {
+      title: '🚀 Vercel 배포',
+      content: (
+        <div className="space-y-2">
+          <p className="text-zinc-300 text-[11px]">포털 북마크를 웹에 배포 — 앱 없이 브라우저에서 접근 가능</p>
+          <pre className="bg-black/40 rounded p-2 text-zinc-400 whitespace-pre-wrap text-[10px] max-h-52 overflow-y-auto leading-relaxed">{VERCEL_GUIDE}</pre>
+          <button
+            onClick={() => { navigator.clipboard.writeText(VERCEL_GUIDE); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
+            className={`w-full py-1.5 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
+              copied ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-600'
+            }`}
+          >
+            {copied ? <Check className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
+            {copied ? '복사됨!' : '가이드 복사'}
+          </button>
+        </div>
+      ),
+    },
   ];
 
   return (
@@ -545,7 +652,7 @@ bun run start
   );
 }
 
-export default function PortalManager({ showToast, openSettings, onSettingsClosed, actionsRef, isVisible = true }: Props) {
+export default function PortalManager({ showToast, openSettings, onSettingsClosed, actionsRef, isVisible = true, onChangeDevice }: Props) {
   const [data, setData] = useState<PortalData>({ items: [], categories: DEFAULT_CATEGORIES });
   const [selectedCat, setSelectedCat] = useState<string>('all');
   const [search, setSearch] = useState('');
@@ -566,9 +673,19 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   const [sbUrl, setSbUrl] = useState('');
   const [sbKey, setSbKey] = useState('');
   const [deviceName, setDeviceName] = useState('');
-  const [viewingDeviceId, setViewingDeviceId] = useState('');
+  const [viewingDeviceId, setViewingDeviceId] = useState(
+    () => localStorage.getItem('portal-viewing-device') ?? ''
+  );
   const [knownDevices, setKnownDevices] = useState<{device_id: string; device_name?: string}[]>([]);
   const [isFetchingDevices, setIsFetchingDevices] = useState(false);
+
+  useEffect(() => {
+    if (viewingDeviceId) {
+      localStorage.setItem('portal-viewing-device', viewingDeviceId);
+    } else {
+      localStorage.removeItem('portal-viewing-device');
+    }
+  }, [viewingDeviceId]);
 
   // ── Load ──────────────────────────────────────────────────────────────────
 
@@ -583,8 +700,15 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         needsPersist = true;
       }
       setData(loaded);
-      setSbUrl(loaded.supabaseUrl ?? '');
-      setSbKey(loaded.supabaseAnonKey ?? '');
+      const envUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? '';
+      const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '';
+      setSbUrl(loaded.supabaseUrl || envUrl);
+      setSbKey(loaded.supabaseAnonKey || envKey);
+      // Persist env-var creds back to storage if missing
+      if ((!loaded.supabaseUrl && envUrl) || (!loaded.supabaseAnonKey && envKey)) {
+        loaded.supabaseUrl = envUrl;
+        loaded.supabaseAnonKey = envKey;
+      }
       setDeviceName(loaded.deviceName ?? '');
       setViewingDeviceId(loaded.viewingDeviceId ?? '');
       setIsLoading(false);
@@ -1032,9 +1156,41 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   }
 
   const portalUI = isVisible ? (
-    <div className="flex gap-4 h-full">
-      {/* ── Left Sidebar ────────────────────────────────────────────────────── */}
-      <div className="w-48 flex-shrink-0">
+    <div className="flex flex-col md:flex-row gap-4 h-full">
+      {/* ── Mobile category tabs ──────────────────────────────────────────────── */}
+      <div className="md:hidden flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none">
+        <button
+          onClick={() => setSelectedCat('all')}
+          className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedCat === 'all' ? 'bg-zinc-700 text-white' : 'bg-zinc-800/60 text-zinc-400 hover:text-zinc-200'}`}
+        >
+          <BookMarked className="w-3 h-3" />
+          전체 <span className="text-zinc-500">{data.items.length}</span>
+        </button>
+        {data.categories.sort((a, b) => a.order - b.order).map(cat => {
+          const c = getColor(cat.color);
+          const count = data.items.filter(i => i.category === cat.id).length;
+          return (
+            <button
+              key={cat.id}
+              onClick={() => setSelectedCat(cat.id)}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedCat === cat.id ? 'bg-zinc-700 text-white' : 'bg-zinc-800/60 text-zinc-400 hover:text-zinc-200'}`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.dot}`} />
+              {cat.name} <span className="text-zinc-500">{count}</span>
+            </button>
+          );
+        })}
+        <button
+          onClick={() => setShowCatModal(true)}
+          className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-zinc-500 bg-zinc-800/60 hover:text-zinc-300 transition-colors"
+        >
+          <Plus className="w-3 h-3" />
+          추가
+        </button>
+      </div>
+
+      {/* ── Left Sidebar (desktop only) ──────────────────────────────────────── */}
+      <div className="hidden md:block w-48 flex-shrink-0">
         <div className="bg-[#18181b] rounded-xl border border-zinc-800 overflow-hidden">
           {/* All */}
           <button
@@ -1067,12 +1223,15 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="text-xs text-zinc-600 group-hover:text-zinc-500">{count}</span>
-                    <button
+                    <span
+                      role="button"
+                      tabIndex={0}
                       onClick={e => { e.stopPropagation(); deleteCategory(cat.id); }}
-                      className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity ml-0.5"
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); deleteCategory(cat.id); } }}
+                      className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity ml-0.5 cursor-pointer"
                     >
                       <X className="w-3 h-3" />
-                    </button>
+                    </span>
                   </div>
                 </div>
               );
@@ -1141,7 +1300,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
               <Star className="w-3.5 h-3.5 text-amber-400" />
               <span className="text-xs font-medium text-zinc-400">고정됨</span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
               {pinnedItems.map(item => (
                 <ItemCard key={item.id} item={item} getCat={getCat} getColor={getColor} onOpen={openItem} onEdit={openEditModal} onDelete={deleteItem} onTogglePin={togglePin} />
               ))}
@@ -1169,7 +1328,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
                     <Plus className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                   {catItems.map(item => (
                     <ItemCard key={item.id} item={item} getCat={getCat} getColor={getColor} onOpen={openItem} onEdit={openEditModal} onDelete={deleteItem} onTogglePin={togglePin} />
                   ))}
@@ -1180,7 +1339,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         ) : (
           // Flat view (filtered)
           unpinnedItems.length > 0 ? (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
               {unpinnedItems.map(item => (
                 <ItemCard key={item.id} item={item} getCat={getCat} getColor={getColor} onOpen={openItem} onEdit={openEditModal} onDelete={deleteItem} onTogglePin={togglePin} />
               ))}
@@ -1361,7 +1520,17 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
               placeholder="예: MyMacPro, 회사맥북, WindowsPC"
               autoFocus={!deviceName && !data.deviceId}
             />
-            <p className="text-[10px] text-zinc-600 mt-1">Device ID: {data.deviceId ? data.deviceId.slice(0, 16) + '…' : '자동생성'}</p>
+            <div className="flex items-center justify-between mt-1">
+              <p className="text-[10px] text-zinc-600">Device ID: {data.deviceId ? data.deviceId.slice(0, 16) + '…' : '자동생성'}</p>
+              {onChangeDevice && (
+                <button
+                  onClick={() => { setShowSettings(false); onChangeDevice(); }}
+                  className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  단말 변경
+                </button>
+              )}
+            </div>
           </div>
 
           {/* ── 2. Supabase 연결 ─────────────────────────────────────────────── */}
