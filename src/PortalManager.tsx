@@ -74,11 +74,25 @@ const DEFAULT_CATEGORIES: PortalCategory[] = [
 // ─── Tauri detection ──────────────────────────────────────────────────────────
 
 const isTauri = () => typeof window !== 'undefined' && ('__TAURI__' in window || '__TAURI_INTERNALS__' in window);
+const isDeployedWeb = () => typeof window !== 'undefined' && !isTauri() && !['localhost', '127.0.0.1'].includes(window.location.hostname);
+const PORTAL_WEB_KEY = 'portalData_v1';
 
 // ─── Portal API ───────────────────────────────────────────────────────────────
 
 const PortalAPI = {
   async load(): Promise<PortalData> {
+    // Deployed web (Vercel etc): localStorage is the only storage
+    if (isDeployedWeb()) {
+      try {
+        const raw = localStorage.getItem(PORTAL_WEB_KEY);
+        if (raw) {
+          const d: PortalData = JSON.parse(raw);
+          if (!d.categories?.length) d.categories = DEFAULT_CATEGORIES;
+          return d;
+        }
+      } catch { /* ignore */ }
+      return { items: [], categories: DEFAULT_CATEGORIES };
+    }
     try {
       if (isTauri()) {
         const val = await invoke<PortalData>('load_portal');
@@ -112,6 +126,11 @@ const PortalAPI = {
   },
 
   async save(data: PortalData): Promise<void> {
+    // Deployed web: persist to localStorage only
+    if (isDeployedWeb()) {
+      localStorage.setItem(PORTAL_WEB_KEY, JSON.stringify(data));
+      return;
+    }
     if (isTauri()) {
       await invoke('save_portal', { data });
       return;
