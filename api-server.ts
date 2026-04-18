@@ -1279,6 +1279,30 @@ const server = Bun.serve({
       if (buildStatus.isBuilding) {
         return new Response(JSON.stringify({ error: "빌드가 이미 진행 중입니다" }), { status: 400, headers });
       }
+      // Windows 빌드 사전 요구사항 확인
+      const cargoCheck = await Bun.$`cargo --version`.quiet().nothrow();
+      const missing: string[] = [];
+      if (cargoCheck.exitCode !== 0) missing.push('Rust (cargo)');
+
+      if (process.platform === 'win32') {
+        // MSVC cl.exe 또는 VS Build Tools 존재 확인
+        const clCheck = await Bun.$`where cl.exe`.quiet().nothrow();
+        const vsPaths = [
+          'C:/Program Files/Microsoft Visual Studio/2022/BuildTools',
+          'C:/Program Files/Microsoft Visual Studio/2022/Community',
+          'C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools',
+          'C:/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools',
+        ];
+        const hasVS = await Promise.all(vsPaths.map(p => Bun.file(p + '/VC/Tools/MSVC').exists()))
+          .then(results => results.some(Boolean));
+        if (clCheck.exitCode !== 0 && !hasVS) missing.push('Visual Studio C++ Build Tools (MSVC)');
+      }
+
+      if (missing.length > 0) {
+        return new Response(JSON.stringify({
+          error: `❌ Windows 빌드에 필요한 도구가 설치되지 않았습니다:\n${missing.map(m => '  • ' + m).join('\n')}\n\n설치 방법:\n1. Visual Studio Build Tools 설치:\n   https://visualstudio.microsoft.com/visual-cpp-build-tools/\n   ("C++를 사용한 데스크톱 개발" 워크로드 선택)\n2. Rust 설치:\n   https://www.rust-lang.org/tools/install\n   rustup-init.exe 다운로드 → 기본 설정(1) 선택\n3. 설치 후 터미널/앱 재시작 → 빌드 버튼 다시 클릭\n\n⚠️ Visual Studio Build Tools가 먼저 설치되어 있어야 Rust가 MSVC 타겟을 인식합니다.`
+        }), { status: 400, headers });
+      }
       buildStatus = { isBuilding: true, type: 'windows', output: [], exitCode: null };
       buildProcess = spawn({
         cmd: ["bun", "run", "tauri:build:win"],
