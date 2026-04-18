@@ -1042,6 +1042,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         lastSynced: new Date().toISOString(),
       };
       await persist(nextData);
+      setData(nextData);
       showToast(`Supabase에서 ${items.length}개 항목을 복원했습니다 ✓`, 'success');
     } catch (err) {
       showToast('복원 실패: ' + err, 'error');
@@ -1497,7 +1498,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       {/* ── Settings Modal (탭 무관하게 항상 렌더) ────────────────────────── */}
       {showSettings && (
-        <Modal title="설정" onClose={() => setShowSettings(false)} onConfirm={async () => { await saveSettings(); await syncSupabase(); }} confirmLabel="저장 후 동기화">
+        <Modal title="설정" onClose={() => setShowSettings(false)} onConfirm={async () => { await saveSettings(); if (viewingDeviceId && viewingDeviceId !== data.deviceId) { await pullFromSupabase(); } else { await syncSupabase(); } }} confirmLabel="저장 후 동기화">
 
           {/* ── 1. 단말 이름 ─────────────────────────────────────────────────── */}
           <div className="mb-3">

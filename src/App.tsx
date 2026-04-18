@@ -531,6 +531,7 @@ interface PortInfo {
   aiName?: string;  // AI-generated English alias for search
   favorite?: boolean;
   isRunning?: boolean;
+  sourceDeviceId?: string; // device_id from Supabase — used to prevent cross-device overwrite on push
 }
 
 interface WorktreeInfo {
@@ -1143,18 +1144,25 @@ function App() {
         if (!data) throw new Error('No data after retries');
 
         // commandPath가 있는데 folderPath가 없는 경우 자동으로 추출
-        const updatedData = data.map((port: PortInfo) => {
-          if (port.commandPath && !port.folderPath) {
-            const lastSlashIndex = port.commandPath.lastIndexOf('/');
-            if (lastSlashIndex !== -1) {
-              return {
-                ...port,
-                folderPath: port.commandPath.substring(0, lastSlashIndex)
-              };
+        const isWinPath = (p: string) => /^[A-Za-z]:[/\\]/.test(p);
+        const isMacPath = (p: string) => /^\/Users\/|^\/home\//.test(p);
+        const isCurrentPlatformPath = (port: PortInfo) => {
+          const paths = [port.folderPath, port.commandPath].filter(Boolean) as string[];
+          if (paths.length === 0) return true;
+          if (process.platform === 'win32') return paths.every(p => !isMacPath(p));
+          return paths.every(p => !isWinPath(p));
+        };
+        const updatedData = data
+          .filter(isCurrentPlatformPath)
+          .map((port: PortInfo) => {
+            if (port.commandPath && !port.folderPath) {
+              const lastSlashIndex = port.commandPath.lastIndexOf('/');
+              if (lastSlashIndex !== -1) {
+                return { ...port, folderPath: port.commandPath.substring(0, lastSlashIndex) };
+              }
             }
-          }
-          return port;
-        });
+            return port;
+          });
 
         setPorts(updatedData);
         // NOTE: hasInitiallyLoaded is set AFTER auto-pull completes (Fix P2c)
@@ -1178,11 +1186,6 @@ function App() {
               let portsQuery = supabase.from('ports').select('*');
               if (portalData.deviceId) portsQuery = portsQuery.eq('device_id', portalData.deviceId);
               let { data: remoteData, error } = await withTimeout(portsQuery, 10_000);
-              // device_id 필터 결과 없으면 전체 재시도 (마이그레이션 전 호환)
-              if (!error && (!remoteData || remoteData.length === 0) && portalData.deviceId) {
-                const retry = await withTimeout(supabase.from('ports').select('*'), 10_000);
-                if (!retry.error && retry.data && retry.data.length > 0) remoteData = retry.data;
-              }
               if (!error && remoteData && remoteData.length > 0) {
                 const remoteRows: PortInfo[] = remoteData.map((row: any) => ({
                   id: row.id,
@@ -1198,6 +1201,7 @@ function App() {
                   aiName: row.ai_name ?? undefined,
                   favorite: row.favorite ?? false,
                   isRunning: false,
+                  sourceDeviceId: row.device_id ?? undefined,
                 }));
                 const merged = mergePorts(updatedData, remoteRows);
                 setPorts(merged);
@@ -1326,7 +1330,9 @@ function App() {
         const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
         const deviceId = cfg.deviceId ?? null;
         const deviceNameVal = cfg.deviceName ?? null;
-        const rows = ports.map(p => ({
+        // 다른 기기 소유 포트는 push 제외 (sourceDeviceId가 내 deviceId와 다른 경우)
+        const ownedPorts = ports.filter(p => !p.sourceDeviceId || p.sourceDeviceId === deviceId);
+        const rows = ownedPorts.map(p => ({
           id: p.id,
           name: p.name,
           port: p.port ?? null,
@@ -1348,7 +1354,7 @@ function App() {
         // Fix P2g: skip delete pass if auto-pull never succeeded — local state may be incomplete
         // Step 4: scope stale-delete to this device only to avoid clobbering other devices
         if (autopullSucceeded.current) {
-          const localIds = ports.map(p => p.id);
+          const localIds = ownedPorts.map(p => p.id);
           let remoteQuery = supabase.from('ports').select('id');
           if (deviceId) remoteQuery = remoteQuery.eq('device_id', deviceId);
           const { data: remoteRows } = await remoteQuery;
@@ -1741,13 +1747,6 @@ function App() {
       if (pullDeviceId) portsQuery = portsQuery.eq('device_id', pullDeviceId);
       let { data, error } = await withTimeout(portsQuery, 30_000);
 
-      // device_id 필터 결과가 비어있으면(컬럼 없거나 해당 기기 데이터 없음) 전체 재시도
-      if (!error && (!data || data.length === 0) && pullDeviceId) {
-        const retry = await withTimeout(supabase.from('ports').select('*'), 30_000);
-        data = retry.data;
-        error = retry.error;
-      }
-
       if (error) throw new Error(error.message);
       if (!data || data.length === 0) {
         showToast('Supabase에 저장된 포트가 없습니다', 'error');
@@ -1768,6 +1767,7 @@ function App() {
         aiName: row.ai_name ?? undefined,
         favorite: row.favorite ?? false,
         isRunning: false,
+        sourceDeviceId: row.device_id ?? undefined,
       }));
 
       // 다른 기기 Pull → name 기준 병합 + 새 ID 발급 (ID 충돌 방지)
@@ -1843,7 +1843,9 @@ function App() {
         return;
       }
 
-      const rows = ports.map(p => ({
+      // 다른 기기 소유 포트는 push 제외
+      const ownedPorts = ports.filter(p => !p.sourceDeviceId || p.sourceDeviceId === deviceId);
+      const rows = ownedPorts.map(p => ({
         id: p.id,
         name: p.name,
         port: p.port ?? null,
@@ -1869,7 +1871,7 @@ function App() {
       // Fix P2g: skip delete pass if auto-pull never succeeded — pull first before deleting
       // Step 4: scope stale-delete to this device only to avoid clobbering other devices
       if (autopullSucceeded.current) {
-        const localIds = ports.map(p => p.id);
+        const localIds = ownedPorts.map(p => p.id);
         let remoteQuery = supabase.from('ports').select('id');
         if (deviceId) remoteQuery = remoteQuery.eq('device_id', deviceId);
         const { data: remoteRows } = await remoteQuery;
