@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
@@ -463,7 +463,7 @@ const API = {
   },
 };
 
-const CLAUDE_AI_NAME_PROMPT = `포트관리기의 프로젝트 목록에 "AI 추천 이름(aiName)"을 채워줘.
+const CLAUDE_AI_NAME_PROMPT = `포트관리기의 프로젝트 목록에 "AI 추천 이름(aiName)"과 "카테고리(category)"를 채워줘.
 
 ## 대상 파일
 ~/Library/Application Support/com.portmanager.portmanager/ports.json
@@ -475,38 +475,44 @@ const CLAUDE_AI_NAME_PROMPT = `포트관리기의 프로젝트 목록에 "AI 추
 
 2. **읽기**: JSON을 파싱해서 배열을 메모리에 로드.
 
-3. **각 항목에 aiName 설정**:
+3. **각 항목에 aiName + category 설정**:
    - 이미 \`aiName\`이 있으면 건드리지 말 것 (idempotent — 재실행해도 기존 별칭 유지)
-   - \`aiName\`이 없는 항목에만 새 별칭 생성
+   - 이미 \`category\`가 있으면 건드리지 말 것
+   - 없는 항목에만 새로 생성
    - 참고 필드: name, folderPath(basename), description, githubUrl, deployUrl, commandPath, terminalCommand
 
-4. **별칭 규칙**:
+4. **aiName 규칙**:
    - 2~4 단어의 짧은 영어 (공백 구분, 예: "port manager", "tax calculator", "link page generator")
    - 프로젝트의 핵심 기능을 드러내는 키워드
    - 한국어 프로젝트는 의미를 영어로 번역
    - 이미 영어 이름이면 더 검색 친화적인 키워드 한 개로 압축
    - 모두 소문자
 
-5. **필드 보존 규칙 (매우 중요)**:
+5. **category 규칙**:
+   - 단일 소문자 영어 단어 (예: converter, dashboard, manager, tracker, bot, guide, calculator, automation, monitor, generator)
+   - 프로젝트가 **무엇을 하는지** 핵심을 담을 것
+   - aiName을 primary signal로 참고
+
+6. **필드 보존 규칙 (매우 중요)**:
    - 다음 필드는 **원본 값 그대로 유지**해야 함 — 존재한다면 삭제/수정 금지:
-     id, name, port, commandPath, terminalCommand, folderPath, deployUrl, githubUrl, worktreePath, category, description, isRunning
+     id, name, port, commandPath, terminalCommand, folderPath, deployUrl, githubUrl, worktreePath, description, isRunning
    - \`worktreePath: null\` 같은 명시적 null 값도 그대로 유지 (삭제 금지)
    - \`isRunning: false\` 같은 boolean도 그대로 유지
-   - 원래 없던 필드를 새로 추가하지 말 것 (aiName 제외)
+   - 원래 없던 필드를 새로 추가하지 말 것 (aiName, category 제외)
 
-6. **원자적 쓰기 (atomic write)**:
+7. **원자적 쓰기 (atomic write)**:
    - 임시 파일에 먼저 쓴 후 rename으로 교체 (중간 인터럽트 시 원본 손상 방지)
    - 예시 절차:
      a. \`ports.json.tmp\`에 전체 JSON 직렬화 (2-space indent)
      b. fs.rename(\`ports.json.tmp\`, \`ports.json\`)
    - 들여쓰기는 원본과 동일하게 2-space
 
-7. **검증**:
+8. **검증**:
    - 쓰기 후 다시 읽어서 파싱 가능한지 확인
    - 항목 수가 원본과 동일한지 확인
    - 파싱 실패 시 백업(\`.bak\`)에서 복원
 
-8. **보고**: 완료 후 한 줄로 "N개 항목에 aiName 추가, M개 기존 유지, 총 K개 검증 완료" 형식으로 보고.
+9. **보고**: 완료 후 한 줄로 "N개 항목에 aiName 추가, M개 category 추가, 총 K개 검증 완료" 형식으로 보고.
 
 완료되면 포트관리기에서 "새로고침" 버튼을 누르면 별칭이 에메랄드 배지로 표시되고 검색에서 매칭됩니다.`;
 
@@ -523,6 +529,7 @@ interface PortInfo {
   category?: string;
   description?: string;
   aiName?: string;  // AI-generated English alias for search
+  favorite?: boolean;
   isRunning?: boolean;
 }
 
@@ -605,6 +612,21 @@ const getNextWorktreePort = (ports: PortInfo[], mainPort?: number): number => {
     if (!used.has(p)) return p;
   }
   return 10001;
+};
+
+/**
+ * 워크트리 경로 기반 안정적인 포트 할당.
+ * 알파벳순 정렬 인덱스 대신 경로 해시를 사용해 새 워크트리 추가 시 기존 포트 유지.
+ * 범위: 10001–10499
+ */
+const worktreePortFromPath = (worktreePath: string, usedPorts: Set<number>): number => {
+  const name = worktreePath.split('/').pop() ?? worktreePath;
+  let h = 5381;
+  for (let i = 0; i < name.length; i++) h = ((h << 5) + h + name.charCodeAt(i)) >>> 0;
+  const base = 10001 + (h % 499);
+  for (let p = base; p <= 10499; p++) { if (!usedPorts.has(p)) return p; }
+  for (let p = 10001; p < base; p++) { if (!usedPorts.has(p)) return p; }
+  return base;
 };
 
 /** Race a promise against a timeout. Rejects with Error if ms elapses first. */
@@ -762,7 +784,9 @@ function App() {
   const [worktreePickerValue, setWorktreePickerValue] = useState('');
   // 머지 확인 모달
   const [mergeConfirm, setMergeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo; mainBranch: string; commits: string; stat: string; isDirty: boolean } | null>(null);
-  const [mergeError, setMergeError] = useState<{ message: string; hasConflict: boolean; folderPath: string } | null>(null);
+  const [mergeError, setMergeError] = useState<{ message: string; hasConflict: boolean; folderPath: string; item?: PortInfo; wt?: WorktreeInfo } | null>(null);
+  const [mergeConflictFiles, setMergeConflictFiles] = useState<string[]>([]);
+  const [mergePushConfirm, setMergePushConfirm] = useState<{ item: PortInfo; mainBranch: string } | null>(null);
   const [mergeLoading, setMergeLoading] = useState(false);
   const [deleteWorktreeConfirm, setDeleteWorktreeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo } | null>(null);
   const [commitModal, setCommitModal] = useState<{ item: PortInfo; wt: WorktreeInfo; msg: string } | null>(null);
@@ -786,6 +810,7 @@ function App() {
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>([]);
   const dirHandlesRef = useRef<Map<string, FileSystemDirectoryHandle>>(new Map());
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  const [showOptionalFields, setShowOptionalFields] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [activeRootId, setActiveRootId] = useState<string | null>(null);
   const [registerAsProject, setRegisterAsProject] = useState(true);
@@ -795,6 +820,8 @@ function App() {
   // Fix P2g: gate delete pass — only safe to delete remote rows after a successful auto-pull
   // (otherwise local state has only this Mac's rows and would delete other Macs' remote data)
   const autopullSucceeded = useRef(false);
+  const appLogRef = useRef<string[]>([]);
+  const [logCopied, setLogCopied] = useState(false);
 
   // API 서버 헬스 체크 (웹 모드 전용)
   useEffect(() => {
@@ -814,6 +841,35 @@ function App() {
     const interval = setInterval(check, 30_000);
     return () => clearInterval(interval);
   }, []);
+
+  // 앱 로그 캡처 (console.error / warn + 미처리 예외)
+  useEffect(() => {
+    const ts = () => new Date().toTimeString().slice(0, 8);
+    const push = (line: string) => {
+      appLogRef.current.push(line);
+      if (appLogRef.current.length > 300) appLogRef.current.shift();
+    };
+    const origError = console.error.bind(console);
+    const origWarn = console.warn.bind(console);
+    console.error = (...a) => { push(`[ERR ${ts()}] ${a.map(String).join(' ')}`); origError(...a); };
+    console.warn = (...a) => { push(`[WRN ${ts()}] ${a.map(String).join(' ')}`); origWarn(...a); };
+    const onErr = (e: ErrorEvent) => push(`[UNCAUGHT ${ts()}] ${e.message} @ ${e.filename}:${e.lineno}`);
+    const onRej = (e: PromiseRejectionEvent) => push(`[UNHANDLED ${ts()}] ${String(e.reason)}`);
+    window.addEventListener('error', onErr);
+    window.addEventListener('unhandledrejection', onRej);
+    return () => {
+      console.error = origError; console.warn = origWarn;
+      window.removeEventListener('error', onErr);
+      window.removeEventListener('unhandledrejection', onRej);
+    };
+  }, []);
+
+  const handleCopyLog = async () => {
+    const text = appLogRef.current.length ? appLogRef.current.join('\n') : '(로그 없음)';
+    await navigator.clipboard.writeText(text);
+    setLogCopied(true);
+    setTimeout(() => setLogCopied(false), 2000);
+  };
 
   // 토스트 배너 표시 함수
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -909,7 +965,12 @@ function App() {
       if (!res.ok) {
         // 진행 중인 머지 → 바로 에러 모달 (Abort 버튼 포함)
         if (data.hasMergeInProgress) {
-          setMergeError({ message: data.error, hasConflict: true, folderPath: item.folderPath! });
+          setMergeError({ message: data.error, hasConflict: true, folderPath: item.folderPath!, item, wt });
+          // load conflicted files
+          fetch(`${baseUrl}/api/git-conflicts`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folderPath: item.folderPath }),
+          }).then(r => r.json()).then(d => setMergeConflictFiles(d.files ?? [])).catch(() => {});
         } else {
           throw new Error(data.error ?? '프리뷰 실패');
         }
@@ -935,10 +996,19 @@ function App() {
       showToast(`워크트리 제거됨: ${wt.path.split('/').pop()}`, 'success');
       await loadWorktrees(item.id, item.folderPath!);
       setMergeConfirm(null);
+      setMergePushConfirm({ item, mainBranch: mergeConfirm.mainBranch });
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       setMergeConfirm(null);
-      setMergeError({ message: msg, hasConflict: msg.includes('충돌') || msg.includes('CONFLICT'), folderPath: item.folderPath! });
+      const hasConflict = msg.includes('충돌') || msg.includes('CONFLICT');
+      setMergeError({ message: msg, hasConflict, folderPath: item.folderPath!, item, wt });
+      if (hasConflict) {
+        const baseUrl2 = isTauri() ? 'http://localhost:3001' : '';
+        fetch(`${baseUrl2}/api/git-conflicts`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath: item.folderPath }),
+        }).then(r => r.json()).then(d => setMergeConflictFiles(d.files ?? [])).catch(() => {});
+      }
     } finally {
       setMergeLoading(false);
     }
@@ -1123,6 +1193,7 @@ function App() {
                   category: row.category ?? undefined,
                   description: row.description ?? undefined,
                   aiName: row.ai_name ?? undefined,
+                  favorite: row.favorite ?? false,
                   isRunning: false,
                 }));
                 const merged = mergePorts(updatedData, remoteRows);
@@ -1430,6 +1501,12 @@ function App() {
     }
   };
 
+  const toggleFavorite = useCallback(async (item: PortInfo) => {
+    const updated = ports.map(p => p.id === item.id ? { ...p, favorite: !p.favorite } : p);
+    setPorts(updated);
+    await API.savePorts(updated);
+  }, [ports]);
+
   const executeCommand = async (item: PortInfo) => {
     const runTarget = item.terminalCommand || item.commandPath;
     if (!runTarget) {
@@ -1449,8 +1526,8 @@ function App() {
           p.id === item.id ? { ...p, isRunning: true } : p
         ));
         showToast(`${item.name} 서버가 시작되었습니다!`, 'success');
-        if (item.port && isTauri()) {
-          try { await API.openInChrome(`http://localhost:${item.port}`); } catch {}
+        if (item.port) {
+          window.open(`http://localhost:${item.port}`, '_blank');
         }
       }
     } catch (error) {
@@ -1676,6 +1753,7 @@ function App() {
         category: row.category ?? undefined,
         description: row.description ?? undefined,
         aiName: row.ai_name ?? undefined,
+        favorite: row.favorite ?? false,
         isRunning: false,
       }));
 
@@ -1761,6 +1839,7 @@ function App() {
         folder_path: p.folderPath ?? null,
         deploy_url: p.deployUrl ?? null,
         github_url: p.githubUrl ?? null,
+        favorite: p.favorite ?? false,
         device_id: deviceId,
         device_name: deviceNameVal,
       }));
@@ -2367,7 +2446,8 @@ function App() {
       default:
         break;
     }
-    return sortOrder === 'desc' ? [...filtered].reverse() : filtered;
+    const sorted = sortOrder === 'desc' ? [...filtered].reverse() : filtered;
+    return [...sorted.filter(p => p.favorite), ...sorted.filter(p => !p.favorite)];
   }, [ports, searchQuery, filterType, filterCategory, sortBy, sortOrder]);
 
   const searchFilteredPorts = useMemo(() => {
@@ -2549,40 +2629,138 @@ function App() {
       {/* 머지 에러 모달 (충돌 등) */}
       {mergeError && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#18181b] rounded-xl border border-red-800/50 w-full max-w-lg p-6 space-y-4">
+          <div className="bg-[#18181b] rounded-xl border border-red-800/50 w-full max-w-lg p-5 space-y-4">
+            {/* Header */}
             <div className="flex items-center gap-3">
-              <div className="bg-red-500/15 p-2 rounded-lg border border-red-500/30">
+              <div className="bg-red-500/15 p-2 rounded-lg border border-red-500/30 shrink-0">
                 <XIcon className="w-5 h-5 text-red-400" />
               </div>
               <div>
                 <h2 className="text-base font-semibold text-white">머지 실패</h2>
-                {mergeError.hasConflict && <p className="text-xs text-red-400 mt-0.5">충돌 발생 — 해결 후 커밋하거나 Abort하세요</p>}
+                <p className="text-xs text-red-400 mt-0.5">
+                  {mergeError.hasConflict ? '충돌(Conflict) 발생 — 아래 방법 중 하나를 선택하세요' : '머지 중 오류가 발생했습니다'}
+                </p>
               </div>
             </div>
-            <div className="bg-black/40 rounded-lg p-3 border border-red-900/30">
-              <pre className="text-xs text-red-300 font-mono whitespace-pre-wrap leading-relaxed max-h-40 overflow-y-auto">{mergeError.message}</pre>
-            </div>
+
+            {/* Conflict files list */}
+            {mergeConflictFiles.length > 0 && (
+              <div className="bg-black/40 rounded-lg p-3 border border-red-900/30 space-y-1">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5">충돌 파일 ({mergeConflictFiles.length}개)</p>
+                {mergeConflictFiles.map(f => (
+                  <div key={f} className="flex items-center gap-1.5">
+                    <span className="text-red-400 text-xs">⚠</span>
+                    <code className="text-xs text-red-300 font-mono">{f}</code>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Raw error (collapsed if conflict files shown) */}
+            {mergeConflictFiles.length === 0 && (
+              <div className="bg-black/40 rounded-lg p-3 border border-red-900/30">
+                <pre className="text-xs text-red-300 font-mono whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{mergeError.message}</pre>
+              </div>
+            )}
+
+            {/* Claude Code prompt box */}
+            {mergeError.hasConflict && mergeError.folderPath && (() => {
+              const files = mergeConflictFiles.length > 0
+                ? mergeConflictFiles.map(f => `- ${f}`).join('\n')
+                : '(충돌 파일 확인 중...)';
+              const prompt = `다음 경로에서 git 머지 충돌을 해결해줘:\n\`\`\`\n${mergeError.folderPath}\n\`\`\`\n\n충돌 파일:\n${files}\n\n각 파일의 충돌 마커(<<<<<<, =======, >>>>>>>)를 제거하고 올바르게 병합한 뒤,\n\`git add .\` → \`git commit --no-edit\` 순서로 머지를 완료해줘.`;
+              return (
+                <div className="bg-zinc-900/80 rounded-lg border border-zinc-700/60">
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700/40">
+                    <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-medium">Claude Code 프롬프트</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(prompt).then(() => showToast('프롬프트 복사됨 — Claude Code에 붙여넣기 하세요', 'success')).catch(() => showToast('복사 실패', 'error'));
+                      }}
+                      className="flex items-center gap-1.5 px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded transition-colors"
+                    >
+                      <Copy className="w-3 h-3" /> 복사
+                    </button>
+                  </div>
+                  <pre className="text-xs text-zinc-300 font-mono px-3 py-2.5 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">{prompt}</pre>
+                </div>
+              );
+            })()}
+
+            {/* Actions */}
             <div className="flex gap-2 justify-end pt-1">
               {mergeError.hasConflict && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const baseUrl = isTauri() ? 'http://localhost:3001' : '';
-                      await fetch(`${baseUrl}/api/git-merge-abort`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ folderPath: mergeError.folderPath }),
-                      });
-                      showToast('머지 중단됨 (merge --abort)', 'success');
-                      setMergeError(null);
-                    } catch (e) { showToast('abort 실패: ' + e, 'error'); }
-                  }}
-                  className="px-4 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-400 text-sm rounded-lg border border-red-500/30 transition-colors"
-                >
-                  Abort Merge
-                </button>
+                <>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                        const r = await fetch(`${baseUrl}/api/git-merge-abort`, {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ folderPath: mergeError.folderPath, force: false }),
+                        });
+                        if (!r.ok) {
+                          // retry with force
+                          const r2 = await fetch(`${baseUrl}/api/git-merge-abort`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ folderPath: mergeError.folderPath, force: true }),
+                          });
+                          if (!r2.ok) { const d = await r2.json(); showToast('abort 실패: ' + d.error, 'error'); return; }
+                        }
+                        showToast('머지 취소됨 — 브랜치가 원래 상태로 복원됐습니다', 'success');
+                        setMergeError(null);
+                        setMergeConflictFiles([]);
+                      } catch (e) { showToast('abort 실패: ' + e, 'error'); }
+                    }}
+                    className="px-3 py-2 bg-red-500/15 hover:bg-red-500/25 text-red-400 text-sm rounded-lg border border-red-500/30 transition-colors"
+                  >
+                    Abort Merge
+                  </button>
+                </>
               )}
-              <button onClick={() => setMergeError(null)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
+              <button onClick={() => { setMergeError(null); setMergeConflictFiles([]); }} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
                 닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 머지 후 main 푸시 확인 모달 */}
+      {mergePushConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-blue-500/15 p-2 rounded-lg border border-blue-500/30">
+                <GitBranch className="w-5 h-5 text-blue-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-sm">머지 완료</h3>
+                <p className="text-zinc-400 text-xs mt-0.5"><span className="font-mono text-blue-300">{mergePushConfirm.mainBranch}</span> 브랜치를 remote에 푸시할까요?</p>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                onClick={async () => {
+                  const { item, mainBranch } = mergePushConfirm;
+                  setMergePushConfirm(null);
+                  try {
+                    const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                    const res = await fetch(`${baseUrl}/api/git-push`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ folderPath: item.folderPath }),
+                    });
+                    const data = await res.json();
+                    if (data.success) showToast(`✅ ${mainBranch} 푸시 완료`, 'success');
+                    else showToast(`푸시 실패: ${data.error}`, 'error');
+                  } catch (e) { showToast('푸시 실패: ' + e, 'error'); }
+                }}
+                className="px-4 py-2 bg-blue-500/15 hover:bg-blue-500/25 text-blue-400 text-sm rounded-lg border border-blue-500/30 transition-colors"
+              >
+                푸시
+              </button>
+              <button onClick={() => setMergePushConfirm(null)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
+                나중에
               </button>
             </div>
           </div>
@@ -2913,6 +3091,20 @@ function App() {
               <Rocket className="w-3.5 h-3.5" />
               <span>세팅</span>
             </button>
+
+            {/* 로그 복사 버튼 */}
+            <button
+              onClick={handleCopyLog}
+              title="앱 오류 로그 클립보드 복사 (개선에 활용)"
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-xl border transition-all ${
+                logCopied
+                  ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                  : 'bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 border-zinc-800 hover:border-zinc-600'
+              }`}
+            >
+              {logCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              <span>{logCopied ? '복사됨' : '로그'}</span>
+            </button>
           </div>
         </div>
 
@@ -3107,90 +3299,102 @@ function App() {
                 <span>추가</span>
               </button>
             </div>
-            <div className="space-y-2">
-              <input
-                type="text"
-                placeholder={`${execFileExt()} 파일 경로 (선택사항)`}
-                value={commandPath}
-                onChange={(e) => setCommandPath(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <input
-                type="text"
-                placeholder="터미널 명령어 (선택사항, 예: bunx cursor-talk-to-figma-socket)"
-                value={terminalCommand}
-                onChange={(e) => setTerminalCommand(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <input
-                type="text"
-                placeholder="프로젝트 폴더 경로 (선택사항)"
-                value={folderPath}
-                onChange={(e) => setFolderPath(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <input
-                type="text"
-                placeholder="배포 사이트 주소 (선택사항, 예: https://example.com)"
-                value={deployUrl}
-                onChange={(e) => setDeployUrl(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <input
-                type="text"
-                placeholder="GitHub 주소 (선택사항, 예: https://github.com/user/repo)"
-                value={githubUrl}
-                onChange={(e) => setGithubUrl(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <input
-                type="text"
-                placeholder="워크트리 경로 (선택사항) — 입력 시 포트 자동 배정 (메인포트×10+n)"
-                value={worktreePath}
-                onChange={(e) => {
-                  setWorktreePath(e.target.value);
-                  // 워크트리 경로 입력 시 포트가 비어있으면 메인포트 기반 자동 배정
-                  if (!port && e.target.value.trim()) {
-                    const mainPort = folderPath
-                      ? ports.find(p => p.folderPath === folderPath)?.port
-                      : undefined;
-                    setPort(getNextWorktreePort(ports, mainPort).toString());
-                  }
-                }}
-                onKeyPress={handleKeyPress}
-                className="w-full px-3 py-2 text-sm bg-black/30 border border-amber-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-all"
-              />
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="카테고리 (AI 자동)"
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                />
-                <input
-                  type="text"
-                  placeholder="프로젝트 설명 (선택사항)"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                />
-              </div>
-              <div className="flex items-start gap-2 px-1">
-                <div className="text-base">💡</div>
-                <p className="text-[11px] text-zinc-500 leading-relaxed">
-                  <span className="font-medium text-zinc-400">쉬운 추가 방법:</span> Finder에서
-                  <span className="font-mono text-zinc-400"> 포트에추가.command </span>
-                  파일 위로 {execFileExt()} 파일을 드래그하세요
-                </p>
-              </div>
+            <div>
+              <button
+                type="button"
+                onClick={() => setShowOptionalFields(v => !v)}
+                className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors mb-2 select-none"
+              >
+                <span className={`transition-transform duration-200 ${showOptionalFields ? 'rotate-90' : ''}`}>▶</span>
+                <span>추가 정보 {showOptionalFields ? '접기' : '펼치기'}</span>
+              </button>
+              {showOptionalFields && (
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    placeholder={`${execFileExt()} 파일 경로 (선택사항)`}
+                    value={commandPath}
+                    onChange={(e) => setCommandPath(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <input
+                    type="text"
+                    placeholder="터미널 명령어 (선택사항, 예: bunx cursor-talk-to-figma-socket)"
+                    value={terminalCommand}
+                    onChange={(e) => setTerminalCommand(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <input
+                    type="text"
+                    placeholder="프로젝트 폴더 경로 (선택사항)"
+                    value={folderPath}
+                    onChange={(e) => setFolderPath(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <input
+                    type="text"
+                    placeholder="배포 사이트 주소 (선택사항, 예: https://example.com)"
+                    value={deployUrl}
+                    onChange={(e) => setDeployUrl(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <input
+                    type="text"
+                    placeholder="GitHub 주소 (선택사항, 예: https://github.com/user/repo)"
+                    value={githubUrl}
+                    onChange={(e) => setGithubUrl(e.target.value)}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+                  />
+                  <input
+                    type="text"
+                    placeholder="워크트리 경로 (선택사항) — 입력 시 포트 자동 배정 (메인포트×10+n)"
+                    value={worktreePath}
+                    onChange={(e) => {
+                      setWorktreePath(e.target.value);
+                      // 워크트리 경로 입력 시 포트가 비어있으면 메인포트 기반 자동 배정
+                      if (!port && e.target.value.trim()) {
+                        const mainPort = folderPath
+                          ? ports.find(p => p.folderPath === folderPath)?.port
+                          : undefined;
+                        setPort(getNextWorktreePort(ports, mainPort).toString());
+                      }
+                    }}
+                    onKeyPress={handleKeyPress}
+                    className="w-full px-3 py-2 text-sm bg-black/30 border border-amber-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-all"
+                  />
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="카테고리 (AI 자동)"
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                      onKeyPress={handleKeyPress}
+                      className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                    />
+                    <input
+                      type="text"
+                      placeholder="프로젝트 설명 (선택사항)"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      onKeyPress={handleKeyPress}
+                      className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                    />
+                  </div>
+                  <div className="flex items-start gap-2 px-1">
+                    <div className="text-base">💡</div>
+                    <p className="text-[11px] text-zinc-500 leading-relaxed">
+                      <span className="font-medium text-zinc-400">쉬운 추가 방법:</span> Finder에서
+                      <span className="font-mono text-zinc-400"> 포트에추가.command </span>
+                      파일 위로 {execFileExt()} 파일을 드래그하세요
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -3545,6 +3749,13 @@ function App() {
                     <div className="flex flex-col gap-2">
                       {/* 정보 행 */}
                       <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); toggleFavorite(item); }}
+                          className="flex-shrink-0 text-zinc-600 hover:text-yellow-400 transition-colors"
+                          title={item.favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+                        >
+                          <Star className={`w-3.5 h-3.5 ${item.favorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                        </button>
                         <h3 className="text-sm font-medium text-white whitespace-nowrap">
                           {item.name}
                         </h3>
@@ -3729,23 +3940,7 @@ function App() {
                           </button>
                         )}
                         {item.deployUrl && (
-                          isTauri() ? (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await API.openInChrome(item.deployUrl);
-                                  showToast(`배포 사이트를 열었습니다`, 'success');
-                                } catch (error) {
-                                  showToast('배포 사이트 열기 실패: ' + error, 'error');
-                                }
-                              }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-xs font-medium rounded-lg border border-purple-500/30 hover:border-purple-500/50 transition-all duration-200"
-                            >
-                              <Globe className="w-3 h-3" />
-                              <span>배포</span>
-                            </button>
-                          ) : (
-                            <a
+                          <a
                               href={item.deployUrl}
                               target="_blank"
                               rel="noopener noreferrer"
@@ -3754,26 +3949,9 @@ function App() {
                               <Globe className="w-3 h-3" />
                               <span>배포</span>
                             </a>
-                          )
                         )}
                         {item.githubUrl && (
-                          isTauri() ? (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await API.openInChrome(item.githubUrl!);
-                                  showToast('GitHub를 열었습니다', 'success');
-                                } catch (error) {
-                                  showToast('GitHub 열기 실패: ' + error, 'error');
-                                }
-                              }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-700/30 hover:bg-zinc-700/50 text-zinc-300 text-xs font-medium rounded-lg border border-zinc-600/40 hover:border-zinc-500/60 transition-all duration-200"
-                            >
-                              <Github className="w-3 h-3" />
-                              <span>GitHub</span>
-                            </button>
-                          ) : (
-                            <a
+                          <a
                               href={item.githubUrl}
                               target="_blank"
                               rel="noopener noreferrer"
@@ -3782,7 +3960,6 @@ function App() {
                               <Github className="w-3 h-3" />
                               <span>GitHub</span>
                             </a>
-                          )
                         )}
                         {item.folderPath && (
                           <button
@@ -3857,32 +4034,15 @@ function App() {
                           </button>
                         )}
                         {(item.commandPath || item.terminalCommand) && item.port && (
-                          isTauri() ? (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await API.openInChrome(`http://localhost:${item.port}`);
-                                  showToast(`Chrome에서 포트 ${item.port}를 열었습니다`, 'success');
-                                } catch (error) {
-                                  showToast('Chrome 열기 실패: ' + error, 'error');
-                                }
-                              }}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
-                            >
-                              <span>열기</span>
-                              <ExternalLink className="w-3 h-3" />
-                            </button>
-                          ) : (
-                            <a
-                              href={`http://localhost:${item.port}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
-                            >
-                              <span>열기</span>
-                              <ExternalLink className="w-3 h-3" />
-                            </a>
-                          )
+                          <a
+                            href={`http://localhost:${item.port}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
+                          >
+                            <span>열기</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
                         )}
                         {/* Worktree 패널 토글 버튼 */}
                         {item.folderPath && (
@@ -3952,9 +4112,10 @@ function App() {
                                 const nonMainWorktrees = (worktreeLists[item.id] ?? []).filter(w => !w.is_main);
                                 const wtIndex = nonMainWorktrees.findIndex(w => w.path === wt.path);
                                 const rawInferred = item.port ? item.port * 10 + (wtIndex + 1) : undefined;
+                                const usedPortSet = new Set(ports.map(p => p.port).filter((p): p is number => p != null));
                                 const inferredPort = rawInferred && rawInferred <= 65535
                                   ? rawInferred
-                                  : wtIndex >= 0 ? getNextWorktreePort(ports, item.port) + wtIndex : undefined;
+                                  : wtIndex >= 0 ? worktreePortFromPath(wt.path, usedPortSet) : undefined;
                                 const effectivePort = wtPort?.port ?? inferredPort;
                                 return (
                                   <div className="flex items-center gap-1 shrink-0 flex-wrap">
@@ -3981,37 +4142,21 @@ function App() {
                                     >
                                       실행{effectivePort ? `(${effectivePort})` : ''}
                                     </button>
-                                    {/* 열기: effectivePort 기반 브라우저 열기 (서버 실행 확인 후) */}
+                                    {/* 열기: 새 탭으로 열기 */}
                                     {effectivePort && (
-                                      <button
-                                        onClick={async (e) => {
-                                          e.stopPropagation();
-                                          const targetUrl = `http://localhost:${effectivePort}`;
-                                          try {
-                                            const isRunning = await API.checkPortStatus(effectivePort);
-                                            if (!isRunning) {
-                                              showToast(`포트 ${effectivePort}에 서버가 실행중이지 않습니다. 먼저 실행해주세요.`, 'error');
-                                              return;
-                                            }
-                                            if (isTauri()) {
-                                              await API.openInChrome(targetUrl);
-                                            } else {
-                                              const r = await fetch('/api/open-in-chrome', {
-                                                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({ url: targetUrl })
-                                              });
-                                              if (!r.ok) throw new Error((await r.json()).error);
-                                            }
-                                          } catch (err) {
-                                            showToast(`열기 실패: ${err}`, 'error');
-                                          }
-                                        }}
+                                      <a
+                                        href={`http://localhost:${effectivePort}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={e => e.stopPropagation()}
                                         className="px-1.5 py-0.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-[10px] rounded border border-purple-500/20"
                                         title={`http://localhost:${effectivePort} 열기`}
                                       >
                                         열기
-                                      </button>
+                                      </a>
                                     )}
+                                    {/* 구분선: 서버 제어 | git 제어 */}
+                                    <span className="w-px h-3 bg-zinc-600 mx-0.5 self-center" />
                                     {/* 커밋: 메시지 입력 모달 → 백그라운드 git add -A && commit */}
                                     <button
                                       onClick={(e) => { e.stopPropagation(); setCommitModal({ item, wt, msg: '' }); }}

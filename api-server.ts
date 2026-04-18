@@ -1038,7 +1038,7 @@ end tell`;
         const remoteCmd = githubUrl
           ? `git remote set-url origin '${escapeSq(githubUrl as string)}' 2>/dev/null || git remote add origin '${escapeSq(githubUrl as string)}'; `
           : '';
-        const cmd = `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && ${remoteCmd}git push`;
+        const cmd = `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && ${remoteCmd}git push || git push --set-upstream origin $(git branch --show-current)`;
         const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
         spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
@@ -1732,11 +1732,48 @@ end tell`;
 
     if (url.pathname === "/api/git-merge-abort" && req.method === "POST") {
       try {
-        const { folderPath } = await req.json();
+        const { folderPath, force } = await req.json();
         const proc = Bun.spawn([GIT_PATH, "merge", "--abort"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
         await proc.exited;
         const stderr = await new Response(proc.stderr).text();
-        if (proc.exitCode !== 0) return new Response(JSON.stringify({ error: stderr.trim() }), { status: 500, headers });
+        if (proc.exitCode !== 0) {
+          if (force) {
+            // fallback: reset --merge to clean up stuck state
+            const resetProc = Bun.spawn([GIT_PATH, "reset", "--merge"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+            await resetProc.exited;
+            const resetStderr = await new Response(resetProc.stderr).text();
+            if (resetProc.exitCode !== 0) return new Response(JSON.stringify({ error: resetStderr.trim() || stderr.trim() }), { status: 500, headers });
+            return new Response(JSON.stringify({ success: true, method: "reset-merge" }), { headers });
+          }
+          return new Response(JSON.stringify({ error: stderr.trim() }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true, method: "merge-abort" }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/git-conflicts" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json();
+        const proc = Bun.spawn([GIT_PATH, "diff", "--name-only", "--diff-filter=U"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await proc.exited;
+        const stdout = (await new Response(proc.stdout).text()).trim();
+        const files = stdout ? stdout.split("\n").filter(Boolean) : [];
+        return new Response(JSON.stringify({ files }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ files: [], error: error.message }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-terminal-at-folder" && req.method === "POST") {
+      try {
+        const { folderPath, title: titleArg } = await req.json();
+        const title = (titleArg || folderPath).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const cmd = `cd '${escapeSq(folderPath as string)}' && printf '\\033]0;${title}\\007' && git status`;
+        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.3\n    set name to "${title}"\n  end tell\nend tell`;
+        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
         return new Response(JSON.stringify({ success: true }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
