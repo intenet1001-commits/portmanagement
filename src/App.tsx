@@ -3910,7 +3910,7 @@ function App() {
                                             const baseUrl = isTauri() ? 'http://localhost:3001' : '';
                                             await fetch(`${baseUrl}/api/open-terminal-worktree-run`, {
                                               method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                              body: JSON.stringify({ worktreePath: wt.path, name: item.name, terminalCommand: item.terminalCommand, port: effectivePort })
+                                              body: JSON.stringify({ worktreePath: wt.path, name: item.name, terminalCommand: item.terminalCommand, port: effectivePort, folderPath: item.folderPath })
                                             });
                                             showToast(`터미널 열기: ${wt.branch} (포트 ${effectivePort ?? '?'})`, 'success');
                                           } catch (err) { showToast('실행 실패: ' + err, 'error'); }
