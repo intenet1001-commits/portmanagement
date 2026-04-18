@@ -1,10 +1,10 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient } from '@supabase/supabase-js';
-import PortalManager from './PortalManager';
 import './index.css';
+import PortalManager, { PortalActions } from './PortalManager';
+import { BookMarked, Settings, CloudUpload, CloudDownload } from 'lucide-react';
 
-const STORAGE_KEY = 'portalData_v1';
 const PW_VERIFIED_KEY = 'portal_pw_verified';
 const REQUIRED_HASH = (import.meta.env.VITE_PORTAL_PASSWORD_HASH as string | undefined) ?? '';
 
@@ -14,29 +14,17 @@ async function sha256(text: string): Promise<string> {
 }
 
 function isPasswordVerified(): boolean {
-  if (!REQUIRED_HASH) return true; // no password configured
+  if (!REQUIRED_HASH) return true;
   return localStorage.getItem(PW_VERIFIED_KEY) === REQUIRED_HASH;
 }
 
-interface StoredConfig {
-  supabaseUrl: string;
-  supabaseAnonKey: string;
-  deviceId: string;
-  deviceName: string;
-}
-
-function loadConfig(): StoredConfig | null {
+function hasStoredConfig(): boolean {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const d = JSON.parse(raw);
-      if (d.supabaseUrl && d.supabaseAnonKey && d.deviceId) return d as StoredConfig;
-    }
+    const raw = localStorage.getItem('portalData');
+    if (raw) { const d = JSON.parse(raw); return !!(d.supabaseUrl && d.supabaseAnonKey && d.deviceId); }
   } catch {}
-  return null;
+  return false;
 }
-
-// ── PasswordGate ─────────────────────────────────────────────────────────────
 
 function PasswordGate({ onVerified }: { onVerified: () => void }) {
   const [pw, setPw] = useState('');
@@ -48,95 +36,55 @@ function PasswordGate({ onVerified }: { onVerified: () => void }) {
     if (!pw.trim()) return;
     setLoading(true); setError('');
     const hash = await sha256(pw.trim());
-    if (hash === REQUIRED_HASH) {
-      if (remember) localStorage.setItem(PW_VERIFIED_KEY, REQUIRED_HASH);
-      onVerified();
-    } else {
-      setError('비밀번호가 틀렸습니다');
-    }
+    if (hash === REQUIRED_HASH) { if (remember) localStorage.setItem(PW_VERIFIED_KEY, REQUIRED_HASH); onVerified(); }
+    else setError('비밀번호가 틀렸습니다');
     setLoading(false);
   }
 
   const inp = 'w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-blue-500';
-  const btn = 'w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded font-medium transition-colors';
-
   return (
     <div className="min-h-screen bg-[#0a0a0b] flex items-center justify-center p-4">
       <div className="w-full max-w-xs bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
-        <h1 className="text-base font-semibold text-zinc-100">북마크 포털</h1>
-        <div>
-          <label className="text-xs text-zinc-400 mb-1 block">비밀번호</label>
-          <input className={inp} type="password" placeholder="••••••••" value={pw}
-            onChange={e => setPw(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && verify()}
-            autoFocus />
-        </div>
-        <label className="flex items-center gap-2 cursor-pointer select-none">
-          <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)}
-            className="accent-blue-500 w-3.5 h-3.5" />
-          <span className="text-xs text-zinc-400">이 브라우저에서 기억하기</span>
-        </label>
+        <div className="flex items-center gap-2.5"><div className="p-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20"><BookMarked className="w-4 h-4 text-blue-400" /></div><span className="font-semibold text-white text-sm">북마크</span></div>
+        <div><label className="text-xs text-zinc-400 mb-1 block">비밀번호</label><input className={inp} type="password" placeholder="••••••••" value={pw} onChange={e => setPw(e.target.value)} onKeyDown={e => e.key === 'Enter' && verify()} autoFocus /></div>
+        <label className="flex items-center gap-2 cursor-pointer select-none"><input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)} className="accent-blue-500 w-3.5 h-3.5" /><span className="text-xs text-zinc-400">이 브라우저에서 기억하기</span></label>
         {error && <p className="text-xs text-red-400">{error}</p>}
-        <button className={btn} onClick={verify} disabled={loading || !pw.trim()}>
-          {loading ? '확인 중…' : '입장'}
-        </button>
+        <button className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded font-medium transition-colors" onClick={verify} disabled={loading || !pw.trim()}>{loading ? '확인 중…' : '입장'}</button>
       </div>
     </div>
   );
 }
 
-// ── DeviceSetup ───────────────────────────────────────────────────────────────
-
 interface KnownDevice { device_id: string; device_name?: string; }
 
 function DeviceSetup({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState<'creds' | 'device'>('creds');
-  const [url, setUrl] = useState('');
-  const [key, setKey] = useState('');
+  const [url, setUrl] = useState(''); const [key, setKey] = useState('');
   const [devices, setDevices] = useState<KnownDevice[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [newName, setNewName] = useState('');
+  const [loading, setLoading] = useState(false); const [error, setError] = useState(''); const [newName, setNewName] = useState('');
 
   async function connectSupabase() {
     if (!url.trim() || !key.trim()) { setError('URL과 키를 모두 입력하세요'); return; }
     setLoading(true); setError('');
     try {
       const sb = createClient(url.trim(), key.trim());
-      const { data, error: qErr } = await sb
-        .from('ports')
-        .select('device_id, device_name, folder_path')
-        .not('device_id', 'is', null);
+      const { data, error: qErr } = await sb.from('ports').select('device_id, device_name, folder_path').not('device_id', 'is', null);
       if (qErr) throw new Error(qErr.message);
-
       const seen = new Map<string, string | undefined>();
-      for (const r of (data ?? [])) {
-        if (!seen.has(r.device_id)) {
-          const name = r.device_name ||
-            (/^\/Users\/([^/]+)/.exec(r.folder_path ?? '')?.[1]) ||
-            undefined;
-          seen.set(r.device_id, name);
-        }
-      }
+      for (const r of (data ?? [])) { if (!seen.has(r.device_id)) { seen.set(r.device_id, r.device_name || (/^\/Users\/([^/]+)/.exec(r.folder_path ?? '')?.[1]) || undefined); } }
       setDevices(Array.from(seen.entries()).map(([device_id, device_name]) => ({ device_id, device_name })));
       setStep('device');
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
     setLoading(false);
   }
 
   function saveAndEnter(deviceId: string, deviceName: string) {
-    const config: StoredConfig = { supabaseUrl: url.trim(), supabaseAnonKey: key.trim(), deviceId, deviceName };
-    const existing = (() => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}'); } catch { return {}; } })();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ items: [], categories: [], ...existing, ...config }));
+    const existing = (() => { try { return JSON.parse(localStorage.getItem('portalData') ?? '{}'); } catch { return {}; } })();
+    localStorage.setItem('portalData', JSON.stringify({ items: [], categories: [], ...existing, supabaseUrl: url.trim(), supabaseAnonKey: key.trim(), deviceId, deviceName }));
     onComplete();
   }
 
-  function createNew() {
-    if (!newName.trim()) { setError('기기 이름을 입력하세요'); return; }
-    saveAndEnter(crypto.randomUUID(), newName.trim());
-  }
+  function createNew() { if (!newName.trim()) { setError('기기 이름을 입력하세요'); return; } saveAndEnter(crypto.randomUUID(), newName.trim()); }
 
   const inp = 'w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-blue-500';
   const btn = 'px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded font-medium transition-colors';
@@ -144,116 +92,53 @@ function DeviceSetup({ onComplete }: { onComplete: () => void }) {
   return (
     <div className="min-h-screen bg-[#0a0a0b] flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-5">
-        {/* Header */}
-        <div>
-          <h1 className="text-lg font-semibold text-zinc-100">북마크 포털</h1>
-          <p className="text-xs text-zinc-500 mt-0.5">
-            {step === 'creds' ? 'Supabase 연결 정보를 입력하세요' : '현재 사용 중인 기기를 선택하세요'}
-          </p>
-        </div>
-
-        {/* Step 1: Credentials */}
-        {step === 'creds' && (
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-zinc-400 mb-1 block">Supabase URL</label>
-              <input className={inp} placeholder="https://xxxx.supabase.co" value={url}
-                onChange={e => setUrl(e.target.value)} />
-            </div>
-            <div>
-              <label className="text-xs text-zinc-400 mb-1 block">Anon Key</label>
-              <input className={inp} type="password" placeholder="eyJhbGciOiJ…" value={key}
-                onChange={e => setKey(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && connectSupabase()} />
-            </div>
-            {error && <p className="text-xs text-red-400">{error}</p>}
-            <button className={btn} onClick={connectSupabase} disabled={loading}>
-              {loading ? '연결 중…' : '기기 목록 불러오기 →'}
-            </button>
-          </div>
-        )}
-
-        {/* Step 2: Device picker */}
-        {step === 'device' && (
-          <div className="space-y-3">
-            {devices.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs text-zinc-400">{devices.length}개 등록된 기기</p>
-                {devices.map(d => (
-                  <button key={d.device_id} onClick={() => saveAndEnter(d.device_id, d.device_name ?? d.device_id.slice(0, 8))}
-                    className="w-full text-left px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors">
-                    <div className="text-sm font-medium text-zinc-100">{d.device_name ?? '이름 없는 기기'}</div>
-                    <div className="text-xs text-zinc-500 font-mono">{d.device_id.slice(0, 16)}…</div>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className={devices.length > 0 ? 'pt-3 border-t border-zinc-800' : ''}>
-              <p className="text-xs text-zinc-400 mb-2">{devices.length > 0 ? '또는 새 기기로 시작' : '새 기기 등록'}</p>
-              <div className="flex gap-2">
-                <input className={inp} placeholder="기기 이름 (예: MacBook Pro)"
-                  value={newName} onChange={e => setNewName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && createNew()} />
-                <button className={btn} onClick={createNew}>등록</button>
-              </div>
-            </div>
-
-            {error && <p className="text-xs text-red-400">{error}</p>}
-            <button onClick={() => setStep('creds')}
-              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
-              ← 다시 연결
-            </button>
-          </div>
-        )}
+        <div><div className="flex items-center gap-2.5 mb-1"><div className="p-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20"><BookMarked className="w-4 h-4 text-blue-400" /></div><span className="font-semibold text-white text-sm">북마크</span></div><p className="text-xs text-zinc-500">{step === 'creds' ? 'Supabase 연결 정보를 입력하세요' : '현재 사용 중인 기기를 선택하세요'}</p></div>
+        {step === 'creds' && (<div className="space-y-3"><div><label className="text-xs text-zinc-400 mb-1 block">Supabase URL</label><input className={inp} placeholder="https://xxxx.supabase.co" value={url} onChange={e => setUrl(e.target.value)} /></div><div><label className="text-xs text-zinc-400 mb-1 block">Anon Key</label><input className={inp} type="password" placeholder="eyJhbGciOiJ…" value={key} onChange={e => setKey(e.target.value)} onKeyDown={e => e.key === 'Enter' && connectSupabase()} /></div>{error && <p className="text-xs text-red-400">{error}</p>}<button className={btn} onClick={connectSupabase} disabled={loading}>{loading ? '연결 중…' : '기기 목록 불러오기 →'}</button></div>)}
+        {step === 'device' && (<div className="space-y-3">{devices.length > 0 && (<div className="space-y-2"><p className="text-xs text-zinc-400">{devices.length}개 등록된 기기</p>{devices.map(d => (<button key={d.device_id} onClick={() => saveAndEnter(d.device_id, d.device_name ?? d.device_id.slice(0,8))} className="w-full text-left px-3 py-2.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg transition-colors"><div className="text-sm font-medium text-zinc-100">{d.device_name ?? '이름 없는 기기'}</div><div className="text-xs text-zinc-500 font-mono">{d.device_id.slice(0,16)}…</div></button>))}</div>)}<div className={devices.length > 0 ? 'pt-3 border-t border-zinc-800' : ''}><p className="text-xs text-zinc-400 mb-2">{devices.length > 0 ? '또는 새 기기로 시작' : '새 기기 등록'}</p><div className="flex gap-2"><input className={inp} placeholder="기기 이름 (예: MacBook Pro)" value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === 'Enter' && createNew()} /><button className={btn} onClick={createNew}>등록</button></div></div>{error && <p className="text-xs text-red-400">{error}</p>}<button onClick={() => setStep('creds')} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">← 다시 연결</button></div>)}
       </div>
     </div>
   );
 }
 
-// ── Toast ─────────────────────────────────────────────────────────────────────
+function Toast({ message, type }: { message: string; type: 'success' | 'error' }) {
+  return (<div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium flex items-center gap-2 animate-slide-in ${type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>{message}</div>);
+}
 
-interface Toast { id: number; message: string; type: 'success' | 'error'; }
-
-// ── App ───────────────────────────────────────────────────────────────────────
-
-function PortalApp() {
+function App() {
   const [pwOk, setPwOk] = useState(isPasswordVerified);
-  const [ready, setReady] = useState(false);
-  const [needsSetup, setNeedsSetup] = useState(false);
-  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [setupDone, setSetupDone] = useState(hasStoredConfig);
+  const [toasts, setToasts] = useState<{ id: number; message: string; type: 'success' | 'error' }[]>([]);
+  const [openSettings, setOpenSettings] = useState(false);
+  const actionsRef = useRef<PortalActions | null>(null);
 
-  useEffect(() => {
-    if (!pwOk) return;
-    const cfg = loadConfig();
-    if (cfg) setReady(true);
-    else setNeedsSetup(true);
-  }, [pwOk]);
-
-  const showToast = useCallback((msg: string, type: 'success' | 'error') => {
+  const showToast = (message: string, type: 'success' | 'error') => {
     const id = Date.now();
-    setToasts(prev => [...prev, { id, message: msg, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
-  }, []);
+    setToasts(t => [...t, { id, message, type }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3000);
+  };
 
   if (!pwOk) return <PasswordGate onVerified={() => setPwOk(true)} />;
-  if (needsSetup) return <DeviceSetup onComplete={() => { setNeedsSetup(false); setReady(true); }} />;
-  if (!ready) return null;
+  if (!setupDone) return <DeviceSetup onComplete={() => setSetupDone(true)} />;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0b]">
-      <PortalManager showToast={showToast} isVisible={true} />
-      <div className="fixed top-4 right-4 flex flex-col gap-2 z-50 pointer-events-none">
-        {toasts.map(t => (
-          <div key={t.id}
-            className={`px-4 py-2 rounded text-sm text-white shadow-lg ${t.type === 'success' ? 'bg-green-600' : 'bg-red-600'}`}>
-            {t.message}
+    <div className="min-h-screen bg-[#0a0a0b] text-white flex flex-col">
+      <header className="sticky top-0 z-40 bg-[#0a0a0b]/95 backdrop-blur border-b border-zinc-800/60 px-4 py-3">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-2.5"><div className="p-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20"><BookMarked className="w-4 h-4 text-blue-400" /></div><span className="font-semibold text-white text-sm">북마크</span></div>
+          <div className="flex items-center gap-1.5">
+            <button onClick={() => actionsRef.current?.push()} className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 hover:text-zinc-200 rounded-lg border border-zinc-700/50 transition-all" title="Supabase에 Push"><CloudUpload className="w-3.5 h-3.5" /><span className="hidden sm:inline">Push</span></button>
+            <button onClick={() => actionsRef.current?.pull()} className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 hover:text-zinc-200 rounded-lg border border-zinc-700/50 transition-all" title="Supabase에서 Pull"><CloudDownload className="w-3.5 h-3.5" /><span className="hidden sm:inline">Pull</span></button>
+            <button onClick={() => setOpenSettings(true)} className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 hover:text-zinc-200 rounded-lg border border-zinc-700/50 transition-all"><Settings className="w-3.5 h-3.5" /><span className="hidden sm:inline">설정</span></button>
           </div>
-        ))}
-      </div>
+        </div>
+      </header>
+      <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-4">
+        <PortalManager showToast={showToast} openSettings={openSettings} onSettingsClosed={() => setOpenSettings(false)} actionsRef={actionsRef} isVisible={true} />
+      </main>
+      {toasts.map(t => <Toast key={t.id} message={t.message} type={t.type} />)}
     </div>
   );
 }
 
 const root = createRoot(document.getElementById('root')!);
-root.render(<PortalApp />);
+root.render(<React.StrictMode><App /></React.StrictMode>);
