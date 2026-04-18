@@ -1300,7 +1300,9 @@ const server = Bun.serve({
 
       if (missing.length > 0) {
         return new Response(JSON.stringify({
-          error: `❌ Windows 빌드에 필요한 도구가 설치되지 않았습니다:\n${missing.map(m => '  • ' + m).join('\n')}\n\n설치 방법:\n1. Visual Studio Build Tools 설치:\n   https://visualstudio.microsoft.com/visual-cpp-build-tools/\n   ("C++를 사용한 데스크톱 개발" 워크로드 선택)\n2. Rust 설치:\n   https://www.rust-lang.org/tools/install\n   rustup-init.exe 다운로드 → 기본 설정(1) 선택\n3. 설치 후 터미널/앱 재시작 → 빌드 버튼 다시 클릭\n\n⚠️ Visual Studio Build Tools가 먼저 설치되어 있어야 Rust가 MSVC 타겟을 인식합니다.`
+          error: `❌ Windows 빌드에 필요한 도구가 설치되지 않았습니다:\n${missing.map(m => '  • ' + m).join('\n')}\n\n👉 "자동 설치하기" 버튼으로 한 번에 설치할 수 있습니다 (약 20~40분 소요).`,
+          missingTools: missing,
+          canAutoInstall: process.platform === 'win32',
         }), { status: 400, headers });
       }
       buildStatus = { isBuilding: true, type: 'windows', output: [], exitCode: null };
@@ -1329,6 +1331,101 @@ const server = Bun.serve({
     if (url.pathname === "/api/windows-build-status" && req.method === "GET") {
       // 로컬 빌드 상태는 /api/build-status 와 동일한 buildStatus 공유
       return new Response(JSON.stringify(buildStatus), { headers });
+    }
+
+    if (url.pathname === "/api/install-windows-prereqs" && req.method === "POST") {
+      if (process.platform !== 'win32') {
+        return new Response(JSON.stringify({ error: "Windows에서만 지원됩니다" }), { status: 400, headers });
+      }
+      if (buildStatus.isBuilding) {
+        return new Response(JSON.stringify({ error: "다른 작업이 진행 중입니다" }), { status: 400, headers });
+      }
+      buildStatus = { isBuilding: true, type: 'install-prereqs', output: [], exitCode: null };
+
+      (async () => {
+        const log = (s: string) => buildStatus.output.push(s + '\n');
+        try {
+          log('📦 Windows 빌드 사전 요구사항 자동 설치 시작');
+          const tmpDir = 'C:/tmp';
+          await Bun.$`mkdir -p ${tmpDir}`.quiet().nothrow();
+
+          // Step 1: VS Build Tools 확인 및 설치
+          const vsPaths = [
+            'C:/Program Files/Microsoft Visual Studio/2022/BuildTools',
+            'C:/Program Files/Microsoft Visual Studio/2022/Community',
+            'C:/BuildTools',
+          ];
+          const hasVS = await Promise.all(vsPaths.map(p => Bun.file(p + '/VC/Tools/MSVC').exists()))
+            .then(r => r.some(Boolean));
+
+          if (!hasVS) {
+            log('\n=== 1/2: Visual Studio Build Tools 설치 ===');
+            log('다운로드 중... (4.5MB)');
+            const vsInstaller = `${tmpDir}/vs_BuildTools.exe`;
+            const dl1 = await Bun.$`curl -fsSL -o ${vsInstaller} https://aka.ms/vs/17/release/vs_BuildTools.exe`.quiet().nothrow();
+            if (dl1.exitCode !== 0) throw new Error('VS Build Tools 다운로드 실패');
+            log('✅ 다운로드 완료');
+            log('⏳ 설치 중... (15~30분, 3~5GB 다운로드)');
+            const install1 = Bun.spawn({
+              cmd: [vsInstaller, '--quiet', '--wait', '--norestart', '--nocache',
+                    '--installPath', 'C:/BuildTools',
+                    '--add', 'Microsoft.VisualStudio.Workload.VCTools',
+                    '--add', 'Microsoft.VisualStudio.Component.Windows11SDK.22621',
+                    '--includeRecommended'],
+              stdout: 'pipe', stderr: 'pipe',
+            });
+            const readPromise = (async () => {
+              const decoder = new TextDecoder();
+              for await (const chunk of install1.stdout) log(decoder.decode(chunk).trim());
+            })();
+            const readErr = (async () => {
+              const decoder = new TextDecoder();
+              for await (const chunk of install1.stderr) log(decoder.decode(chunk).trim());
+            })();
+            const code1 = await install1.exited;
+            await Promise.all([readPromise, readErr]);
+            if (code1 !== 0 && code1 !== 3010) throw new Error(`VS Build Tools 설치 실패 (exit ${code1})`);
+            log('✅ VS Build Tools 설치 완료');
+          } else {
+            log('✅ VS Build Tools 이미 설치됨 (건너뜀)');
+          }
+
+          // Step 2: Rust 확인 및 설치
+          const cargoCheck = await Bun.$`cargo --version`.quiet().nothrow();
+          if (cargoCheck.exitCode !== 0) {
+            log('\n=== 2/2: Rust 설치 ===');
+            log('다운로드 중...');
+            const rustupPath = `${tmpDir}/rustup-init.exe`;
+            const dl2 = await Bun.$`curl -fsSL -o ${rustupPath} https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe`.quiet().nothrow();
+            if (dl2.exitCode !== 0) throw new Error('rustup 다운로드 실패');
+            log('✅ 다운로드 완료');
+            log('⏳ Rust 설치 중... (약 2~5분)');
+            const install2 = Bun.spawn({
+              cmd: [rustupPath, '-y', '--default-toolchain', 'stable', '--profile', 'default'],
+              stdout: 'pipe', stderr: 'pipe',
+            });
+            const r1 = (async () => { const d = new TextDecoder(); for await (const c of install2.stdout) log(d.decode(c).trim()); })();
+            const r2 = (async () => { const d = new TextDecoder(); for await (const c of install2.stderr) log(d.decode(c).trim()); })();
+            const code2 = await install2.exited;
+            await Promise.all([r1, r2]);
+            if (code2 !== 0) throw new Error(`Rust 설치 실패 (exit ${code2})`);
+            log('✅ Rust 설치 완료');
+          } else {
+            log('✅ Rust 이미 설치됨 (건너뜀)');
+          }
+
+          log('\n🎉 모든 사전 요구사항 설치 완료!');
+          log('💡 앱을 재시작하거나 "Windows 빌드" 버튼을 다시 누르세요.');
+          buildStatus.exitCode = 0;
+        } catch (err: any) {
+          log(`\n❌ 설치 실패: ${err.message}`);
+          buildStatus.exitCode = 1;
+        } finally {
+          buildStatus.isBuilding = false;
+        }
+      })();
+
+      return new Response(JSON.stringify({ success: true, message: '자동 설치 시작' }), { headers });
     }
 
     if (url.pathname === "/api/git-pull" && req.method === "POST") {

@@ -808,6 +808,7 @@ function App() {
   const [remappingPaths, setRemappingPaths] = useState<Record<string, string>>({});
   const [isBuilding, setIsBuilding] = useState(false);
   const [showBuildLog, setShowBuildLog] = useState(false);
+  const [canAutoInstall, setCanAutoInstall] = useState(false);
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
   const [buildType, setBuildType] = useState<'app' | 'dmg' | 'windows'>('app');
   const lastLogIndexRef = useRef<number>(0);
@@ -2240,6 +2241,49 @@ function App() {
     }
   };
 
+  const handleInstallWindowsPrereqs = async () => {
+    if (isBuilding) return;
+    setBuildType('windows');
+    setBuildLogs(['🔧 Windows 빌드 사전 요구사항 자동 설치를 시작합니다...']);
+    lastLogIndexRef.current = 0;
+    setShowBuildLog(true);
+    setIsBuilding(true);
+    setCanAutoInstall(false);
+    try {
+      const response = await fetch('/api/install-windows-prereqs', { method: 'POST' });
+      const result = await response.json();
+      if (!response.ok || result.error) {
+        setBuildLogs(prev => [...prev, `❌ ${result.error}`]);
+        setIsBuilding(false);
+        return;
+      }
+      const poll = setInterval(async () => {
+        try {
+          const sr = await fetch('/api/build-status');
+          const status = await sr.json();
+          const newLogs = status.output.slice(lastLogIndexRef.current);
+          if (newLogs.length > 0) {
+            lastLogIndexRef.current = status.output.length;
+            setBuildLogs(prev => [...prev, ...newLogs]);
+          }
+          if (!status.isBuilding && status.exitCode !== null) {
+            clearInterval(poll);
+            setIsBuilding(false);
+            if (status.exitCode === 0) {
+              setBuildLogs(prev => [...prev, '✅ 사전 설치 완료! "Windows 빌드" 버튼을 다시 누르세요.']);
+            } else {
+              setBuildLogs(prev => [...prev, `❌ 설치 실패 (exit: ${status.exitCode})`]);
+            }
+          }
+        } catch (e) { console.error(e); }
+      }, 2000);
+      setTimeout(() => { clearInterval(poll); if (isBuilding) { setIsBuilding(false); setBuildLogs(p => [...p, '⚠️ 설치 타임아웃 (60분 초과)']); } }, 3600000);
+    } catch (e) {
+      setBuildLogs(prev => [...prev, '❌ 설치 요청 실패: ' + e]);
+      setIsBuilding(false);
+    }
+  };
+
   const handleBuildWindows = async () => {
     if (isBuilding) return;
 
@@ -2248,6 +2292,7 @@ function App() {
     lastLogIndexRef.current = 0;
     setShowBuildLog(true);
     setIsBuilding(true);
+    setCanAutoInstall(false);
 
     try {
       const response = await fetch('/api/build-windows', { method: 'POST' });
@@ -2255,6 +2300,7 @@ function App() {
 
       if (!response.ok || result.error) {
         setBuildLogs(prev => [...prev, `❌ ${result.error}`]);
+        if (result.canAutoInstall) setCanAutoInstall(true);
         setIsBuilding(false);
         return;
       }
@@ -2922,16 +2968,26 @@ function App() {
                 <div className="text-xs text-zinc-400">
                   총 {buildLogs.length}줄의 로그
                 </div>
-                <button
-                  onClick={() => {
-                    const logText = buildLogs.join('\n');
-                    navigator.clipboard.writeText(logText);
-                    showToast('로그가 클립보드에 복사되었습니다', 'success');
-                  }}
-                  className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded-lg transition-colors"
-                >
-                  로그 복사
-                </button>
+                <div className="flex items-center gap-2">
+                  {canAutoInstall && !isBuilding && (
+                    <button
+                      onClick={handleInstallWindowsPrereqs}
+                      className="px-3 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 text-xs rounded-lg border border-indigo-500/40 transition-colors font-medium"
+                    >
+                      🔧 자동 설치하기 (VS Build Tools + Rust)
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      const logText = buildLogs.join('\n');
+                      navigator.clipboard.writeText(logText);
+                      showToast('로그가 클립보드에 복사되었습니다', 'success');
+                    }}
+                    className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded-lg transition-colors"
+                  >
+                    로그 복사
+                  </button>
+                </div>
               </div>
             </div>
           </div>
