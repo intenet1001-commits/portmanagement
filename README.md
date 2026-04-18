@@ -205,6 +205,142 @@ bun add-command.ts /경로/실행.command "프로젝트 이름"
 
 ---
 
+## 북마크 포털 — Vercel 배포 가이드
+
+로컬 앱의 **북마크(Portal) 탭** 데이터를 어디서나 접근할 수 있도록  
+Vercel에 웹 앱으로 배포하는 방법입니다.
+
+> 포트 관리·워크트리 기능은 로컬 전용이며 웹 배포 대상이 아닙니다.
+
+---
+
+### 준비물
+
+| 항목 | 설명 |
+|---|---|
+| [Vercel](https://vercel.com) 계정 | 무료 플랜으로 충분 |
+| [Supabase](https://supabase.com) 프로젝트 | 무료 플랜으로 충분 |
+| 이 저장소 Fork | 본인 GitHub 계정으로 Fork |
+
+---
+
+### Step 1. Supabase 테이블 생성
+
+Supabase 대시보드 → **SQL Editor** 에서 아래 SQL을 실행합니다.
+
+```sql
+-- 포털 아이템 (북마크, 폴더)
+create table if not exists portal_items (
+  id text primary key,
+  device_id text,
+  name text not null,
+  type text not null,
+  url text,
+  path text,
+  category text,
+  description text,
+  pinned boolean default false,
+  visit_count integer default 0,
+  last_visited text,
+  created_at text
+);
+
+-- 포털 카테고리
+create table if not exists portal_categories (
+  id text primary key,
+  device_id text,
+  name text not null,
+  color text,
+  "order" integer default 0
+);
+
+-- RLS 비활성화 (anon key 접근 허용)
+alter table portal_items disable row level security;
+alter table portal_categories disable row level security;
+```
+
+> **다중 기기 지원**: `device_id` 컬럼으로 기기별 데이터를 구분합니다.  
+> 폴더 타입은 기기별 격리, 나머지 북마크와 카테고리는 전 기기 공유됩니다.
+
+---
+
+### Step 2. 비밀번호 해시 생성
+
+포털에 접근할 비밀번호의 SHA-256 해시를 생성합니다.
+
+**macOS / Linux**
+```bash
+printf 'your-password' | shasum -a 256 | awk '{print $1}'
+```
+
+**Windows (PowerShell)**
+```powershell
+$bytes = [System.Text.Encoding]::UTF8.GetBytes("your-password")
+$hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes)
+($hash | ForEach-Object { $_.ToString("x2") }) -join ""
+```
+
+출력된 해시값(64자리 hex)을 복사해 둡니다.
+
+> 비밀번호 없이 공개로 운영하려면 `VITE_PORTAL_PASSWORD_HASH` 를 빈 값으로 설정하세요.
+
+---
+
+### Step 3. Vercel 프로젝트 설정
+
+1. [vercel.com](https://vercel.com) → **Add New Project** → Fork한 저장소 선택
+2. **Build & Output Settings** (vercel.json이 자동 적용되므로 별도 변경 불필요)
+3. **Environment Variables** 에 아래 3개 추가:
+
+| 변수명 | 값 | 설명 |
+|---|---|---|
+| `VITE_SUPABASE_URL` | `https://xxxx.supabase.co` | Supabase 프로젝트 URL |
+| `VITE_SUPABASE_ANON_KEY` | `eyJ...` | Supabase anon/public key |
+| `VITE_PORTAL_PASSWORD_HASH` | Step 2의 해시값 | 포털 접근 비밀번호 해시 |
+
+> Supabase URL과 anon key는 Supabase 대시보드 → **Project Settings → API** 에서 확인합니다.
+
+4. **Deploy** 클릭
+
+---
+
+### Step 4. 첫 로그인 — 기기 연결
+
+배포된 URL에 접속하면 비밀번호 입력 후 기기 선택 화면이 표시됩니다.
+
+**기기 목록이 표시되는 경우**  
+로컬 앱에서 북마크 탭 → **Push** 를 한 번 실행하면 Supabase에 기기가 등록됩니다.  
+이후 웹에서 해당 기기를 선택하면 데이터가 자동으로 불러와집니다.
+
+**Device ID 직접 입력하는 경우**  
+로컬 앱 → 설정 → 고급 설정 → **Device ID 복사** 후 붙여넣기
+
+---
+
+### Step 5. 데이터 동기화
+
+| 동작 | 방법 |
+|---|---|
+| 로컬 → 웹 반영 | 로컬 앱 북마크 탭 → **Push** |
+| 웹 최신 데이터 불러오기 | 웹 포털 헤더 → **Pull** |
+| 기기 변경 | 웹 포털 헤더 → **단말 변경** |
+
+> Push/Pull은 수동입니다. 실시간 자동 동기화는 지원하지 않습니다.
+
+---
+
+### 재배포 (코드 변경 시)
+
+```bash
+# 로컬에서 빌드 확인 후 푸시
+npx vite build --config vite.portal.config.ts
+git push origin main
+```
+
+Vercel은 `main` 브랜치 푸시 시 자동으로 재배포합니다.
+
+---
+
 ## 빌드
 
 ### macOS 배포
