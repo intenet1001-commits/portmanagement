@@ -1496,6 +1496,27 @@ end tell`;
       }
     }
 
+    if (url.pathname === "/api/git-commit" && req.method === "POST") {
+      try {
+        const { worktreePath, message } = await req.json() as { worktreePath: string; message: string };
+        if (!worktreePath) return new Response(JSON.stringify({ success: false, error: "worktreePath 필요" }), { headers });
+        if (!message?.trim()) return new Response(JSON.stringify({ success: false, error: "커밋 메시지 필요" }), { headers });
+
+        const addProc = Bun.spawn([GIT_PATH, "add", "-A"], { cwd: worktreePath, stdout: "pipe", stderr: "pipe" });
+        await addProc.exited;
+
+        const proc = Bun.spawn([GIT_PATH, "commit", "-m", message.trim()], { cwd: worktreePath, stdout: "pipe", stderr: "pipe" });
+        await proc.exited;
+        const stdout = await new Response(proc.stdout).text();
+        const stderr = await new Response(proc.stderr).text();
+        const output = (stdout + stderr).trim();
+        if (proc.exitCode !== 0) return new Response(JSON.stringify({ success: false, error: output }), { headers });
+        return new Response(JSON.stringify({ success: true, output }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ success: false, error: String(e) }), { headers });
+      }
+    }
+
     if (url.pathname === "/api/list-git-worktrees" && req.method === "POST") {
       try {
         const { folderPath } = await req.json();

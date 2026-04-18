@@ -765,6 +765,7 @@ function App() {
   const [mergeError, setMergeError] = useState<{ message: string; hasConflict: boolean; folderPath: string } | null>(null);
   const [mergeLoading, setMergeLoading] = useState(false);
   const [deleteWorktreeConfirm, setDeleteWorktreeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo } | null>(null);
+  const [commitModal, setCommitModal] = useState<{ item: PortInfo; wt: WorktreeInfo; msg: string } | null>(null);
   const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
   const [expandedWorktreeIds, setExpandedWorktreeIds] = useState<Set<string>>(new Set());
   const [worktreeLists, setWorktreeLists] = useState<Record<string, WorktreeInfo[]>>({});
@@ -2383,6 +2384,65 @@ function App() {
         </div>
       )}
       {/* 머지 확인 모달 */}
+      {commitModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-amber-500/15 p-2 rounded-lg border border-amber-500/30">
+                <GitCommit className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-sm">커밋</h3>
+                <p className="text-zinc-400 text-xs mt-0.5 font-mono">{commitModal.wt.branch}</p>
+              </div>
+            </div>
+            <input
+              type="text"
+              autoFocus
+              placeholder="커밋 메시지 입력..."
+              value={commitModal.msg}
+              onChange={e => setCommitModal(m => m ? { ...m, msg: e.target.value } : m)}
+              onKeyDown={async e => {
+                if (e.key === 'Enter' && commitModal.msg.trim()) {
+                  const { item, wt, msg } = commitModal;
+                  setCommitModal(null);
+                  const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                  const res = await fetch(`${baseUrl}/api/git-commit`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ worktreePath: wt.path, message: msg.trim() })
+                  }).catch(() => null);
+                  const data = await res?.json().catch(() => null);
+                  if (data?.success) showToast(`✅ 커밋 완료: ${wt.branch}`, 'success');
+                  else showToast(`커밋 실패: ${data?.error ?? '알 수 없는 오류'}`, 'error');
+                } else if (e.key === 'Escape') setCommitModal(null);
+              }}
+              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/50"
+            />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setCommitModal(null)} className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 rounded-lg transition-colors">취소</button>
+              <button
+                disabled={!commitModal.msg.trim()}
+                onClick={async () => {
+                  const { item, wt, msg } = commitModal;
+                  setCommitModal(null);
+                  const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                  const res = await fetch(`${baseUrl}/api/git-commit`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ worktreePath: wt.path, message: msg.trim() })
+                  }).catch(() => null);
+                  const data = await res?.json().catch(() => null);
+                  if (data?.success) showToast(`✅ 커밋 완료: ${wt.branch}`, 'success');
+                  else showToast(`커밋 실패: ${data?.error ?? '알 수 없는 오류'}`, 'error');
+                }}
+                className="px-4 py-1.5 text-xs bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 rounded-lg transition-colors disabled:opacity-40"
+              >
+                커밋
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteWorktreeConfirm && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm p-6 space-y-4">
@@ -3952,35 +4012,27 @@ function App() {
                                         열기
                                       </button>
                                     )}
-                                    {/* 커밋: wt.path에서 git add -A && commit */}
+                                    {/* 커밋: 메시지 입력 모달 → 백그라운드 git add -A && commit */}
                                     <button
-                                      onClick={async (e) => {
-                                        e.stopPropagation();
-                                        try {
-                                          const baseUrl = isTauri() ? 'http://localhost:3001' : '';
-                                          await fetch(`${baseUrl}/api/open-terminal-git-commit`, {
-                                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({ worktreePath: wt.path, folderPath: item.folderPath, name: item.name })
-                                          });
-                                          showToast(`커밋: ${wt.branch}`, 'success');
-                                        } catch (err) { showToast('커밋 실패: ' + err, 'error'); }
-                                      }}
+                                      onClick={(e) => { e.stopPropagation(); setCommitModal({ item, wt, msg: '' }); }}
                                       className="px-1.5 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-[10px] rounded border border-amber-500/20"
                                       title={`git add -A && commit (${wt.path})`}
                                     >
                                       커밋
                                     </button>
-                                    {/* 푸시: wt.path에서 feature branch push */}
+                                    {/* 푸시: 백그라운드 silent push */}
                                     <button
                                       onClick={async (e) => {
                                         e.stopPropagation();
                                         try {
                                           const baseUrl = isTauri() ? 'http://localhost:3001' : '';
-                                          await fetch(`${baseUrl}/api/open-terminal-git-push`, {
+                                          const res = await fetch(`${baseUrl}/api/git-push`, {
                                             method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({ folderPath: wt.path, name: `${item.name}(${wt.branch})`, githubUrl: item.githubUrl })
+                                            body: JSON.stringify({ folderPath: wt.path })
                                           });
-                                          showToast(`푸시: ${wt.branch}`, 'success');
+                                          const data = await res.json();
+                                          if (data.success) showToast(`✅ 푸시 완료: ${wt.branch}`, 'success');
+                                          else showToast(`푸시 실패: ${data.error}`, 'error');
                                         } catch (err) { showToast('푸시 실패: ' + err, 'error'); }
                                       }}
                                       className="px-1.5 py-0.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[10px] rounded border border-blue-500/20"
