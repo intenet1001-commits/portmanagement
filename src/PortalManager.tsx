@@ -227,6 +227,7 @@ interface Props {
   onSettingsClosed?: () => void;
   actionsRef?: React.MutableRefObject<PortalActions | null>;
   isVisible?: boolean; // false → hide portal UI but keep modals alive
+  onChangeDevice?: () => void;
 }
 
 const AI_TABLE_PROMPT = `포트 관리 프로그램(portmanagement)의 Supabase 테이블을 설정해줘.
@@ -632,7 +633,7 @@ vercel --prod
   );
 }
 
-export default function PortalManager({ showToast, openSettings, onSettingsClosed, actionsRef, isVisible = true }: Props) {
+export default function PortalManager({ showToast, openSettings, onSettingsClosed, actionsRef, isVisible = true, onChangeDevice }: Props) {
   const [data, setData] = useState<PortalData>({ items: [], categories: DEFAULT_CATEGORIES });
   const [selectedCat, setSelectedCat] = useState<string>('all');
   const [search, setSearch] = useState('');
@@ -680,8 +681,15 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         needsPersist = true;
       }
       setData(loaded);
-      setSbUrl(loaded.supabaseUrl ?? '');
-      setSbKey(loaded.supabaseAnonKey ?? '');
+      const envUrl = (import.meta.env.VITE_SUPABASE_URL as string | undefined) ?? '';
+      const envKey = (import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined) ?? '';
+      setSbUrl(loaded.supabaseUrl || envUrl);
+      setSbKey(loaded.supabaseAnonKey || envKey);
+      // Persist env-var creds back to storage if missing
+      if ((!loaded.supabaseUrl && envUrl) || (!loaded.supabaseAnonKey && envKey)) {
+        loaded.supabaseUrl = envUrl;
+        loaded.supabaseAnonKey = envKey;
+      }
       setDeviceName(loaded.deviceName ?? '');
       setViewingDeviceId(loaded.viewingDeviceId ?? '');
       setIsLoading(false);
@@ -1478,7 +1486,17 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
               placeholder="예: MyMacPro, 회사맥북, WindowsPC"
               autoFocus={!deviceName && !data.deviceId}
             />
-            <p className="text-[10px] text-zinc-600 mt-1">Device ID: {data.deviceId ? data.deviceId.slice(0, 16) + '…' : '자동생성'}</p>
+            <div className="flex items-center justify-between mt-1">
+              <p className="text-[10px] text-zinc-600">Device ID: {data.deviceId ? data.deviceId.slice(0, 16) + '…' : '자동생성'}</p>
+              {onChangeDevice && (
+                <button
+                  onClick={() => { setShowSettings(false); onChangeDevice(); }}
+                  className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  단말 변경
+                </button>
+              )}
+            </div>
           </div>
 
           {/* ── 2. Supabase 연결 ─────────────────────────────────────────────── */}
