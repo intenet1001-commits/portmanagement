@@ -5,6 +5,18 @@ import PortalManager from './PortalManager';
 import './index.css';
 
 const STORAGE_KEY = 'portalData_v1';
+const PW_VERIFIED_KEY = 'portal_pw_verified';
+const REQUIRED_HASH = (import.meta.env.VITE_PORTAL_PASSWORD_HASH as string | undefined) ?? '';
+
+async function sha256(text: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function isPasswordVerified(): boolean {
+  if (!REQUIRED_HASH) return true; // no password configured
+  return localStorage.getItem(PW_VERIFIED_KEY) === REQUIRED_HASH;
+}
 
 interface StoredConfig {
   supabaseUrl: string;
@@ -22,6 +34,55 @@ function loadConfig(): StoredConfig | null {
     }
   } catch {}
   return null;
+}
+
+// ── PasswordGate ─────────────────────────────────────────────────────────────
+
+function PasswordGate({ onVerified }: { onVerified: () => void }) {
+  const [pw, setPw] = useState('');
+  const [remember, setRemember] = useState(true);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function verify() {
+    if (!pw.trim()) return;
+    setLoading(true); setError('');
+    const hash = await sha256(pw.trim());
+    if (hash === REQUIRED_HASH) {
+      if (remember) localStorage.setItem(PW_VERIFIED_KEY, REQUIRED_HASH);
+      onVerified();
+    } else {
+      setError('비밀번호가 틀렸습니다');
+    }
+    setLoading(false);
+  }
+
+  const inp = 'w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-blue-500';
+  const btn = 'w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm rounded font-medium transition-colors';
+
+  return (
+    <div className="min-h-screen bg-[#0a0a0b] flex items-center justify-center p-4">
+      <div className="w-full max-w-xs bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
+        <h1 className="text-base font-semibold text-zinc-100">북마크 포털</h1>
+        <div>
+          <label className="text-xs text-zinc-400 mb-1 block">비밀번호</label>
+          <input className={inp} type="password" placeholder="••••••••" value={pw}
+            onChange={e => setPw(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && verify()}
+            autoFocus />
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)}
+            className="accent-blue-500 w-3.5 h-3.5" />
+          <span className="text-xs text-zinc-400">이 브라우저에서 기억하기</span>
+        </label>
+        {error && <p className="text-xs text-red-400">{error}</p>}
+        <button className={btn} onClick={verify} disabled={loading || !pw.trim()}>
+          {loading ? '확인 중…' : '입장'}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ── DeviceSetup ───────────────────────────────────────────────────────────────
@@ -157,15 +218,17 @@ interface Toast { id: number; message: string; type: 'success' | 'error'; }
 // ── App ───────────────────────────────────────────────────────────────────────
 
 function PortalApp() {
+  const [pwOk, setPwOk] = useState(isPasswordVerified);
   const [ready, setReady] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   useEffect(() => {
+    if (!pwOk) return;
     const cfg = loadConfig();
     if (cfg) setReady(true);
     else setNeedsSetup(true);
-  }, []);
+  }, [pwOk]);
 
   const showToast = useCallback((msg: string, type: 'success' | 'error') => {
     const id = Date.now();
@@ -173,12 +236,8 @@ function PortalApp() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   }, []);
 
-  function handleSetupComplete() {
-    setNeedsSetup(false);
-    setReady(true);
-  }
-
-  if (needsSetup) return <DeviceSetup onComplete={handleSetupComplete} />;
+  if (!pwOk) return <PasswordGate onVerified={() => setPwOk(true)} />;
+  if (needsSetup) return <DeviceSetup onComplete={() => { setNeedsSetup(false); setReady(true); }} />;
   if (!ready) return null;
 
   return (
