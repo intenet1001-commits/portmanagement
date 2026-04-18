@@ -148,6 +148,11 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 - `portal.json`에 `deviceId` (UUID) + **`deviceName`** (사람이 읽을 수 있는 기기명) 함께 저장
 - Push: `upsert(rows, { onConflict: 'id' })` — 멱등 동작
 - Pull: `device_id` 기준 필터링 (기기별 데이터), `'__shared__'` sentinel로 공유 데이터 병합
+- **다른 기기 데이터 가져오기**: 설정 → 고급 설정 → 단말 조회 → 기기 선택 → "저장 후 동기화" 클릭 시 해당 기기 데이터 Pull
+  - 다른 기기 선택 상태에서 "저장 후 동기화" = Pull (내 기기일 때는 Push)
+  - Pull 후 React 상태 즉시 반영 (`setData` 호출) — 이후 Push도 정상 동작
+- **기기 간 포트 격리**: `sourceDeviceId` 필드로 타 기기 포트가 내 device_id로 덮어쓰이는 것 방지
+  - Push 시 `sourceDeviceId`가 내 UUID인 포트만 upsert (타 기기 포트 제외)
 - 테이블 스키마 (DDL):
   - `ports` (id, **device_id**, name, port, command_path, folder_path, terminal_command, deploy_url, github_url) — **device_id 추가됨**
   - `workspace_roots` (id, device_id, name, path) — 프로젝트 관리 탭 Push/Pull
@@ -210,8 +215,11 @@ CREATE INDEX IF NOT EXISTS idx_ports_device_id ON ports(device_id);
 - **최적화된 창 크기**: MacBook 14인치 기준 세로 최대화 (1000x1050)
 
 ### Tauri 빌드 & 배포
-- **앱 빌드**: .app 번들 생성 (Applications 폴더 설치용)
-- **DMG 빌드**: 완전 자동화된 macOS 배포 패키지 생성
+- **앱 빌드 (macOS)**: .app 번들 생성 (Applications 폴더 설치용)
+- **DMG 빌드 (macOS)**: 완전 자동화된 macOS 배포 패키지 생성
+- **Windows 빌드**: NSIS .exe 설치 파일 로컬 빌드 (`bun run tauri:build:win`)
+  - 결과물: `src-tauri/target/release/bundle/nsis/*.exe`
+  - GitHub Actions 불필요 — Windows 머신에서 직접 실행
 - **자동 버전 관리**: 빌드 시 날짜 기반 버전 자동 업데이트 (YYYY.MM.DD 형식)
   - 예: `포트관리기_2025.12.10_aarch64.dmg`
   - `bun run tauri:build` 또는 `bun run tauri:build:dmg` 실행 시 자동 적용
@@ -229,11 +237,12 @@ CREATE INDEX IF NOT EXISTS idx_ports_device_id ON ports(device_id);
 - 창 크기: 1000x1050 (최소: 800x700)
 - **데이터 저장 위치**:
   - macOS: `~/Library/Application Support/com.portmanager.portmanager/ports.json`
-  - 로그: `~/Library/Application Support/com.portmanager.portmanager/logs/{portId}.log`
-- **다른 맥으로 이전**:
-  - 방법 1: "내보내기"/"불러오기" 버튼 사용 (권장)
-  - 방법 2: `ports.json` 파일 수동 복사
-  - DMG 파일만으로 새 맥에 설치 가능 (데이터는 별도 이전 필요)
+  - Windows: `%APPDATA%\com.portmanager.portmanager\ports.json`
+  - 로그: `{앱 데이터 디렉토리}/logs/{portId}.log`
+- **다른 기기로 이전**:
+  - 방법 1: Supabase Push/Pull 동기화 (권장, 멀티 기기)
+  - 방법 2: "내보내기"/"불러오기" 버튼 사용
+  - 방법 3: `ports.json` 파일 수동 복사
 
 ## 개발 명령어
 
@@ -259,9 +268,15 @@ bun run tauri:build
 # DMG 빌드 (배포용) — update-version → bun run build → tauri build --bundles dmg → fix-dmg
 bun run tauri:build:dmg
 
-# 빌드 결과물 위치 (iCloud 충돌 방지 — custom target dir)
+# Windows 빌드 (.exe NSIS) — update-version → bun run build → tauri build --bundles nsis
+bun run tauri:build:win
+
+# macOS 빌드 결과물 위치 (iCloud 충돌 방지 — custom target dir)
 # .app: ~/cargo-targets/portmanager/release/bundle/macos/포트관리기.app
 # DMG: ~/cargo-targets/portmanager/release/bundle/dmg/포트관리기_YYYY.M.D_aarch64.dmg
+
+# Windows 빌드 결과물 위치
+# .exe: src-tauri/target/release/bundle/nsis/*.exe
 
 # 앱 내에서 "DMG 출시하기" 버튼으로 Desktop에 자동 복사 가능
 ```
