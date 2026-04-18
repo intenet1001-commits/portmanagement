@@ -1276,97 +1276,44 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/build-windows" && req.method === "POST") {
       try {
-        const token = process.env.GITHUB_TOKEN;
-        if (!token) {
-          return new Response(
-            JSON.stringify({ error: "GITHUB_TOKEN 환경변수가 설정되지 않았습니다.\n실행 방법: GITHUB_TOKEN=ghp_xxx bun api-server.ts" }),
-            { status: 400, headers }
-          );
+        const result = await Bun.$`gh workflow run ${GITHUB_WORKFLOW} --repo ${GITHUB_OWNER}/${GITHUB_REPO} --ref main`.quiet();
+        if (result.exitCode !== 0) {
+          const errText = result.stderr.toString();
+          return new Response(JSON.stringify({ error: errText }), { status: 500, headers });
         }
-
-        const ghResponse = await fetch(
-          `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Accept': 'application/vnd.github+json',
-              'Content-Type': 'application/json',
-              'X-GitHub-Api-Version': '2022-11-28',
-            },
-            body: JSON.stringify({ ref: 'main' }),
-          }
-        );
-
-        if (!ghResponse.ok) {
-          const errorText = await ghResponse.text();
-          return new Response(
-            JSON.stringify({ error: `GitHub API 오류: ${ghResponse.status} ${errorText}` }),
-            { status: 500, headers }
-          );
-        }
-
-        console.log('[BuildWindows] GitHub Actions workflow triggered');
+        console.log('[BuildWindows] GitHub Actions workflow triggered via gh CLI');
         return new Response(
           JSON.stringify({ triggered: true, message: 'GitHub Actions Windows 빌드가 시작되었습니다' }),
           { headers }
         );
       } catch (error: any) {
         console.error('[BuildWindows] Error:', error);
-        return new Response(
-          JSON.stringify({ error: error.message }),
-          { status: 500, headers }
-        );
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
       }
     }
 
     if (url.pathname === "/api/windows-build-status" && req.method === "GET") {
       try {
-        const token = process.env.GITHUB_TOKEN;
-        if (!token) {
-          return new Response(
-            JSON.stringify({ status: 'error', message: 'GITHUB_TOKEN not set' }),
-            { headers }
-          );
+        const result = await Bun.$`gh run list --workflow=${GITHUB_WORKFLOW} --repo ${GITHUB_OWNER}/${GITHUB_REPO} --limit 1 --json status,conclusion,databaseId,url`.quiet();
+        if (result.exitCode !== 0) {
+          return new Response(JSON.stringify({ status: 'error', message: result.stderr.toString() }), { headers });
         }
-
-        const ghResponse = await fetch(
-          `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs?workflow_id=${GITHUB_WORKFLOW}&per_page=1&branch=main`,
-          {
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Accept': 'application/vnd.github+json',
-              'X-GitHub-Api-Version': '2022-11-28',
-            },
-          }
-        );
-
-        if (!ghResponse.ok) {
-          return new Response(
-            JSON.stringify({ status: 'error', message: `GitHub API error: ${ghResponse.status}` }),
-            { headers }
-          );
-        }
-
-        const data = await ghResponse.json();
-        const runs = data.workflow_runs;
-
+        const runs = JSON.parse(result.stdout.toString());
         if (!runs || runs.length === 0) {
           return new Response(
             JSON.stringify({ status: 'queued', runId: null, runUrl: null, conclusion: null, artifactsUrl: null }),
             { headers }
           );
         }
-
         const run = runs[0];
         return new Response(
           JSON.stringify({
-            status: run.status,         // queued | in_progress | completed
-            conclusion: run.conclusion, // success | failure | cancelled | null
-            runId: run.id,
-            runUrl: run.html_url,
+            status: run.status,
+            conclusion: run.conclusion,
+            runId: run.databaseId,
+            runUrl: run.url,
             artifactsUrl: run.status === 'completed' && run.conclusion === 'success'
-              ? `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${run.id}`
+              ? `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${run.databaseId}`
               : null,
           }),
           { headers }
