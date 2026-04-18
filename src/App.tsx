@@ -2244,7 +2244,7 @@ function App() {
     if (isBuilding) return;
 
     setBuildType('windows');
-    setBuildLogs(['⏳ GitHub Actions Windows 빌드를 시작합니다...']);
+    setBuildLogs(['⏳ Windows 로컬 빌드를 시작합니다...']);
     lastLogIndexRef.current = 0;
     setShowBuildLog(true);
     setIsBuilding(true);
@@ -2259,54 +2259,30 @@ function App() {
         return;
       }
 
-      setBuildLogs(prev => [
-        ...prev,
-        '✅ GitHub Actions 워크플로우가 트리거되었습니다.',
-        '🔄 Windows runner 시작 대기 중... (약 1~3분 소요)',
-      ]);
-
-      // GitHub Actions 상태 폴링 (5초 간격)
-      let lastStatus = '';
+      // 맥 빌드와 동일하게 /api/build-status 폴링
       const pollInterval = setInterval(async () => {
         try {
-          const statusResponse = await fetch('/api/windows-build-status');
+          const statusResponse = await fetch('/api/build-status');
           const status = await statusResponse.json();
-
-          const currentKey = `${status.status}-${status.conclusion}`;
-          if (currentKey !== lastStatus) {
-            lastStatus = currentKey;
-
-            if (status.status === 'in_progress') {
-              setBuildLogs(prev => [
-                ...prev,
-                '🔄 Windows runner에서 빌드 중...',
-                `📎 진행상황: ${status.runUrl}`,
-              ]);
-            } else if (status.status === 'completed') {
-              clearInterval(pollInterval);
-              setIsBuilding(false);
-              if (status.conclusion === 'success') {
-                setBuildLogs(prev => [
-                  ...prev,
-                  '✅ Windows 빌드 완료!',
-                  `📥 다운로드: ${status.artifactsUrl}`,
-                  '💡 위 링크 → Artifacts → windows-installer 에서 .exe 다운로드',
-                ]);
-              } else {
-                setBuildLogs(prev => [
-                  ...prev,
-                  `❌ 빌드 실패 (${status.conclusion})`,
-                  `🔍 로그 확인: ${status.runUrl}`,
-                ]);
-              }
+          const newLogs = status.output.slice(lastLogIndexRef.current);
+          if (newLogs.length > 0) {
+            lastLogIndexRef.current = status.output.length;
+            setBuildLogs(prev => [...prev, ...newLogs]);
+          }
+          if (!status.isBuilding && status.exitCode !== null) {
+            clearInterval(pollInterval);
+            setIsBuilding(false);
+            if (status.exitCode === 0) {
+              setBuildLogs(prev => [...prev, '✅ Windows 빌드 완료! (src-tauri/target/release/bundle/nsis/)']);
+            } else {
+              setBuildLogs(prev => [...prev, `❌ 빌드 실패 (exit code: ${status.exitCode})`]);
             }
           }
         } catch (e) {
           console.error('Failed to poll windows build status:', e);
         }
-      }, 5000);
+      }, 1000);
 
-      // 30분 타임아웃
       setTimeout(() => {
         clearInterval(pollInterval);
         if (isBuilding) {

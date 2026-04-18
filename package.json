@@ -15,7 +15,8 @@
     "update-version": "bun update-version.ts",
     "fix-dmg": "bun fix-dmg.ts",
     "tauri:build": "bun update-version.ts && bun run build && tauri build",
-    "tauri:build:dmg": "bun update-version.ts && bun run build && tauri build --bundles dmg; bun fix-dmg.ts"
+    "tauri:build:dmg": "bun update-version.ts && bun run build && tauri build --bundles dmg; bun fix-dmg.ts",
+    "tauri:build:win": "bun update-version.ts && bun run build && tauri build --bundles nsis"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.5",

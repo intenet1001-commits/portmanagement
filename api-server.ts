@@ -1275,56 +1275,36 @@ const server = Bun.serve({
     }
 
     if (url.pathname === "/api/build-windows" && req.method === "POST") {
-      try {
-        const result = await Bun.$`gh workflow run ${GITHUB_WORKFLOW} --repo ${GITHUB_OWNER}/${GITHUB_REPO} --ref main`.quiet();
-        if (result.exitCode !== 0) {
-          const errText = result.stderr.toString();
-          return new Response(JSON.stringify({ error: errText }), { status: 500, headers });
-        }
-        console.log('[BuildWindows] GitHub Actions workflow triggered via gh CLI');
-        return new Response(
-          JSON.stringify({ triggered: true, message: 'GitHub Actions Windows 빌드가 시작되었습니다' }),
-          { headers }
-        );
-      } catch (error: any) {
-        console.error('[BuildWindows] Error:', error);
-        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
+      // 로컬 Windows 빌드 — /api/build?type=windows 와 동일한 방식
+      if (buildStatus.isBuilding) {
+        return new Response(JSON.stringify({ error: "빌드가 이미 진행 중입니다" }), { status: 400, headers });
       }
+      buildStatus = { isBuilding: true, type: 'windows', output: [], exitCode: null };
+      buildProcess = spawn({
+        cmd: ["bun", "run", "tauri:build:win"],
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const readWinStream = async (stream: any) => {
+        const decoder = new TextDecoder();
+        for await (const chunk of stream) {
+          buildStatus.output.push(decoder.decode(chunk));
+        }
+      };
+      const wo = readWinStream(buildProcess.stdout);
+      const we = readWinStream(buildProcess.stderr);
+      buildProcess.exited.then(async (code: number) => {
+        await Promise.all([wo, we]);
+        buildStatus.exitCode = code;
+        buildStatus.isBuilding = false;
+      });
+      return new Response(JSON.stringify({ success: true, message: 'Windows 로컬 빌드가 시작되었습니다' }), { headers });
     }
 
     if (url.pathname === "/api/windows-build-status" && req.method === "GET") {
-      try {
-        const result = await Bun.$`gh run list --workflow=${GITHUB_WORKFLOW} --repo ${GITHUB_OWNER}/${GITHUB_REPO} --limit 1 --json status,conclusion,databaseId,url`.quiet();
-        if (result.exitCode !== 0) {
-          return new Response(JSON.stringify({ status: 'error', message: result.stderr.toString() }), { headers });
-        }
-        const runs = JSON.parse(result.stdout.toString());
-        if (!runs || runs.length === 0) {
-          return new Response(
-            JSON.stringify({ status: 'queued', runId: null, runUrl: null, conclusion: null, artifactsUrl: null }),
-            { headers }
-          );
-        }
-        const run = runs[0];
-        return new Response(
-          JSON.stringify({
-            status: run.status,
-            conclusion: run.conclusion,
-            runId: run.databaseId,
-            runUrl: run.url,
-            artifactsUrl: run.status === 'completed' && run.conclusion === 'success'
-              ? `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/actions/runs/${run.databaseId}`
-              : null,
-          }),
-          { headers }
-        );
-      } catch (error: any) {
-        console.error('[WindowsBuildStatus] Error:', error);
-        return new Response(
-          JSON.stringify({ status: 'error', message: error.message }),
-          { headers }
-        );
-      }
+      // 로컬 빌드 상태는 /api/build-status 와 동일한 buildStatus 공유
+      return new Response(JSON.stringify(buildStatus), { headers });
     }
 
     if (url.pathname === "/api/git-pull" && req.method === "POST") {
