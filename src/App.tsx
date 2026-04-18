@@ -753,7 +753,10 @@ function App() {
   const [deployUrl, setDeployUrl] = useState('');
   const [githubUrl, setGithubUrl] = useState('');
   const [worktreePath, setWorktreePath] = useState('');
-  const [activeTab, setActiveTab] = useState<'ports' | 'portal'>('ports');
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  const [activeTab, setActiveTab] = useState<'ports' | 'portal'>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 768 ? 'portal' : 'ports'
+  );
   const [openPortalSettings, setOpenPortalSettings] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [sortBy, setSortBy] = useState<SortType>(
@@ -1282,6 +1285,16 @@ function App() {
   // 정렬 설정 localStorage 저장
   useEffect(() => { localStorage.setItem('portmanager-sortBy', sortBy); }, [sortBy]);
   useEffect(() => { localStorage.setItem('portmanager-sortOrder', sortOrder); }, [sortOrder]);
+
+  useEffect(() => {
+    const handler = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) setActiveTab('portal');
+    };
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
 
   // Cmd+F: 검색 포커스 / Esc: 검색 초기화
   useEffect(() => {
@@ -2981,17 +2994,19 @@ function App() {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <div className="flex gap-1 bg-[#18181b] border border-zinc-800 rounded-xl p-1 w-fit">
-              <button
-                onClick={() => setActiveTab('ports')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  activeTab === 'ports'
-                    ? 'bg-zinc-700 text-white shadow-sm'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                }`}
-              >
-                <Server className="w-3.5 h-3.5" />
-                프로젝트 관리
-              </button>
+              {!isMobile && (
+                <button
+                  onClick={() => setActiveTab('ports')}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    activeTab === 'ports'
+                      ? 'bg-zinc-700 text-white shadow-sm'
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                  }`}
+                >
+                  <Server className="w-3.5 h-3.5" />
+                  프로젝트 관리
+                </button>
+              )}
               <button
                 onClick={() => setActiveTab('portal')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
@@ -3001,7 +3016,7 @@ function App() {
                 }`}
               >
                 <BookMarked className="w-3.5 h-3.5" />
-                포털
+                {isMobile ? '북마크' : '포털'}
               </button>
             </div>
 

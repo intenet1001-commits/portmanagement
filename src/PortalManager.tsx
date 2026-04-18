@@ -634,9 +634,19 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   const [sbUrl, setSbUrl] = useState('');
   const [sbKey, setSbKey] = useState('');
   const [deviceName, setDeviceName] = useState('');
-  const [viewingDeviceId, setViewingDeviceId] = useState('');
+  const [viewingDeviceId, setViewingDeviceId] = useState(
+    () => localStorage.getItem('portal-viewing-device') ?? ''
+  );
   const [knownDevices, setKnownDevices] = useState<{device_id: string; device_name?: string}[]>([]);
   const [isFetchingDevices, setIsFetchingDevices] = useState(false);
+
+  useEffect(() => {
+    if (viewingDeviceId) {
+      localStorage.setItem('portal-viewing-device', viewingDeviceId);
+    } else {
+      localStorage.removeItem('portal-viewing-device');
+    }
+  }, [viewingDeviceId]);
 
   // ── Load ──────────────────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npx vite build --config vite.portal.config.ts",
-  "outputDirectory": "dist-portal",
+  "buildCommand": "npx vite build",
+  "outputDirectory": "dist",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
