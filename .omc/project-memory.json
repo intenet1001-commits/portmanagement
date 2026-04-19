@@ -51,6 +51,7 @@
       "api": "bun --watch api-server.ts",
       "start": "bun --watch api-server.ts & vite",
       "build": "vite build",
+      "build:portal": "vite build --config vite.portal.config.ts",
       "preview": "vite preview",
       "tauri": "tauri",
       "tauri:dev": "tauri dev",
@@ -88,6 +89,15 @@
       "lastAccessed": 1776322888817,
       "keyFiles": [
         "index.html"
+      ]
+    },
+    "dist-portal": {
+      "path": "dist-portal",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1776559149953,
+      "keyFiles": [
+        "portal.html"
       ]
     },
     "docs": {

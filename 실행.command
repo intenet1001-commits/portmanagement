@@ -23,7 +23,7 @@ sleep 3
 
 # 크롬 브라우저로 자동으로 열기
 echo "Chrome 브라우저를 여는 중..."
-open -a "Google Chrome" http://localhost:9024
+open -a "Google Chrome" http://localhost:9000
 
 # 종료 시그널 핸들러
 cleanup() {
