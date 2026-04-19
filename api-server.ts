@@ -8,6 +8,20 @@ const escapeSq = (s: string): string => s.replace(/'/g, "'\\''");
 
 const IS_WIN = process.platform === 'win32';
 
+/** VS Build Tools (MSVC) 설치 여부 감지. 디렉터리 존재로 판정 — Bun.file().exists()는 디렉터리에 false를 반환하므로 existsSync 사용. */
+function hasVsBuildTools(): boolean {
+  const vsPaths = [
+    'C:/Program Files/Microsoft Visual Studio/2022/BuildTools',
+    'C:/Program Files/Microsoft Visual Studio/2022/Community',
+    'C:/Program Files/Microsoft Visual Studio/2022/Professional',
+    'C:/Program Files/Microsoft Visual Studio/2022/Enterprise',
+    'C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools',
+    'C:/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools',
+    'C:/BuildTools',
+  ];
+  return vsPaths.some(p => existsSync(p + '/VC/Tools/MSVC'));
+}
+
 /** Windows 경로를 WSL /mnt/... 경로로 변환 */
 function winToWslPath(winPath: string): string {
   if (winPath.length >= 2 && winPath[1] === ':') {
@@ -20,15 +34,26 @@ function winToWslPath(winPath: string): string {
 
 const { spawnSync: nodeSpawnSync } = require('child_process');
 
-/** WSL registry에서 distro 목록 조회 (WSL 서비스 불필요 — 즉시 응답) */
+/** WSL distro 목록 캐시 */
+let _cachedDistros: string[] | null = null;
+
+/** WSL registry에서 distro 목록 조회 (reg.exe 사용 — powershell보다 훨씬 빠르고 안정적) */
 function listWslDistros(): string[] {
-  const r = nodeSpawnSync('powershell', ['-NoProfile', '-Command',
-    'Get-ChildItem HKCU:/Software/Microsoft/Windows/CurrentVersion/Lxss | ForEach-Object { (Get-ItemProperty $_.PSPath).DistributionName }'],
-    { timeout: 3000, stdio: 'pipe' });
-  if (r.status !== 0) return [];
-  return (r.stdout?.toString('utf8') ?? '').split(/\r?\n/)
-    .map((l: string) => l.trim())
+  if (_cachedDistros && _cachedDistros.length > 0) return _cachedDistros;
+  const r = nodeSpawnSync('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Lxss', '/s', '/v', 'DistributionName'],
+    { timeout: 5000, stdio: 'pipe' });
+  const stdout = r.stdout?.toString('utf8') ?? '';
+  if (r.status !== 0 || r.error) {
+    console.error('[listWslDistros] failed:', { status: r.status, error: r.error?.message });
+    return [];
+  }
+  // reg output format: "    DistributionName    REG_SZ    <name>"
+  const distros = Array.from(stdout.matchAll(/DistributionName\s+REG_SZ\s+(.+)/g))
+    .map((m: RegExpMatchArray) => m[1].trim())
     .filter((n: string) => n && !n.toLowerCase().includes('docker'));
+  console.log('[listWslDistros] found:', distros);
+  if (distros.length > 0) _cachedDistros = distros;
+  return distros;
 }
 
 /** docker-desktop 제외한 WSL distro 이름 반환 (bash 테스트 없이 목록만 확인 — 빠름) */
@@ -37,8 +62,17 @@ function findWslDistro(): string | null {
   return distros[0] ?? null;
 }
 
-/** WSL tmux bash 명령 문자열 생성 (외부에서 bash -lic로 실행됨 — .bashrc/.profile 모두 로드) */
-function buildWslTmuxBashCmd(sessionName: string, folderPath: string | null, worktreePath: string | null, fresh: boolean, bypass: boolean): string {
+/** 터미널/탭 타이틀 조합: 프로젝트명 · 워크트리명 (+선택적 prefix) */
+function buildWindowTitle(sessionName: string, worktreePath?: string | null, prefix?: string): string {
+  const wtRaw = worktreePath?.split(',')[0]?.trim();
+  // Windows \ 와 POSIX / 모두 지원, 마지막 구분자 이후 basename 추출
+  const wtName = wtRaw ? wtRaw.split(/[\\/]/).filter(Boolean).pop() : undefined;
+  const base = wtName ? `${sessionName} · ${wtName}` : sessionName;
+  return prefix ? `[${prefix}] ${base}` : base;
+}
+
+/** WSL tmux bash 명령 문자열 생성 (외부에서 bash -c로 실행됨 — WSL default PATH가 Windows npm 포함) */
+function buildWslTmuxBashCmd(sessionName: string, folderPath: string | null, worktreePath: string | null, fresh: boolean, bypass: boolean, title?: string): string {
   const rawPath = worktreePath?.split(',')[0]?.trim() || folderPath;
   const wslPath = rawPath ? winToWslPath(rawPath) : null;
   const cdPart = wslPath ? `cd '${escapeSq(wslPath)}' && ` : '';
@@ -48,25 +82,30 @@ function buildWslTmuxBashCmd(sessionName: string, folderPath: string | null, wor
   // ⚠️ 쌍따옴표(") 금지 — cmd.exe가 \"를 몰라서 명령이 중간에 끊김
   // Safety net: claude 실패 시 tmux 안에서 login shell로 fallback → 에러 메시지 확인 가능
   const inner = `${claudeArgs} || bash -l`;
+  // OSC 0 escape로 터미널 타이틀 세팅 (tmux 시작 전에 설정 → tmux가 덮어쓰지 않음)
+  // ⚠️ OSC의 `;`는 wt.exe가 단일따옴표 안이라도 subcommand 구분자로 취급 → `\;`로 이스케이프 필수
+  // wt는 `\;`를 literal `;`로 unescape해서 bash에 전달, bash는 single quote 안이라 그대로 printf에 넘김
+  const titlePart = title ? `printf '\\033]0\\;%s\\007' '${escapeSq(title)}' && ` : '';
   if (fresh) {
     // kill-session이 실패해도(세션 없음) 계속 진행하도록 || : 로 감쌈 (세미콜론 대체)
-    return `${cdPart}(tmux kill-session -t '${sess}' 2>/dev/null || :) && tmux new-session -s '${sess}' '${inner}'`;
+    return `${titlePart}${cdPart}(tmux kill-session -t '${sess}' 2>/dev/null || :) && tmux new-session -s '${sess}' '${inner}'`;
   }
-  return `${cdPart}tmux new-session -A -s '${sess}' '${inner}'`;
+  return `${titlePart}${cdPart}tmux new-session -A -s '${sess}' '${inner}'`;
 }
 
 /** WSL tmux 세션 열기 (Windows Terminal 우선, 없으면 cmd 폴백) */
-function spawnWslTmux(bashCmd: string): void {
+function spawnWslTmux(bashCmd: string, title?: string): void {
   const distro = findWslDistro();
   if (!distro) throw new Error('WSL Ubuntu distro를 찾을 수 없습니다.');
   const hasWt = Bun.spawnSync(['where', 'wt.exe'], { stdout: 'pipe', stderr: 'pipe' }).exitCode === 0;
-  // bash -lic (login+interactive) → .profile + .bashrc 모두 로드
-  // → nvm, ~/.npm-global/bin 등 사용자 PATH가 완전히 설정되어 claude 커맨드 찾기 성공
+  // bash -c (기본) → WSL의 default PATH가 Windows PATH를 import하므로 npm global(claude.exe 등)도 자동 접근
+  // -i (interactive) 플래그는 WSL pty 레이어에서 hang 유발 가능 → 사용 금지
+  const titleArgs = title ? ['--title', title] : [];
   if (hasWt) {
     // wt.exe는 Windows App 앨리어스라 직접 spawn 불가 → cmd /c start로 우회
-    spawn({ cmd: ['cmd.exe', '/c', 'start', 'wt', 'wsl', '-d', distro, '--', 'bash', '-lic', bashCmd], stdout: 'inherit', stderr: 'inherit' });
+    spawn({ cmd: ['cmd.exe', '/c', 'start', 'wt', ...titleArgs, 'wsl', '-d', distro, '--', 'bash', '-c', bashCmd], stdout: 'inherit', stderr: 'inherit' });
   } else {
-    spawn({ cmd: ['cmd.exe', '/c', 'start', 'wsl', '-d', distro, '--', 'bash', '-lic', bashCmd], stdout: 'inherit', stderr: 'inherit' });
+    spawn({ cmd: ['cmd.exe', '/c', 'start', 'wsl', '-d', distro, '--', 'bash', '-c', bashCmd], stdout: 'inherit', stderr: 'inherit' });
   }
 }
 
@@ -918,11 +957,12 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
+        const title = buildWindowTitle(sessionName, worktreePath);
         if (IS_WIN) {
-          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, false));
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, false, title), title);
         } else {
           const claudeCmd = `tmux new-session -A -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
-          openTerminalWithCmd(claudeCmd, folderPath ?? null, `[tmux] ${sessionName}`);
+          openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude 실행 중 (세션: ${sessionName})` }), { headers });
       } catch (error: any) {
@@ -933,11 +973,12 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude-fresh" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
+        const title = buildWindowTitle(sessionName, worktreePath, 'fresh');
         if (IS_WIN) {
-          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, true, false));
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, true, false, title), title);
         } else {
           const claudeCmd = `tmux kill-session -t '${escapeSq(sessionName)}' 2>/dev/null; tmux new-session -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
-          openTerminalWithCmd(claudeCmd, folderPath ?? null, `[fresh] ${sessionName}`);
+          openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude 새 세션 시작 (${sessionName})` }), { headers });
       } catch (error: any) {
@@ -948,11 +989,12 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude-bypass" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
+        const title = buildWindowTitle(sessionName, worktreePath, 'bypass');
         if (IS_WIN) {
-          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, true));
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, true, title), title);
         } else {
           const claudeCmd = `tmux new-session -A -s '${escapeSq(sessionName)}-bypass' '${worktreePath ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'` : 'claude --dangerously-skip-permissions'}'`;
-          openTerminalWithCmd(claudeCmd, folderPath ?? null, `[bypass] ${sessionName}`);
+          openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude bypass 실행 중 (${sessionName})` }), { headers });
       } catch (error: any) {
@@ -1034,7 +1076,7 @@ const server = Bun.serve({
         const claudeCmd = worktreePath
           ? (IS_WIN ? `claude -w "${worktreePath}"` : `claude -w '${escapeSq(worktreePath)}'`)
           : 'claude';
-        openTerminalWithCmd(claudeCmd, folderPath ?? null, name || 'Claude');
+        openTerminalWithCmd(claudeCmd, folderPath ?? null, buildWindowTitle(name || 'Claude', worktreePath));
         return new Response(JSON.stringify({ success: true, message: 'Terminal에서 Claude 실행' }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
@@ -1047,7 +1089,9 @@ const server = Bun.serve({
         const claudeCmd = worktreePath
           ? (IS_WIN ? `claude --dangerously-skip-permissions -w "${worktreePath}"` : `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`)
           : 'claude --dangerously-skip-permissions';
-        openTerminalWithCmd(claudeCmd, folderPath ?? null, `[bypass] ${name || 'Claude'}`);
+        const title = buildWindowTitle(name || 'Claude', worktreePath, 'bypass');
+        console.log('[terminal-claude-bypass] name:', JSON.stringify(name), 'worktreePath:', JSON.stringify(worktreePath), 'title:', JSON.stringify(title));
+        openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
         return new Response(JSON.stringify({ success: true, message: 'Terminal에서 Claude (bypass) 실행' }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
@@ -1412,18 +1456,7 @@ const server = Bun.serve({
       if (cargoCheck.exitCode !== 0) missing.push('Rust (cargo)');
 
       if (process.platform === 'win32') {
-        // MSVC cl.exe 또는 VS Build Tools 존재 확인
-        const clCheck = await Bun.$`where cl.exe`.quiet().nothrow();
-        const vsPaths = [
-          'C:/Program Files/Microsoft Visual Studio/2022/BuildTools',
-          'C:/Program Files/Microsoft Visual Studio/2022/Community',
-          'C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools',
-          'C:/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools',
-          'C:/BuildTools',
-        ];
-        const hasVS = await Promise.all(vsPaths.map(p => Bun.file(p + '/VC/Tools/MSVC').exists()))
-          .then(results => results.some(Boolean));
-        if (clCheck.exitCode !== 0 && !hasVS) missing.push('Visual Studio C++ Build Tools (MSVC)');
+        if (!hasVsBuildTools()) missing.push('Visual Studio C++ Build Tools (MSVC)');
       }
 
       if (missing.length > 0) {
@@ -1478,15 +1511,7 @@ const server = Bun.serve({
           await Bun.$`mkdir -p ${tmpDir}`.quiet().nothrow();
 
           // Step 1: VS Build Tools 확인 및 설치
-          const vsPaths = [
-            'C:/Program Files/Microsoft Visual Studio/2022/BuildTools',
-            'C:/Program Files/Microsoft Visual Studio/2022/Community',
-            'C:/BuildTools',
-          ];
-          const hasVS = await Promise.all(vsPaths.map(p => Bun.file(p + '/VC/Tools/MSVC').exists()))
-            .then(r => r.some(Boolean));
-
-          if (!hasVS) {
+          if (!hasVsBuildTools()) {
             log('\n=== 1/2: Visual Studio Build Tools 설치 ===');
             log('다운로드 중... (4.5MB)');
             const vsInstaller = `${tmpDir}/vs_BuildTools.exe`;
