@@ -1292,6 +1292,7 @@ const server = Bun.serve({
           'C:/Program Files/Microsoft Visual Studio/2022/Community',
           'C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools',
           'C:/Program Files (x86)/Microsoft Visual Studio/2019/BuildTools',
+          'C:/BuildTools',
         ];
         const hasVS = await Promise.all(vsPaths.map(p => Bun.file(p + '/VC/Tools/MSVC').exists()))
           .then(results => results.some(Boolean));

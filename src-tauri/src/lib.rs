@@ -309,8 +309,6 @@ fn execute_command(
     }
     println!("[ExecuteCommand] PATH: {}", new_path);
 
-    use std::os::unix::process::CommandExt;
-
     let mut cmd = Command::new("bash");
     if is_file_path {
         cmd.arg(&command_path);
@@ -323,13 +321,17 @@ fn execute_command(
         .env("PATH", &new_path)
         .env("HOME", &home);
 
-    // 새로운 프로세스 그룹으로 실행 (백그라운드 데몬화)
-    unsafe {
-        cmd.pre_exec(|| {
-            // 새로운 세션 리더가 되어 부모와 독립적으로 실행
-            libc::setsid();
-            Ok(())
-        });
+    // 새로운 프로세스 그룹으로 실행 (백그라운드 데몬화) — Unix 전용
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                // 새로운 세션 리더가 되어 부모와 독립적으로 실행
+                libc::setsid();
+                Ok(())
+            });
+        }
     }
 
     let child = cmd.spawn()
@@ -632,8 +634,6 @@ fn force_restart_command(
     }
     println!("[ForceRestart] PATH: {}", new_path);
 
-    use std::os::unix::process::CommandExt;
-
     let mut cmd = Command::new("bash");
     if is_file_path {
         cmd.arg(&command_path);
@@ -646,13 +646,17 @@ fn force_restart_command(
         .env("PATH", &new_path)
         .env("HOME", &home);
 
-    // 새로운 프로세스 그룹으로 실행 (백그라운드 데몬화)
-    unsafe {
-        cmd.pre_exec(|| {
-            // 새로운 세션 리더가 되어 부모와 독립적으로 실행
-            libc::setsid();
-            Ok(())
-        });
+    // 새로운 프로세스 그룹으로 실행 (백그라운드 데몬화) — Unix 전용
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                // 새로운 세션 리더가 되어 부모와 독립적으로 실행
+                libc::setsid();
+                Ok(())
+            });
+        }
     }
 
     let child = cmd.spawn()

@@ -218,8 +218,9 @@ CREATE INDEX IF NOT EXISTS idx_ports_device_id ON ports(device_id);
 - **앱 빌드 (macOS)**: .app 번들 생성 (Applications 폴더 설치용)
 - **DMG 빌드 (macOS)**: 완전 자동화된 macOS 배포 패키지 생성
 - **Windows 빌드**: NSIS .exe 설치 파일 로컬 빌드 (`bun run tauri:build:win`)
-  - 결과물: `src-tauri/target/release/bundle/nsis/*.exe`
+  - 결과물: `%USERPROFILE%\cargo-targets\portmanager\release\bundle\nsis\*.exe`
   - GitHub Actions 불필요 — Windows 머신에서 직접 실행
+  - **⚠️ CARGO_TARGET_DIR 고정 이유**: 프로젝트가 `C:\Windows\System32\` 경로에 있으면 makensis.exe가 해당 경로 파일 읽기를 OS가 차단(os error 2/5). `build-win.ts`가 target dir을 홈 디렉터리로 자동 리다이렉트하여 NSIS 번들링 성공시킴.
 - **자동 버전 관리**: 빌드 시 날짜 기반 버전 자동 업데이트 (YYYY.MM.DD 형식)
   - 예: `포트관리기_2025.12.10_aarch64.dmg`
   - `bun run tauri:build` 또는 `bun run tauri:build:dmg` 실행 시 자동 적용
@@ -268,7 +269,7 @@ bun run tauri:build
 # DMG 빌드 (배포용) — update-version → bun run build → tauri build --bundles dmg → fix-dmg
 bun run tauri:build:dmg
 
-# Windows 빌드 (.exe NSIS) — update-version → bun run build → tauri build --bundles nsis
+# Windows 빌드 (.exe NSIS) — build-win.ts가 CARGO_TARGET_DIR을 ~/cargo-targets/portmanager로 고정
 bun run tauri:build:win
 
 # macOS 빌드 결과물 위치 (iCloud 충돌 방지 — custom target dir)
@@ -276,7 +277,7 @@ bun run tauri:build:win
 # DMG: ~/cargo-targets/portmanager/release/bundle/dmg/포트관리기_YYYY.M.D_aarch64.dmg
 
 # Windows 빌드 결과물 위치
-# .exe: src-tauri/target/release/bundle/nsis/*.exe
+# .exe: %USERPROFILE%\cargo-targets\portmanager\release\bundle\nsis\*.exe
 
 # 앱 내에서 "DMG 출시하기" 버튼으로 Desktop에 자동 복사 가능
 ```
