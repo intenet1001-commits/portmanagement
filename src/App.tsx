@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
@@ -739,6 +739,49 @@ const getPortalCredentials = async (): Promise<{ supabaseUrl?: string; supabaseA
   return {};
 };
 
+function MemoAccordionItem({ portId, memo, onSave }: {
+  portId: string;
+  memo?: { content: string; updatedAt: string };
+  onSave: (portId: string, content: string) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [draft, setDraft] = React.useState(memo?.content ?? '');
+  React.useEffect(() => { setDraft(memo?.content ?? ''); }, [memo?.content]);
+  return (
+    <div className="border-t border-zinc-800/60 mt-2" onClick={e => e.stopPropagation()}>
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
+        className="flex items-center gap-1.5 w-full px-1 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+      >
+        <StickyNote className="w-3 h-3" />
+        <span>메모</span>
+        {memo?.updatedAt && <span className="text-zinc-600 text-[10px] ml-1">{memo.updatedAt}</span>}
+        {open ? <ChevronUp className="w-3 h-3 ml-auto" /> : <ChevronDown className="w-3 h-3 ml-auto" />}
+      </button>
+      {open && (
+        <div className="px-1 pb-2">
+          <textarea
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onClick={e => e.stopPropagation()}
+            onMouseDown={e => e.stopPropagation()}
+            rows={3}
+            placeholder="이 포트에 대한 메모를 입력하세요..."
+            className="w-full px-2 py-1.5 bg-zinc-900 border border-zinc-700/60 rounded-lg text-xs text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 resize-y"
+          />
+          <div className="flex items-center justify-between mt-1">
+            <span className="text-[10px] text-zinc-600">{memo?.updatedAt ? `수정: ${memo.updatedAt}` : '저장된 메모 없음'}</span>
+            <button
+              onClick={e => { e.stopPropagation(); onSave(portId, draft); }}
+              className="px-2.5 py-1 bg-blue-600/80 hover:bg-blue-600 text-white text-[10px] rounded-lg transition-colors"
+            >저장</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -760,6 +803,9 @@ function App() {
   );
   const [openPortalSettings, setOpenPortalSettings] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const [showGuideModal, setShowGuideModal] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [memos, setMemos] = useState<Record<string, { content: string; updatedAt: string }>>({});
   const [sortBy, setSortBy] = useState<SortType>(
     () => (localStorage.getItem('portmanager-sortBy') as SortType) || 'recent'
   );
@@ -1150,7 +1196,8 @@ function App() {
         const isCurrentPlatformPath = (port: PortInfo) => {
           const paths = [port.folderPath, port.commandPath].filter(Boolean) as string[];
           if (paths.length === 0) return true;
-          if (process.platform === 'win32') return paths.every(p => !isMacPath(p));
+          const isWin = (typeof process !== 'undefined' && process.platform === 'win32') || /Win/.test(navigator.platform ?? '');
+          if (isWin) return paths.every(p => !isMacPath(p));
           return paths.every(p => !isWinPath(p));
         };
         const updatedData = data
@@ -1207,6 +1254,12 @@ function App() {
                 const merged = mergePorts(updatedData, remoteRows);
                 setPorts(merged);
                 await API.savePorts(merged);
+                // 메모 복원
+                const pulledMemos: Record<string, { content: string; updatedAt: string }> = {};
+                remoteData.forEach((row: any) => {
+                  if (row.memo != null) pulledMemos[row.id] = { content: row.memo, updatedAt: row.memo_updated_at ?? '' };
+                });
+                if (Object.keys(pulledMemos).length > 0) setMemos(prev => ({ ...prev, ...pulledMemos }));
               }
 
               hasInitiallyLoaded.current = true; // Fix P2c: set after pull completes
@@ -1344,6 +1397,8 @@ function App() {
           github_url: p.githubUrl ?? null,
           device_id: deviceId,
           device_name: deviceNameVal,
+          memo: memos[p.id]?.content ?? null,
+          memo_updated_at: memos[p.id]?.updatedAt ?? null,
         }));
         let upsertErr = (await supabase.from('ports').upsert(rows, { onConflict: 'id' })).error;
         if (upsertErr?.message?.includes('device_id') || upsertErr?.message?.includes('device_name')) {
@@ -1470,7 +1525,20 @@ function App() {
   };
 
   const deletePort = (id: string) => {
-    setPorts(ports.filter(p => p.id !== id));
+    setDeleteConfirmId(id);
+  };
+
+  const handleConfirmDelete = (id: string) => {
+    setPorts(prev => prev.filter(p => p.id !== id));
+    setMemos(prev => { const next = { ...prev }; delete next[id]; return next; });
+    setDeleteConfirmId(null);
+  };
+
+  const handleSaveMemo = (portId: string, content: string) => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const updatedAt = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    setMemos(prev => ({ ...prev, [portId]: { content, updatedAt } }));
   };
 
   const startEdit = (item: PortInfo) => {
@@ -1779,6 +1847,13 @@ function App() {
       setPorts(merged);
       await API.savePorts(merged);
 
+      // 메모 복원
+      const pulledMemos: Record<string, { content: string; updatedAt: string }> = {};
+      (data ?? []).forEach((row: any) => {
+        if (row.memo != null) pulledMemos[row.id] = { content: row.memo, updatedAt: row.memo_updated_at ?? '' };
+      });
+      if (Object.keys(pulledMemos).length > 0) setMemos(prev => ({ ...prev, ...pulledMemos }));
+
       let rootsMsg = '';
       // 다른 기기 Pull 시 작업루트는 건드리지 않음 (경로가 기기마다 다름)
       if (pullDeviceId && !isOtherDevice) {
@@ -1858,6 +1933,8 @@ function App() {
         favorite: p.favorite ?? false,
         device_id: deviceId,
         device_name: deviceNameVal,
+        memo: memos[p.id]?.content ?? null,
+        memo_updated_at: memos[p.id]?.updatedAt ?? null,
       }));
       let { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error?.message?.includes('device_id') || error?.message?.includes('device_name')) {
@@ -3154,6 +3231,16 @@ function App() {
               {logCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
               <span>{logCopied ? '복사됨' : '로그'}</span>
             </button>
+
+            {/* 사용자 가이드 버튼 */}
+            <button
+              onClick={() => setShowGuideModal(true)}
+              title="사용자 가이드"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-xl border bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 border-zinc-800 hover:border-zinc-600 transition-all"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>가이드</span>
+            </button>
           </div>
         </div>
 
@@ -3238,6 +3325,202 @@ function App() {
         )}
 
         {/* 설정 마법사 오버레이 */}
+        {/* 사용자 가이드 모달 */}
+        {showGuideModal && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[200] flex items-center justify-center p-4" onClick={() => setShowGuideModal(false)}>
+            <div className="bg-[#0f0f11] border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+              {/* 헤더 */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
+                <div className="flex items-center gap-2">
+                  <BookOpen className="w-5 h-5 text-indigo-400" />
+                  <h2 className="text-base font-semibold text-white">포트 관리기 사용자 가이드</h2>
+                </div>
+                <button onClick={() => setShowGuideModal(false)} className="text-zinc-500 hover:text-white transition-colors">
+                  <XIcon className="w-5 h-5" />
+                </button>
+              </div>
+              {/* 본문 */}
+              <div className="overflow-y-auto p-6 space-y-6 text-sm text-zinc-300">
+                {/* 앱 소개 */}
+                <section>
+                  <p className="text-zinc-400 text-xs mb-3">처음 쓰는 분도 5분이면 핵심 기능을 모두 쓸 수 있습니다.</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-[#18181b] border border-zinc-800 rounded-xl p-4">
+                      <div className="text-indigo-400 font-medium mb-1">📁 프로젝트 관리</div>
+                      <div className="text-zinc-400 text-xs">.command 파일로 개발 서버를 한 클릭으로 실행/중지/재시작</div>
+                    </div>
+                    <div className="bg-[#18181b] border border-zinc-800 rounded-xl p-4">
+                      <div className="text-indigo-400 font-medium mb-1">🌐 포털</div>
+                      <div className="text-zinc-400 text-xs">자주 쓰는 사이트·폴더를 카테고리별 북마크로 관리</div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* 5분 퀵스타트 */}
+                <section>
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2"><span className="bg-indigo-500/20 text-indigo-300 text-xs px-2 py-0.5 rounded-full">⚡ 퀵스타트</span></h3>
+                  <div className="space-y-2">
+                    {[
+                      ['Step 1', '브라우저: localhost:9000 접속 또는 포트관리기.app 실행'],
+                      ['Step 2', 'Finder에서 .command 파일을 앱 창으로 끌어다 놓기 → 포트·폴더 자동 감지'],
+                      ['Step 3', '프로젝트 카드의 ▶ 실행 버튼 클릭 → 우측 상단 초록 Toast 확인'],
+                      ['Step 4', '카드의 🌐 열기 버튼 → Chrome에서 localhost:포트 자동 오픈'],
+                    ].map(([step, desc]) => (
+                      <div key={step} className="flex gap-3 items-start">
+                        <span className="bg-zinc-800 text-zinc-400 text-xs px-2 py-0.5 rounded shrink-0 mt-0.5">{step}</span>
+                        <span className="text-zinc-300 text-xs">{desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {/* 프로젝트 카드 버튼 */}
+                <section>
+                  <h3 className="text-white font-semibold mb-3">프로젝트 카드 버튼</h3>
+                  <div className="bg-[#18181b] border border-zinc-800 rounded-xl overflow-hidden">
+                    {[
+                      ['▶ 실행', '.command 파일 실행, 로그 자동 저장'],
+                      ['⏹ 중지', 'SIGTERM → (응답 없으면) SIGKILL 자동 전환'],
+                      ['⚠ 강제 재실행', '모든 PID 즉시 종료 → 500ms 대기 → 재실행'],
+                      ['🌐 열기', 'Chrome에서 localhost:포트 오픈'],
+                      ['📁 폴더', 'Finder에서 프로젝트 폴더 열기'],
+                      ['📋 로그', 'Terminal에서 tail -f로 실시간 로그 확인'],
+                    ].map(([btn, desc], i) => (
+                      <div key={btn} className={`flex gap-3 px-4 py-2.5 text-xs ${i % 2 === 0 ? '' : 'bg-zinc-900/40'}`}>
+                        <span className="text-indigo-300 font-medium w-28 shrink-0">{btn}</span>
+                        <span className="text-zinc-400">{desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {/* 포털 탭 */}
+                <section>
+                  <h3 className="text-white font-semibold mb-3">포털 탭</h3>
+                  <div className="space-y-2 text-xs text-zinc-400">
+                    <p>우측 하단 <span className="text-white">+</span> 버튼 → URL 또는 폴더 경로 입력</p>
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <div className="bg-[#18181b] border border-zinc-800 rounded-lg p-3">
+                        <div className="text-zinc-300 font-medium mb-1">📌 핀 고정</div>
+                        <div>카드 hover → 핀 아이콘 → 최상단 고정</div>
+                      </div>
+                      <div className="bg-[#18181b] border border-zinc-800 rounded-lg p-3">
+                        <div className="text-zinc-300 font-medium mb-1">🔄 기기 동기화</div>
+                        <div>URL·카테고리는 전 기기 공유, 폴더는 기기별 관리</div>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                {/* 숨겨진 기능 */}
+                <section>
+                  <h3 className="text-white font-semibold mb-3">💎 이런 기능이 있었어? TOP 6</h3>
+                  <div className="space-y-1.5">
+                    {[
+                      ['Cmd+F', '프로젝트 검색창 즉시 포커스'],
+                      ['✨ AI 버튼', '전체 프로젝트 이름·카테고리 한 번에 자동 생성'],
+                      ['⚠ 강제 재실행', '좀비 프로세스 한 방에 정리'],
+                      ['📋 로그 버튼', 'Terminal 자동 오픈 + tail -f 실시간 확인'],
+                      ['JSON 내보내기', 'Supabase 없이 백업/복원 가능'],
+                      ['단말 조회', '설정 → 고급 설정 → 다른 맥의 포트 목록 Pull'],
+                    ].map(([feat, desc]) => (
+                      <div key={feat} className="flex gap-2 items-center text-xs">
+                        <span className="text-amber-400 font-medium w-28 shrink-0">{feat}</span>
+                        <span className="text-zinc-400">{desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {/* 북마크 웹버전 */}
+                <section>
+                  <h3 className="text-white font-semibold mb-3">🌍 북마크 웹버전 (어디서나 접속)</h3>
+                  <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-4 mb-3 text-xs text-zinc-300">
+                    포털 탭과 동일한 북마크 기능을 <span className="text-indigo-300 font-medium">Vercel 배포 URL</span>로 제공합니다.<br />
+                    회사 PC, 스마트폰, 어디서나 브라우저 하나로 내 북마크에 접근할 수 있습니다.
+                  </div>
+                  <div className="space-y-1.5 text-xs mb-3">
+                    {[
+                      ['비밀번호 보호', '배포 시 환경변수로 설정 — 타인 접근 차단'],
+                      ['기기 선택', '첫 접속 시 Supabase 등록 기기 목록에서 선택'],
+                      ['자동 Pull', '접속하면 선택 기기의 북마크를 즉시 불러옴'],
+                      ['모바일 최적화', '스마트폰에서도 편하게 사용 가능'],
+                    ].map(([feat, desc]) => (
+                      <div key={feat} className="flex gap-2 items-start">
+                        <span className="text-indigo-300 font-medium w-24 shrink-0">{feat}</span>
+                        <span className="text-zinc-400">{desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="bg-[#18181b] border border-zinc-800 rounded-lg p-3 text-xs">
+                    <div className="text-zinc-400 mb-1">포털 탭 vs 북마크 웹버전</div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-zinc-500">
+                      <span className="text-zinc-300">포털 탭</span><span className="text-zinc-300">웹버전</span>
+                      <span>localhost:9000</span><span>Vercel URL</span>
+                      <span>프로젝트 관리 함께</span><span>북마크만</span>
+                      <span>인터넷 불필요</span><span>어디서나 접속</span>
+                    </div>
+                  </div>
+                </section>
+
+                {/* 트러블슈팅 */}
+                <section>
+                  <h3 className="text-white font-semibold mb-3">🔧 자주 겪는 문제</h3>
+                  <div className="space-y-2 text-xs">
+                    {[
+                      ['서버가 안 켜져요', '카드의 ⚠ 강제 재실행 클릭'],
+                      ['Push/Pull이 안 눌려요', '⚙ 세팅에서 Supabase URL + anon key 확인'],
+                      ['포트 번호가 안 잡혀요', '.command 파일 안에 PORT=3000 또는 localhost:3000 포함 필요'],
+                      ['웹버전에 내 기기가 없어요', '세팅 → 기기 이름 확인 후 Device ID 직접 입력'],
+                    ].map(([q, a]) => (
+                      <div key={q} className="bg-[#18181b] border border-zinc-800 rounded-lg p-3">
+                        <div className="text-zinc-300 font-medium mb-0.5">Q. {q}</div>
+                        <div className="text-zinc-400">→ {a}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                {/* 단축키 */}
+                <section>
+                  <h3 className="text-white font-semibold mb-2">⌨️ 단축키</h3>
+                  <div className="flex gap-4 text-xs text-zinc-400">
+                    <span><kbd className="bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded text-xs">Cmd+F</kbd> 검색창 포커스</span>
+                    <span><kbd className="bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded text-xs">Esc</kbd> 검색창 닫기</span>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 삭제 확인 모달 */}
+        {deleteConfirmId && (() => {
+          const target = ports.find(p => p.id === deleteConfirmId);
+          return (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[300] flex items-center justify-center p-4" onClick={() => setDeleteConfirmId(null)}>
+              <div className="bg-[#18181b] border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-9 h-9 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center shrink-0">
+                    <Trash2 className="w-4 h-4 text-red-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-white">포트 삭제</h3>
+                    <p className="text-xs text-zinc-500 mt-0.5">이 작업은 되돌릴 수 없습니다</p>
+                  </div>
+                </div>
+                <p className="text-sm text-zinc-300 mb-5">
+                  <span className="text-white font-medium">"{target?.name ?? deleteConfirmId}"</span> 포트를 삭제하시겠습니까?
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-xl border border-zinc-700 transition-all">취소</button>
+                  <button onClick={() => handleConfirmDelete(deleteConfirmId)} className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded-xl border border-red-500 transition-all">삭제</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
         {showSetupWizard && (
           <SetupWizard
             onComplete={async ({ supabaseUrl, supabaseAnonKey, deviceName }) => {
@@ -4125,6 +4408,9 @@ function App() {
                     </div>
                   )}
                   {/* Worktree 패널 */}
+                  {/* 메모 아코디언 */}
+                  <MemoAccordionItem portId={item.id} memo={memos[item.id]} onSave={handleSaveMemo} />
+
                   {expandedWorktreeIds.has(item.id) && item.folderPath && (
                     <div className="mt-2 p-3 bg-zinc-900/60 rounded-lg border border-zinc-700/50">
                       <div className="flex items-center justify-between mb-2">
