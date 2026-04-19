@@ -37,17 +37,22 @@ function findWslDistro(): string | null {
   return distros[0] ?? null;
 }
 
-/** WSL tmux bash 명령 문자열 생성 (wsl -- bash -c 없이 bash 부분만) */
+/** WSL tmux bash 명령 문자열 생성 (외부에서 bash -lic로 실행됨 — .bashrc/.profile 모두 로드) */
 function buildWslTmuxBashCmd(sessionName: string, folderPath: string | null, worktreePath: string | null, fresh: boolean, bypass: boolean): string {
   const rawPath = worktreePath?.split(',')[0]?.trim() || folderPath;
   const wslPath = rawPath ? winToWslPath(rawPath) : null;
   const cdPart = wslPath ? `cd '${escapeSq(wslPath)}' && ` : '';
   const sess = escapeSq(bypass ? `${sessionName}-bypass` : sessionName);
   const claudeArgs = bypass ? 'claude --dangerously-skip-permissions' : 'claude';
+  // ⚠️ 세미콜론(;) 금지 — wt.exe가 subcommand 구분자로 취급해서 명령줄이 쪼개짐
+  // ⚠️ 쌍따옴표(") 금지 — cmd.exe가 \"를 몰라서 명령이 중간에 끊김
+  // Safety net: claude 실패 시 tmux 안에서 login shell로 fallback → 에러 메시지 확인 가능
+  const inner = `${claudeArgs} || bash -l`;
   if (fresh) {
-    return `${cdPart}tmux kill-session -t '${sess}' 2>/dev/null; tmux new-session -s '${sess}' '${claudeArgs}'`;
+    // kill-session이 실패해도(세션 없음) 계속 진행하도록 || : 로 감쌈 (세미콜론 대체)
+    return `${cdPart}(tmux kill-session -t '${sess}' 2>/dev/null || :) && tmux new-session -s '${sess}' '${inner}'`;
   }
-  return `${cdPart}tmux new-session -A -s '${sess}' '${claudeArgs}'`;
+  return `${cdPart}tmux new-session -A -s '${sess}' '${inner}'`;
 }
 
 /** WSL tmux 세션 열기 (Windows Terminal 우선, 없으면 cmd 폴백) */
@@ -55,10 +60,13 @@ function spawnWslTmux(bashCmd: string): void {
   const distro = findWslDistro();
   if (!distro) throw new Error('WSL Ubuntu distro를 찾을 수 없습니다.');
   const hasWt = Bun.spawnSync(['where', 'wt.exe'], { stdout: 'pipe', stderr: 'pipe' }).exitCode === 0;
+  // bash -lic (login+interactive) → .profile + .bashrc 모두 로드
+  // → nvm, ~/.npm-global/bin 등 사용자 PATH가 완전히 설정되어 claude 커맨드 찾기 성공
   if (hasWt) {
-    spawn({ cmd: ['wt.exe', 'wsl', '-d', distro, '--', 'bash', '-c', bashCmd], stdout: 'inherit', stderr: 'inherit' });
+    // wt.exe는 Windows App 앨리어스라 직접 spawn 불가 → cmd /c start로 우회
+    spawn({ cmd: ['cmd.exe', '/c', 'start', 'wt', 'wsl', '-d', distro, '--', 'bash', '-lic', bashCmd], stdout: 'inherit', stderr: 'inherit' });
   } else {
-    spawn({ cmd: ['cmd.exe', '/c', 'start', 'wsl', '-d', distro, '--', 'bash', '-c', bashCmd], stdout: 'inherit', stderr: 'inherit' });
+    spawn({ cmd: ['cmd.exe', '/c', 'start', 'wsl', '-d', distro, '--', 'bash', '-lic', bashCmd], stdout: 'inherit', stderr: 'inherit' });
   }
 }
 
@@ -307,18 +315,18 @@ const server = Bun.serve({
           }
         }
 
-        // 폴더 경로 추출
+        // 폴더 경로 추출 (Windows \ 및 POSIX / 모두 지원)
         let folderPath = null;
-        const lastSlashIndex = filePath.lastIndexOf('/');
-        if (lastSlashIndex !== -1) {
-          folderPath = filePath.substring(0, lastSlashIndex);
+        const lastSepIndex = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+        if (lastSepIndex !== -1) {
+          folderPath = filePath.substring(0, lastSepIndex);
         }
 
-        // 프로젝트 이름 추출
+        // 프로젝트 이름 추출 (.command/.sh/.bat/.cmd 제거)
         let projectName = null;
-        if (lastSlashIndex !== -1) {
-          const fileName = filePath.substring(lastSlashIndex + 1);
-          projectName = fileName.replace('.command', '').replace('.sh', '');
+        if (lastSepIndex !== -1) {
+          const fileName = filePath.substring(lastSepIndex + 1);
+          projectName = fileName.replace(/\.(command|sh|bat|cmd)$/i, '');
         }
 
         console.log(`[DetectPort] File: ${filePath}, Port: ${detectedPort}, Folder: ${folderPath}, Name: ${projectName}`);
@@ -885,9 +893,10 @@ const server = Bun.serve({
     function openTerminalWithCmd(shellCmd: string, folderPath: string | null, title: string): void {
       if (IS_WIN) {
         // Windows Terminal 우선, 없으면 cmd 폴백
+        // wt.exe는 Windows App 앨리어스라 직접 spawn 불가 → cmd /c start wt로 우회
         const wtArgs = folderPath
-          ? ['wt.exe', '-d', folderPath, '--title', title, '--', 'cmd', '/k', shellCmd]
-          : ['wt.exe', '--title', title, '--', 'cmd', '/k', shellCmd];
+          ? ['cmd.exe', '/c', 'start', 'wt', '-d', folderPath, '--title', title, '--', 'cmd', '/k', shellCmd]
+          : ['cmd.exe', '/c', 'start', 'wt', '--title', title, '--', 'cmd', '/k', shellCmd];
         const wt = Bun.spawnSync(['where', 'wt.exe'], { stdout: 'pipe', stderr: 'pipe' });
         if (wt.exitCode === 0) {
           spawn({ cmd: wtArgs, stdout: 'inherit', stderr: 'inherit' });

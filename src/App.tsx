@@ -1606,13 +1606,12 @@ function App() {
         showToast(`포트 ${portNum}은 이미 "${duplicatePort.name}"에서 사용 중입니다`, 'error');
         return;
       }
-      // commandPath가 있으면 자동으로 폴더 경로 추출
+      // commandPath가 있으면 자동으로 폴더 경로 추출 (Windows \ + POSIX / 모두 지원)
       let autoFolderPath = folderPath;
       if (commandPath && !folderPath) {
-        // .command 파일의 디렉토리 경로 추출
-        const lastSlashIndex = commandPath.lastIndexOf('/');
-        if (lastSlashIndex !== -1) {
-          autoFolderPath = commandPath.substring(0, lastSlashIndex);
+        const lastSepIndex = Math.max(commandPath.lastIndexOf('/'), commandPath.lastIndexOf('\\'));
+        if (lastSepIndex !== -1) {
+          autoFolderPath = commandPath.substring(0, lastSepIndex);
         }
       }
 
@@ -2554,13 +2553,14 @@ function App() {
         // Tauri mode: native file picker → absolute path directly
         const filePath = await openDialog({
           multiple: false,
-          filters: [{ name: 'Command Files', extensions: ['command', 'sh'] }],
+          filters: [{ name: 'Command Files', extensions: ['command', 'sh', 'bat', 'cmd'] }],
         });
         if (!filePath || typeof filePath !== 'string') return;
 
-        const fileName = filePath.split('/').pop() || '';
-        const projectName = fileName.replace('.command', '').replace('.sh', '');
-        const folderPath = filePath.substring(0, filePath.lastIndexOf('/'));
+        const lastSepIndex = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+        const fileName = lastSepIndex !== -1 ? filePath.substring(lastSepIndex + 1) : filePath;
+        const projectName = fileName.replace(/\.(command|sh|bat|cmd)$/i, '');
+        const folderPath = lastSepIndex !== -1 ? filePath.substring(0, lastSepIndex) : '';
 
         // Detect port via Rust command
         let detectedPort: number | null = null;
@@ -2584,7 +2584,7 @@ function App() {
         // Web mode: FileReader for port detection only (no absolute path available)
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.command,.sh';
+        input.accept = '.command,.sh,.bat,.cmd';
         input.onchange = async (e) => {
           const file = (e.target as HTMLInputElement).files?.[0];
           if (!file) return;
@@ -2602,7 +2602,7 @@ function App() {
                 if (portMatch) detectedPort = parseInt(portMatch[1]);
               }
 
-              const projectName = file.name.replace('.command', '').replace('.sh', '');
+              const projectName = file.name.replace(/\.(command|sh|bat|cmd)$/i, '');
               setName(projectName);
               if (detectedPort) setPort(detectedPort.toString());
 
