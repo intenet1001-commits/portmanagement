@@ -780,19 +780,35 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   }
 
   async function saveItem() {
-    if (!form.name.trim()) return;
-    if (form.type === 'web' && !form.url.trim()) return;
-    if (form.type === 'folder' && !form.path.trim()) return;
+    if (!form.name.trim()) {
+      showToast('이름을 입력하세요', 'error');
+      return;
+    }
+    let finalUrl = form.url.trim();
+    if (form.type === 'web') {
+      if (!finalUrl) {
+        showToast('URL을 입력하세요', 'error');
+        return;
+      }
+      if (!/^https?:\/\//i.test(finalUrl)) {
+        finalUrl = 'https://' + finalUrl;
+      }
+    }
+    if (form.type === 'folder' && !form.path.trim()) {
+      showToast('폴더 경로를 입력하세요', 'error');
+      return;
+    }
     if (form.type === 'folder' && !form.path.startsWith('/')) {
       showToast('절대 경로가 필요합니다 (예: /Users/gwanli/...)', 'error');
       return;
     }
+    const resolvedCategory = form.category || data.categories[0]?.id || '';
 
     if (editingItem) {
       const next: PortalData = {
         ...data,
         items: data.items.map(i => i.id === editingItem.id
-          ? { ...i, name: form.name, type: form.type, url: form.url || undefined, path: form.path || undefined, category: form.category, description: form.description || undefined, pinned: form.pinned }
+          ? { ...i, name: form.name, type: form.type, url: finalUrl || undefined, path: form.path || undefined, category: resolvedCategory, description: form.description || undefined, pinned: form.pinned }
           : i),
       };
       await persist(next);
@@ -802,9 +818,9 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         name: form.name,
         type: form.type,
-        url: form.type === 'web' ? form.url : undefined,
+        url: form.type === 'web' ? finalUrl : undefined,
         path: form.type === 'folder' ? form.path : undefined,
-        category: form.category,
+        category: resolvedCategory,
         description: form.description || undefined,
         pinned: form.pinned,
         visitCount: 0,
@@ -1368,9 +1384,9 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       {/* ── Add/Edit Item Modal ───────────────────────────────────────────────── */}
       {showItemModal && (
         <Modal title={editingItem ? '항목 수정' : '항목 추가'} onClose={() => setShowItemModal(false)} onConfirm={saveItem} confirmLabel={editingItem ? '저장' : '추가'}>
-          {/* Type toggle */}
+          {/* Type toggle — hide folder on deployed web (no local filesystem) */}
           <div className="flex rounded-lg overflow-hidden border border-zinc-700 mb-3">
-            {(['web', 'folder'] as const).map(t => (
+            {(['web', 'folder'] as const).filter(t => t === 'web' || !isDeployedWeb()).map(t => (
               <button
                 key={t}
                 onClick={() => setForm(f => ({ ...f, type: t }))}
@@ -1396,7 +1412,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             <>
               <label className="block text-xs text-zinc-400 mb-1">URL *</label>
               <input
-                type="url"
+                type="text"
                 value={form.url}
                 onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
                 className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
