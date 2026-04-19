@@ -69,8 +69,12 @@ const GITHUB_OWNER = 'intenet1001-commits';
 const GITHUB_REPO = 'portmanagement';
 const GITHUB_WORKFLOW = 'build-windows.yml';
 
-// 포트 데이터 파일 - 앱과 동일한 위치 사용
-const APP_DATA_DIR = join(homedir(), "Library/Application Support/com.portmanager.portmanager");
+// 포트 데이터 파일 - Tauri와 동일한 위치 사용 (플랫폼별)
+// macOS: ~/Library/Application Support/com.portmanager.portmanager
+// Windows: %APPDATA%\com.portmanager.portmanager
+const APP_DATA_DIR = process.platform === 'win32'
+  ? join(process.env.APPDATA || join(homedir(), "AppData", "Roaming"), "com.portmanager.portmanager")
+  : join(homedir(), "Library/Application Support/com.portmanager.portmanager");
 const PORTS_DATA_FILE = join(APP_DATA_DIR, "ports.json");
 const WORKSPACE_ROOTS_FILE = join(APP_DATA_DIR, "workspace-roots.json");
 const PORTAL_DATA_FILE = join(APP_DATA_DIR, "portal.json");
