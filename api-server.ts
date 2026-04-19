@@ -18,6 +18,33 @@ function winToWslPath(winPath: string): string {
   return winPath.replace(/\\/g, '/');
 }
 
+/** docker-desktop 제외한 Ubuntu 계열 WSL distro 이름 반환 */
+function findWslDistro(): string | null {
+  const candidates = ['Ubuntu', 'Ubuntu-24.04', 'Ubuntu-22.04', 'Ubuntu-20.04', 'Debian', 'kali-linux'];
+  for (const name of candidates) {
+    const r = Bun.spawnSync(['wsl', '-d', name, '--', 'bash', '-c', 'echo ok'], { stdout: 'pipe', stderr: 'pipe' });
+    if (r.exitCode === 0) return name;
+  }
+  // fallback: wsl --list --quiet
+  const list = Bun.spawnSync(['wsl', '--list', '--quiet'], { stdout: 'pipe', stderr: 'pipe' });
+  const raw = list.stdout instanceof Uint8Array ? list.stdout : new Uint8Array(list.stdout as ArrayBufferLike);
+  // UTF-16LE BOM 처리
+  let text: string;
+  if (raw[0] === 0xff && raw[1] === 0xfe) {
+    const u16 = new Uint16Array(raw.buffer, 2);
+    text = String.fromCharCode(...u16);
+  } else {
+    text = new TextDecoder().decode(raw);
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const name = line.trim().replace(/\0/g, '').replace(/^\*\s*/, '');
+    if (!name || name.toLowerCase().includes('docker')) continue;
+    const r = Bun.spawnSync(['wsl', '-d', name, '--', 'bash', '-c', 'echo ok'], { stdout: 'pipe', stderr: 'pipe' });
+    if (r.exitCode === 0) return name;
+  }
+  return null;
+}
+
 /** WSL tmux bash 명령 문자열 생성 (wsl -- bash -c 없이 bash 부분만) */
 function buildWslTmuxBashCmd(sessionName: string, folderPath: string | null, worktreePath: string | null, fresh: boolean, bypass: boolean): string {
   const rawPath = worktreePath?.split(',')[0]?.trim() || folderPath;
@@ -33,11 +60,13 @@ function buildWslTmuxBashCmd(sessionName: string, folderPath: string | null, wor
 
 /** WSL tmux 세션 열기 (Windows Terminal 우선, 없으면 cmd 폴백) */
 function spawnWslTmux(bashCmd: string): void {
+  const distro = findWslDistro();
+  if (!distro) throw new Error('WSL Ubuntu distro를 찾을 수 없습니다.');
   const hasWt = Bun.spawnSync(['where', 'wt.exe'], { stdout: 'pipe', stderr: 'pipe' }).exitCode === 0;
   if (hasWt) {
-    spawn({ cmd: ['wt.exe', 'wsl', '--', 'bash', '-c', bashCmd], stdout: 'inherit', stderr: 'inherit' });
+    spawn({ cmd: ['wt.exe', 'wsl', '-d', distro, '--', 'bash', '-c', bashCmd], stdout: 'inherit', stderr: 'inherit' });
   } else {
-    spawn({ cmd: ['cmd.exe', '/c', 'start', 'wsl', '--', 'bash', '-c', bashCmd], stdout: 'inherit', stderr: 'inherit' });
+    spawn({ cmd: ['cmd.exe', '/c', 'start', 'wsl', '-d', distro, '--', 'bash', '-c', bashCmd], stdout: 'inherit', stderr: 'inherit' });
   }
 }
 
@@ -933,14 +962,11 @@ const server = Bun.serve({
     if (url.pathname === "/api/check-wsl" && req.method === "GET") {
       if (!IS_WIN) return new Response(JSON.stringify({ status: 'ready' }), { headers });
       try {
-        // bash 유무로 진짜 Ubuntu 계열 distro 확인 (docker-desktop 등 미니멀 distro 걸러냄)
-        const bashCheck = Bun.spawnSync(['wsl', '--', 'bash', '-c', 'echo ok'], { stdout: 'pipe', stderr: 'pipe' });
-        if (bashCheck.exitCode !== 0) {
-          // wsl.exe 자체가 없으면 not_installed, 있지만 bash 없으면 no_distro
-          const wslExists = Bun.spawnSync(['where', 'wsl.exe'], { stdout: 'pipe', stderr: 'pipe' });
-          return new Response(JSON.stringify({ status: wslExists.exitCode === 0 ? 'no_distro' : 'not_installed' }), { headers });
-        }
-        const tmux = Bun.spawnSync(['wsl', '--', 'bash', '-c', 'which tmux'], { stdout: 'pipe', stderr: 'pipe' });
+        const wslExists = Bun.spawnSync(['where', 'wsl.exe'], { stdout: 'pipe', stderr: 'pipe' }).exitCode === 0;
+        if (!wslExists) return new Response(JSON.stringify({ status: 'not_installed' }), { headers });
+        const distro = findWslDistro();
+        if (!distro) return new Response(JSON.stringify({ status: 'no_distro' }), { headers });
+        const tmux = Bun.spawnSync(['wsl', '-d', distro, '--', 'bash', '-c', 'which tmux'], { stdout: 'pipe', stderr: 'pipe' });
         return new Response(JSON.stringify({ status: tmux.exitCode === 0 ? 'ready' : 'no_tmux' }), { headers });
       } catch {
         return new Response(JSON.stringify({ status: 'not_installed' }), { headers });
@@ -950,13 +976,14 @@ const server = Bun.serve({
     if (url.pathname === "/api/install-wsl-tmux" && req.method === "POST") {
       if (!IS_WIN) return new Response(JSON.stringify({ success: true }), { headers });
       try {
-        // root인 경우 sudo 불필요
-        const whoami = Bun.spawnSync(['wsl', '--', 'bash', '-c', 'whoami'], { stdout: 'pipe', stderr: 'pipe' });
+        const distro = findWslDistro();
+        if (!distro) return new Response(JSON.stringify({ success: false, error: 'Ubuntu WSL distro를 찾을 수 없습니다.' }), { status: 500, headers });
+        const whoami = Bun.spawnSync(['wsl', '-d', distro, '--', 'bash', '-c', 'whoami'], { stdout: 'pipe', stderr: 'pipe' });
         const isRoot = new TextDecoder().decode(whoami.stdout).trim() === 'root';
         const installCmd = isRoot
           ? 'apt-get update -qq && apt-get install -y tmux'
           : 'sudo apt-get update -qq && sudo apt-get install -y tmux';
-        const out = Bun.spawnSync(['wsl', '--', 'bash', '-c', installCmd], { stdout: 'pipe', stderr: 'pipe', timeout: 120000 });
+        const out = Bun.spawnSync(['wsl', '-d', distro, '--', 'bash', '-c', installCmd], { stdout: 'pipe', stderr: 'pipe', timeout: 120000 });
         if (out.exitCode === 0) return new Response(JSON.stringify({ success: true }), { headers });
         return new Response(JSON.stringify({ success: false, error: new TextDecoder().decode(out.stderr) }), { status: 500, headers });
       } catch (e: any) {
