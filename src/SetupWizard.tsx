@@ -784,7 +784,14 @@ function WindowsEnvWizard({ onBack }: { onBack: () => void }) {
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [installMsg, setInstallMsg] = useState('');
+  const [claudeStatus, setClaudeStatus] = useState<'checking' | 'installed' | 'missing' | 'unknown'>('checking');
+  const [tmuxStatus, setTmuxStatus] = useState<'checking' | 'installed' | 'missing' | 'unknown'>('checking');
   const totalSteps = 4;
+
+  useEffect(() => {
+    fetch('/api/check-claude').then(r => r.json()).then(d => setClaudeStatus(d.installed ? 'installed' : 'missing')).catch(() => setClaudeStatus('unknown'));
+    fetch('/api/check-tmux').then(r => r.json()).then(d => setTmuxStatus(d.installed ? 'installed' : 'missing')).catch(() => setTmuxStatus('unknown'));
+  }, []);
 
   async function checkWsl() {
     setChecking(true);
@@ -848,10 +855,21 @@ function WindowsEnvWizard({ onBack }: { onBack: () => void }) {
       title: 'Claude Code 설치 (WSL)',
       content: (
         <div className="space-y-4">
-          <p className="text-sm text-zinc-400">Ubuntu 터미널 또는 Windows Terminal에서 WSL을 열고 아래 명령을 실행하세요.</p>
-          <CmdBlock cmd="curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs" label="① Node.js 설치 (없는 경우)" />
-          <CmdBlock cmd="npm install -g @anthropic-ai/claude-code" label="② Claude Code 설치" />
-          <CmdBlock cmd="claude --version" label="③ 설치 확인" />
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-zinc-400">Ubuntu 터미널 또는 Windows Terminal에서 WSL을 열고 아래 명령을 실행하세요.</p>
+            <StatusBadge status={claudeStatus} />
+          </div>
+          {claudeStatus === 'installed' ? (
+            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-sm text-green-400">
+              ✅ Claude Code가 이미 설치되어 있습니다. 다음 단계로 넘어가세요.
+            </div>
+          ) : (
+            <>
+              <CmdBlock cmd="curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs" label="① Node.js 설치 (없는 경우)" />
+              <CmdBlock cmd="npm install -g @anthropic-ai/claude-code" label="② Claude Code 설치" />
+              <CmdBlock cmd="claude --version" label="③ 설치 확인" />
+            </>
+          )}
           <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
             💡 Claude Code는 WSL Ubuntu 안에 설치합니다. Windows 네이티브 설치는 지원하지 않습니다.
           </div>
@@ -862,14 +880,25 @@ function WindowsEnvWizard({ onBack }: { onBack: () => void }) {
       title: 'tmux 설치',
       content: (
         <div className="space-y-4">
-          <p className="text-sm text-zinc-400">멀티 에이전트 기능(tmux 버튼)을 쓰려면 WSL 안에 tmux가 필요합니다.</p>
-          <CmdBlock cmd="sudo apt-get install -y tmux" label="Ubuntu 터미널에서 실행" />
-          <CmdBlock cmd="tmux -V" label="설치 확인" />
-          {installMsg && <p className={`text-xs font-mono ${installMsg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>{installMsg}</p>}
-          <button onClick={installTmux} disabled={installing}
-            className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors disabled:opacity-50">
-            {installing ? '설치 중...' : '📦 앱에서 자동 설치 (api-server 실행 중인 경우)'}
-          </button>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-zinc-400">멀티 에이전트 기능(tmux 버튼)을 쓰려면 WSL 안에 tmux가 필요합니다.</p>
+            <StatusBadge status={tmuxStatus} />
+          </div>
+          {tmuxStatus === 'installed' ? (
+            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-sm text-green-400">
+              ✅ tmux가 이미 설치되어 있습니다. 다음 단계로 넘어가세요.
+            </div>
+          ) : (
+            <>
+              <CmdBlock cmd="sudo apt-get install -y tmux" label="Ubuntu 터미널에서 실행" />
+              <CmdBlock cmd="tmux -V" label="설치 확인" />
+              {installMsg && <p className={`text-xs font-mono ${installMsg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>{installMsg}</p>}
+              <button onClick={installTmux} disabled={installing}
+                className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors disabled:opacity-50">
+                {installing ? '설치 중...' : '📦 앱에서 자동 설치 (api-server 실행 중인 경우)'}
+              </button>
+            </>
+          )}
         </div>
       ),
     },
@@ -896,12 +925,12 @@ function WindowsEnvWizard({ onBack }: { onBack: () => void }) {
   ];
 
   return (
-    <div className="h-full flex flex-col p-8">
-      <button onClick={onBack} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-6 transition-colors w-fit">
+    <div className="h-full flex flex-col px-4 py-4 md:p-8">
+      <button onClick={onBack} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-4 md:mb-6 transition-colors w-fit">
         <ChevronRight className="w-3.5 h-3.5 rotate-180" /> 뒤로
       </button>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold text-white flex items-center gap-2">
+      <div className="flex items-center justify-between mb-4 md:mb-6">
+        <h2 className="text-lg md:text-xl font-bold text-white flex items-center gap-2">
           <Monitor className="w-5 h-5 text-blue-400" /> Windows 개발 환경 설정
         </h2>
         <StepDots total={totalSteps} current={step} />
@@ -910,7 +939,7 @@ function WindowsEnvWizard({ onBack }: { onBack: () => void }) {
         <h3 className="text-sm font-semibold text-zinc-300 mb-4">{step + 1}. {steps[step].title}</h3>
         {steps[step].content}
       </div>
-      <div className="flex gap-3 mt-6 pt-4 border-t border-zinc-800">
+      <div className="flex gap-3 mt-4 md:mt-6 pt-4 border-t border-zinc-800">
         {step > 0 && (
           <button onClick={() => setStep(s => s - 1)}
             className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white text-xs rounded-lg transition-colors">
@@ -930,9 +959,27 @@ function WindowsEnvWizard({ onBack }: { onBack: () => void }) {
 
 // ─── macOS 개발 환경 설정 마법사 ──────────────────────────────────────────────
 
+function StatusBadge({ status }: { status: 'checking' | 'installed' | 'missing' | 'unknown' }) {
+  const map = {
+    checking: { cls: 'text-zinc-400 bg-zinc-800 border-zinc-700', label: '확인 중…' },
+    installed: { cls: 'text-green-400 bg-green-500/10 border-green-500/20', label: '✅ 이미 설치됨' },
+    missing:   { cls: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20', label: '설치 필요' },
+    unknown:   { cls: 'text-zinc-500 bg-zinc-800 border-zinc-700', label: '확인 불가 (앱 전용)' },
+  };
+  const { cls, label } = map[status];
+  return <span className={`text-[11px] px-2 py-0.5 rounded-full border ${cls}`}>{label}</span>;
+}
+
 function MacEnvWizard({ onBack }: { onBack: () => void }) {
   const [step, setStep] = useState(0);
+  const [claudeStatus, setClaudeStatus] = useState<'checking' | 'installed' | 'missing' | 'unknown'>('checking');
+  const [tmuxStatus, setTmuxStatus] = useState<'checking' | 'installed' | 'missing' | 'unknown'>('checking');
   const totalSteps = 4;
+
+  useEffect(() => {
+    fetch('/api/check-claude').then(r => r.json()).then(d => setClaudeStatus(d.installed ? 'installed' : 'missing')).catch(() => setClaudeStatus('unknown'));
+    fetch('/api/check-tmux').then(r => r.json()).then(d => setTmuxStatus(d.installed ? 'installed' : 'missing')).catch(() => setTmuxStatus('unknown'));
+  }, []);
 
   const steps = [
     {
@@ -952,11 +999,22 @@ function MacEnvWizard({ onBack }: { onBack: () => void }) {
       title: 'Claude Code 설치',
       content: (
         <div className="space-y-4">
-          <p className="text-sm text-zinc-400">Node.js가 필요합니다. Homebrew로 설치하는 방법이 가장 편합니다.</p>
-          <CmdBlock cmd="brew install node" label="① Node.js 설치 (없는 경우)" />
-          <CmdBlock cmd="npm install -g @anthropic-ai/claude-code" label="② Claude Code 설치" />
-          <CmdBlock cmd="claude --version" label="③ 설치 확인" />
-          <CmdBlock cmd="claude" label="④ 첫 실행 → Anthropic 계정 인증" />
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-zinc-400">Node.js가 필요합니다. Homebrew로 설치하는 방법이 가장 편합니다.</p>
+            <StatusBadge status={claudeStatus} />
+          </div>
+          {claudeStatus === 'installed' ? (
+            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-sm text-green-400">
+              ✅ Claude Code가 이미 설치되어 있습니다. 다음 단계로 넘어가세요.
+            </div>
+          ) : (
+            <>
+              <CmdBlock cmd="brew install node" label="① Node.js 설치 (없는 경우)" />
+              <CmdBlock cmd="npm install -g @anthropic-ai/claude-code" label="② Claude Code 설치" />
+              <CmdBlock cmd="claude --version" label="③ 설치 확인" />
+              <CmdBlock cmd="claude" label="④ 첫 실행 → Anthropic 계정 인증" />
+            </>
+          )}
         </div>
       ),
     },
@@ -964,8 +1022,17 @@ function MacEnvWizard({ onBack }: { onBack: () => void }) {
       title: 'tmux + iTerm2 설치',
       content: (
         <div className="space-y-4">
-          <p className="text-sm text-zinc-400">tmux 버튼은 iTerm2 터미널에서 tmux 세션을 엽니다. 두 가지 모두 설치하세요.</p>
-          <CmdBlock cmd="brew install tmux" label="tmux 설치" />
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-zinc-400">tmux 버튼은 iTerm2 터미널에서 tmux 세션을 엽니다.</p>
+            <StatusBadge status={tmuxStatus} />
+          </div>
+          {tmuxStatus === 'installed' ? (
+            <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3 text-sm text-green-400">
+              ✅ tmux가 이미 설치되어 있습니다. iTerm2만 확인하세요.
+            </div>
+          ) : (
+            <CmdBlock cmd="brew install tmux" label="tmux 설치" />
+          )}
           <CmdBlock cmd="brew install --cask iterm2" label="iTerm2 설치 (없는 경우)" />
           <CmdBlock cmd="tmux -V" label="tmux 설치 확인" />
           <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
@@ -996,12 +1063,12 @@ function MacEnvWizard({ onBack }: { onBack: () => void }) {
   ];
 
   return (
-    <div className="h-full flex flex-col p-8">
-      <button onClick={onBack} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-6 transition-colors w-fit">
+    <div className="h-full flex flex-col px-4 py-4 md:p-8">
+      <button onClick={onBack} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-4 md:mb-6 transition-colors w-fit">
         <ChevronRight className="w-3.5 h-3.5 rotate-180" /> 뒤로
       </button>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold text-white flex items-center gap-2">
+      <div className="flex items-center justify-between mb-4 md:mb-6">
+        <h2 className="text-lg md:text-xl font-bold text-white flex items-center gap-2">
           <Terminal className="w-5 h-5 text-emerald-400" /> macOS 개발 환경 설정
         </h2>
         <StepDots total={totalSteps} current={step} />
@@ -1010,7 +1077,7 @@ function MacEnvWizard({ onBack }: { onBack: () => void }) {
         <h3 className="text-sm font-semibold text-zinc-300 mb-4">{step + 1}. {steps[step].title}</h3>
         {steps[step].content}
       </div>
-      <div className="flex gap-3 mt-6 pt-4 border-t border-zinc-800">
+      <div className="flex gap-3 mt-4 md:mt-6 pt-4 border-t border-zinc-800">
         {step > 0 && (
           <button onClick={() => setStep(s => s - 1)}
             className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white text-xs rounded-lg transition-colors">
@@ -1283,9 +1350,9 @@ function WizardLayout({
   const colors = progressColor === 'blue' ? { bar: 'bg-blue-500', btn: 'bg-blue-500 hover:bg-blue-600' } : { bar: 'bg-emerald-500', btn: 'bg-emerald-500 hover:bg-emerald-600' };
 
   return (
-    <div className="flex h-full">
-      {/* Sidebar */}
-      <div className="w-52 shrink-0 border-r border-zinc-800 p-5 flex flex-col gap-0.5 overflow-y-auto">
+    <div className="flex h-full flex-col md:flex-row">
+      {/* Sidebar — hidden on mobile, visible md+ */}
+      <div className="hidden md:flex w-52 shrink-0 border-r border-zinc-800 p-5 flex-col gap-0.5 overflow-y-auto">
         <p className="text-[10px] text-zinc-600 uppercase tracking-wider font-medium mb-3">{title}</p>
         {steps.map((s, i) => (
           <button key={i} onClick={() => (i < step) ? setStep(i) : undefined}
@@ -1301,33 +1368,40 @@ function WizardLayout({
         </div>
       </div>
 
+      {/* Mobile step indicator */}
+      <div className="flex md:hidden items-center justify-between px-4 py-2 border-b border-zinc-800 shrink-0">
+        <button onClick={onBack} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">← 뒤로</button>
+        <span className="text-xs text-zinc-500">{steps[step].title}</span>
+        <span className="text-xs text-zinc-600">{step + 1}/{steps.length}</span>
+      </div>
+
       {/* Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto p-8">
+        <div className="flex-1 overflow-y-auto px-4 py-4 md:p-8">
           <div className="max-w-lg">
-            <div className="flex items-center justify-between mb-1">
+            <div className="hidden md:flex items-center justify-between mb-1">
               <h2 className="text-xl font-semibold text-white">{steps[step].title}</h2>
               <span className="text-xs text-zinc-600">{step + 1} / {steps.length}</span>
             </div>
-            <div className="w-full bg-zinc-800 rounded-full h-1 mb-6">
+            <div className="w-full bg-zinc-800 rounded-full h-1 mb-4 md:mb-6">
               <div className={`${colors.bar} h-1 rounded-full transition-all duration-300`} style={{ width: `${((step + 1) / steps.length) * 100}%` }} />
             </div>
             {children}
           </div>
         </div>
-        <div className="border-t border-zinc-800 px-8 py-4 flex items-center justify-between shrink-0">
+        <div className="border-t border-zinc-800 px-4 py-3 md:px-8 md:py-4 flex items-center justify-between shrink-0">
           <button onClick={() => step > 0 ? setStep(step - 1) : undefined} disabled={step === 0}
-            className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 disabled:opacity-30 transition-colors">
+            className="px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200 disabled:opacity-30 transition-colors">
             ← 이전
           </button>
           {isLast ? (
             <button onClick={onComplete} disabled={!canComplete}
-              className={`px-6 py-2 ${colors.btn} disabled:opacity-40 text-white text-sm font-semibold rounded-lg transition-all flex items-center gap-2`}>
+              className={`px-4 py-2 md:px-6 ${colors.btn} disabled:opacity-40 text-white text-sm font-semibold rounded-lg transition-all flex items-center gap-2`}>
               완료 및 동기화 <Check className="w-4 h-4" />
             </button>
           ) : (
             <button onClick={() => setStep(step + 1)} disabled={!canNext[step]}
-              className="px-6 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg transition-all flex items-center gap-2">
+              className="px-4 py-2 md:px-6 bg-blue-500 hover:bg-blue-600 disabled:opacity-40 text-white text-sm font-semibold rounded-lg transition-all flex items-center gap-2">
               다음 <ArrowRight className="w-4 h-4" />
             </button>
           )}
@@ -1341,12 +1415,20 @@ function WizardLayout({
 
 export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
   const [mode, setMode] = useState<Mode>('choose');
+  const [detectedOs, setDetectedOs] = useState<'mac' | 'windows' | null>(null);
+
+  useEffect(() => {
+    const p = navigator.platform.toLowerCase();
+    const ua = navigator.userAgent.toLowerCase();
+    if (p.includes('win') || ua.includes('windows')) setDetectedOs('windows');
+    else if (p.includes('mac') || ua.includes('mac')) setDetectedOs('mac');
+  }, []);
 
   return (
     /* Backdrop */
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-2 sm:p-6">
       {/* Window chrome */}
-      <div className="bg-[#0a0a0b] border border-zinc-700/80 rounded-2xl shadow-2xl shadow-black/60 w-full max-w-4xl h-[680px] flex flex-col overflow-hidden">
+      <div className="bg-[#0a0a0b] border border-zinc-700/80 rounded-2xl shadow-2xl shadow-black/60 w-full max-w-4xl h-[95vh] sm:h-[680px] flex flex-col overflow-hidden">
 
         {/* Title bar */}
         <div className="flex items-center justify-between px-5 py-3 bg-[#111113] border-b border-zinc-800 shrink-0 select-none">
@@ -1372,64 +1454,76 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
         {/* Body */}
         <div className="flex-1 overflow-hidden">
           {mode === 'choose' && (
-            <div className="h-full flex flex-col items-center justify-center p-8 gap-8">
+            <div className="h-full flex flex-col items-center justify-center p-4 sm:p-8 gap-6 overflow-y-auto">
               <div className="text-center space-y-2">
-                <h2 className="text-2xl font-bold text-white">어떤 상황인가요?</h2>
+                <h2 className="text-xl sm:text-2xl font-bold text-white">어떤 상황인가요?</h2>
                 <p className="text-zinc-400 text-sm">상황에 맞는 맞춤 가이드로 안내합니다.</p>
+                {detectedOs && (
+                  <p className="text-xs text-zinc-500">
+                    감지된 OS: <span className="text-blue-400">{detectedOs === 'mac' ? '🍎 macOS' : '🪟 Windows'}</span>
+                    {' '}— 아래에서 해당 가이드를 선택하세요
+                  </p>
+                )}
               </div>
-              <div className="grid grid-cols-3 gap-4 w-full max-w-3xl">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 w-full max-w-3xl">
                 <button onClick={() => setMode('first')}
-                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-blue-500/50 rounded-2xl p-7 text-left transition-all duration-200">
-                  <div className="w-10 h-10 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-blue-500/20 transition-all">
+                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-blue-500/50 rounded-2xl p-5 sm:p-7 text-left transition-all duration-200">
+                  <div className="w-10 h-10 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center mb-3 sm:mb-4 group-hover:bg-blue-500/20 transition-all">
                     <Plus className="w-5 h-5 text-blue-400" />
                   </div>
                   <h3 className="text-base font-semibold text-white mb-1">처음 사용</h3>
                   <p className="text-sm text-zinc-500 leading-relaxed">Supabase 가입부터<br />CLI로 모든 것을 설정</p>
-                  <div className="flex items-center gap-1 text-blue-400 text-xs mt-4 group-hover:gap-2 transition-all">
+                  <div className="flex items-center gap-1 text-blue-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
                 <button onClick={() => setMode('additional')}
-                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-emerald-500/50 rounded-2xl p-7 text-left transition-all duration-200">
-                  <div className="w-10 h-10 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-emerald-500/20 transition-all">
+                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-emerald-500/50 rounded-2xl p-5 sm:p-7 text-left transition-all duration-200">
+                  <div className="w-10 h-10 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-center mb-3 sm:mb-4 group-hover:bg-emerald-500/20 transition-all">
                     <Laptop className="w-5 h-5 text-emerald-400" />
                   </div>
                   <h3 className="text-base font-semibold text-white mb-1">추가 단말 등록</h3>
                   <p className="text-sm text-zinc-500 leading-relaxed">다른 기기에서 이미 설정 완료,<br />이 기기만 추가로 연결</p>
-                  <div className="flex items-center gap-1 text-emerald-400 text-xs mt-4 group-hover:gap-2 transition-all">
+                  <div className="flex items-center gap-1 text-emerald-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
                 <button onClick={() => setMode('portal')}
-                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-violet-500/50 rounded-2xl p-7 text-left transition-all duration-200">
-                  <div className="w-10 h-10 bg-violet-500/10 border border-violet-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-violet-500/20 transition-all">
+                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-violet-500/50 rounded-2xl p-5 sm:p-7 text-left transition-all duration-200">
+                  <div className="w-10 h-10 bg-violet-500/10 border border-violet-500/20 rounded-xl flex items-center justify-center mb-3 sm:mb-4 group-hover:bg-violet-500/20 transition-all">
                     <Globe className="w-5 h-5 text-violet-400" />
                   </div>
                   <h3 className="text-base font-semibold text-white mb-1">북마크 포털 배포</h3>
                   <p className="text-sm text-zinc-500 leading-relaxed">Vercel로 북마크를<br />외부에서도 접근 가능하게</p>
-                  <div className="flex items-center gap-1 text-violet-400 text-xs mt-4 group-hover:gap-2 transition-all">
+                  <div className="flex items-center gap-1 text-violet-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
                 <button onClick={() => setMode('windows_env')}
-                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-sky-500/50 rounded-2xl p-7 text-left transition-all duration-200">
-                  <div className="w-10 h-10 bg-sky-500/10 border border-sky-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-sky-500/20 transition-all">
-                    <Monitor className="w-5 h-5 text-sky-400" />
+                  className={`group bg-zinc-900 hover:bg-zinc-800 border rounded-2xl p-5 sm:p-7 text-left transition-all duration-200 ${detectedOs === 'windows' ? 'border-sky-500/60 ring-1 ring-sky-500/30' : 'border-zinc-700 hover:border-sky-500/50'}`}>
+                  <div className="flex items-start justify-between mb-3 sm:mb-4">
+                    <div className="w-10 h-10 bg-sky-500/10 border border-sky-500/20 rounded-xl flex items-center justify-center group-hover:bg-sky-500/20 transition-all">
+                      <Monitor className="w-5 h-5 text-sky-400" />
+                    </div>
+                    {detectedOs === 'windows' && <span className="text-[10px] text-sky-400 bg-sky-500/10 border border-sky-500/20 px-2 py-0.5 rounded-full">감지됨</span>}
                   </div>
                   <h3 className="text-base font-semibold text-white mb-1">Windows 개발 환경</h3>
                   <p className="text-sm text-zinc-500 leading-relaxed">WSL2 · Claude Code · tmux<br />Windows 초기 설정 가이드</p>
-                  <div className="flex items-center gap-1 text-sky-400 text-xs mt-4 group-hover:gap-2 transition-all">
+                  <div className="flex items-center gap-1 text-sky-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
                 <button onClick={() => setMode('mac_env')}
-                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-orange-500/50 rounded-2xl p-7 text-left transition-all duration-200">
-                  <div className="w-10 h-10 bg-orange-500/10 border border-orange-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-orange-500/20 transition-all">
-                    <Terminal className="w-5 h-5 text-orange-400" />
+                  className={`group bg-zinc-900 hover:bg-zinc-800 border rounded-2xl p-5 sm:p-7 text-left transition-all duration-200 ${detectedOs === 'mac' ? 'border-orange-500/60 ring-1 ring-orange-500/30' : 'border-zinc-700 hover:border-orange-500/50'}`}>
+                  <div className="flex items-start justify-between mb-3 sm:mb-4">
+                    <div className="w-10 h-10 bg-orange-500/10 border border-orange-500/20 rounded-xl flex items-center justify-center group-hover:bg-orange-500/20 transition-all">
+                      <Terminal className="w-5 h-5 text-orange-400" />
+                    </div>
+                    {detectedOs === 'mac' && <span className="text-[10px] text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2 py-0.5 rounded-full">감지됨</span>}
                   </div>
                   <h3 className="text-base font-semibold text-white mb-1">macOS 개발 환경</h3>
                   <p className="text-sm text-zinc-500 leading-relaxed">Homebrew · Claude Code · tmux<br />macOS 초기 설정 가이드</p>
-                  <div className="flex items-center gap-1 text-orange-400 text-xs mt-4 group-hover:gap-2 transition-all">
+                  <div className="flex items-center gap-1 text-orange-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>

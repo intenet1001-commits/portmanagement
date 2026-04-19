@@ -965,6 +965,28 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/check-claude" && req.method === "GET") {
+      try {
+        const cmd = IS_WIN ? ['where', 'claude'] : ['which', 'claude'];
+        const result = Bun.spawnSync(cmd, { stdout: 'pipe', stderr: 'pipe' });
+        const path = new TextDecoder().decode(result.stdout).trim();
+        return new Response(JSON.stringify({ installed: result.exitCode === 0, path }), { headers });
+      } catch {
+        return new Response(JSON.stringify({ installed: false, path: '' }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/check-tmux" && req.method === "GET") {
+      try {
+        const cmd = IS_WIN ? ['wsl', '--', 'which', 'tmux'] : ['which', 'tmux'];
+        const result = Bun.spawnSync(cmd, { stdout: 'pipe', stderr: 'pipe' });
+        const path = new TextDecoder().decode(result.stdout).trim();
+        return new Response(JSON.stringify({ installed: result.exitCode === 0, path }), { headers });
+      } catch {
+        return new Response(JSON.stringify({ installed: false, path: '' }), { headers });
+      }
+    }
+
     if (url.pathname === "/api/install-wsl-tmux" && req.method === "POST") {
       if (!IS_WIN) return new Response(JSON.stringify({ success: true }), { headers });
       try {
