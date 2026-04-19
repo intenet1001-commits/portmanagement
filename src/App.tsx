@@ -607,11 +607,16 @@ const idbDeleteHandle = async (id: string) => {
 
 const getSessionName = (item: PortInfo): string => {
   if (item.folderPath) {
-    const parts = item.folderPath.replace(/\/$/, '').split('/');
-    return parts[parts.length - 1] || item.name;
+    // Windows(\) POSIX(/) 둘 다 지원 — 마지막 구분자 이후 basename 추출
+    const parts = item.folderPath.replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean);
+    const base = parts[parts.length - 1];
+    if (base) return base.replace(/\s+/g, '-');
   }
   return item.name.replace(/\s+/g, '-');
 };
+
+/** POSIX `/...` 과 Windows `C:\...` 둘 다 절대경로로 인정 */
+const isAbsolutePath = (p: string): boolean => /^(\/|[A-Za-z]:[\\/])/.test(p);
 
 /**
  * 워크트리용 다음 사용 가능한 포트.
@@ -1164,7 +1169,8 @@ function App() {
   const openTmuxClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'tmux' });
     // Only pre-fill if saved path is absolute — relative names (e.g. '합산') are invalid for -w
-    setWorktreePickerValue((item.worktreePath?.startsWith('/') ? item.worktreePath : '') ?? '');
+    // Windows: C:\... / POSIX: /... 둘 다 인정
+    setWorktreePickerValue((item.worktreePath && isAbsolutePath(item.worktreePath)) ? item.worktreePath : '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
@@ -1229,7 +1235,7 @@ function App() {
 
   const openTerminalClaude = (item: PortInfo) => {
     setWorktreePickerState({ item, mode: 'claude' });
-    setWorktreePickerValue((item.worktreePath?.startsWith('/') ? item.worktreePath : '') ?? '');
+    setWorktreePickerValue((item.worktreePath && isAbsolutePath(item.worktreePath)) ? item.worktreePath : '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
@@ -1262,7 +1268,8 @@ function App() {
     let resolvedPath = worktreePath;
 
     // 브랜치명(상대경로)을 입력한 경우 → git worktree 자동 생성
-    if (worktreePath && !worktreePath.startsWith('/') && item.folderPath) {
+    // Windows(C:\...) / POSIX(/...) 절대경로는 제외
+    if (worktreePath && !isAbsolutePath(worktreePath) && item.folderPath) {
       try {
         showToast(`워크트리 생성 중: ${worktreePath}...`, 'success');
         const result = await API.gitWorktreeAdd(item.folderPath, worktreePath);

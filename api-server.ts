@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 
@@ -7,6 +7,24 @@ import { homedir } from "node:os";
 const escapeSq = (s: string): string => s.replace(/'/g, "'\\''");
 
 const IS_WIN = process.platform === 'win32';
+
+/** Git 바이너리 절대경로 — Tauri sandbox·다른 머신 호환성을 위해 PATH 대신 절대경로 사용 */
+function resolveGitPath(): string {
+  if (IS_WIN) {
+    for (const p of ['C:/Program Files/Git/cmd/git.exe', 'C:/Program Files/Git/bin/git.exe', 'C:/Program Files (x86)/Git/cmd/git.exe']) {
+      if (existsSync(p)) return p;
+    }
+    const r = Bun.spawnSync(['where', 'git'], { stdout: 'pipe', stderr: 'pipe' });
+    const p = r.stdout.toString().trim().split(/\r?\n/)[0]?.trim();
+    if (p) return p;
+    return 'git';
+  }
+  if (existsSync('/usr/bin/git')) return '/usr/bin/git';
+  if (existsSync('/opt/homebrew/bin/git')) return '/opt/homebrew/bin/git';
+  if (existsSync('/usr/local/bin/git')) return '/usr/local/bin/git';
+  return 'git';
+}
+const GIT_PATH = resolveGitPath();
 
 /** VS Build Tools (MSVC) 설치 여부 감지. 디렉터리 존재로 판정 — Bun.file().exists()는 디렉터리에 false를 반환하므로 existsSync 사용. */
 function hasVsBuildTools(): boolean {
@@ -62,17 +80,18 @@ function findWslDistro(): string | null {
   return distros[0] ?? null;
 }
 
-/** 터미널/탭 타이틀 조합: 프로젝트명 · 워크트리명 (+선택적 prefix) */
-function buildWindowTitle(sessionName: string, worktreePath?: string | null, prefix?: string): string {
+/** 터미널/탭 타이틀 조합: [tags] 프로젝트명 · 워크트리명 — tags는 ['tmux', 'bypass', 'fresh'] 등 */
+function buildWindowTitle(sessionName: string, worktreePath?: string | null, tags?: string | string[] | null): string {
   const wtRaw = worktreePath?.split(',')[0]?.trim();
   // Windows \ 와 POSIX / 모두 지원, 마지막 구분자 이후 basename 추출
   const wtName = wtRaw ? wtRaw.split(/[\\/]/).filter(Boolean).pop() : undefined;
   const base = wtName ? `${sessionName} · ${wtName}` : sessionName;
-  return prefix ? `[${prefix}] ${base}` : base;
+  const tagList = Array.isArray(tags) ? tags : tags ? [tags] : [];
+  return tagList.length ? `[${tagList.join('·')}] ${base}` : base;
 }
 
 /** WSL tmux bash 명령 문자열 생성 (외부에서 bash -c로 실행됨 — WSL default PATH가 Windows npm 포함) */
-function buildWslTmuxBashCmd(sessionName: string, folderPath: string | null, worktreePath: string | null, fresh: boolean, bypass: boolean, title?: string): string {
+function buildWslTmuxBashCmd(sessionName: string, folderPath: string | null, worktreePath: string | null, fresh: boolean, bypass: boolean): string {
   const rawPath = worktreePath?.split(',')[0]?.trim() || folderPath;
   const wslPath = rawPath ? winToWslPath(rawPath) : null;
   const cdPart = wslPath ? `cd '${escapeSq(wslPath)}' && ` : '';
@@ -80,17 +99,15 @@ function buildWslTmuxBashCmd(sessionName: string, folderPath: string | null, wor
   const claudeArgs = bypass ? 'claude --dangerously-skip-permissions' : 'claude';
   // ⚠️ 세미콜론(;) 금지 — wt.exe가 subcommand 구분자로 취급해서 명령줄이 쪼개짐
   // ⚠️ 쌍따옴표(") 금지 — cmd.exe가 \"를 몰라서 명령이 중간에 끊김
+  // ⚠️ printf OSC 타이틀 금지 — bash single-quote 안에서 \; 가 literal로 출력되어 터미널에 깨진 문자 남김
+  //    → 터미널 타이틀은 `wt --title`로 충분, Claude가 추후 자체 OSC로 덮어씀
   // Safety net: claude 실패 시 tmux 안에서 login shell로 fallback → 에러 메시지 확인 가능
   const inner = `${claudeArgs} || bash -l`;
-  // OSC 0 escape로 터미널 타이틀 세팅 (tmux 시작 전에 설정 → tmux가 덮어쓰지 않음)
-  // ⚠️ OSC의 `;`는 wt.exe가 단일따옴표 안이라도 subcommand 구분자로 취급 → `\;`로 이스케이프 필수
-  // wt는 `\;`를 literal `;`로 unescape해서 bash에 전달, bash는 single quote 안이라 그대로 printf에 넘김
-  const titlePart = title ? `printf '\\033]0\\;%s\\007' '${escapeSq(title)}' && ` : '';
   if (fresh) {
     // kill-session이 실패해도(세션 없음) 계속 진행하도록 || : 로 감쌈 (세미콜론 대체)
-    return `${titlePart}${cdPart}(tmux kill-session -t '${sess}' 2>/dev/null || :) && tmux new-session -s '${sess}' '${inner}'`;
+    return `${cdPart}(tmux kill-session -t '${sess}' 2>/dev/null || :) && tmux new-session -s '${sess}' '${inner}'`;
   }
-  return `${titlePart}${cdPart}tmux new-session -A -s '${sess}' '${inner}'`;
+  return `${cdPart}tmux new-session -A -s '${sess}' '${inner}'`;
 }
 
 /** WSL tmux 세션 열기 (Windows Terminal 우선, 없으면 cmd 폴백) */
@@ -957,9 +974,9 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath);
+        const title = buildWindowTitle(sessionName, worktreePath, 'tmux');
         if (IS_WIN) {
-          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, false, title), title);
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, false), title);
         } else {
           const claudeCmd = `tmux new-session -A -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
           openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
@@ -973,9 +990,9 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude-fresh" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath, 'fresh');
+        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'fresh']);
         if (IS_WIN) {
-          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, true, false, title), title);
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, true, false), title);
         } else {
           const claudeCmd = `tmux kill-session -t '${escapeSq(sessionName)}' 2>/dev/null; tmux new-session -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
           openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
@@ -989,9 +1006,9 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude-bypass" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath, 'bypass');
+        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'bypass']);
         if (IS_WIN) {
-          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, true, title), title);
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, true), title);
         } else {
           const claudeCmd = `tmux new-session -A -s '${escapeSq(sessionName)}-bypass' '${worktreePath ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'` : 'claude --dangerously-skip-permissions'}'`;
           openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
@@ -1124,19 +1141,25 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-terminal-git-pull" && req.method === "POST") {
       try {
         const { folderPath, name, githubUrl } = await req.json();
-        // pull은 항상 메인 folderPath에서 실행
         const workDir = folderPath as string;
         const baseName = (name || 'git-pull') as string;
-        const displayName = baseName;
-        const title = `[git-pull] ${displayName}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        // GitHub URL이 있으면 origin remote 보장
-        const remoteCmd = githubUrl
-          ? `git remote set-url origin '${escapeSq(githubUrl as string)}' 2>/dev/null || git remote add origin '${escapeSq(githubUrl as string)}'; `
-          : '';
-        const cmd = `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && ${remoteCmd}git pull`;
-        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        const title = `[git-pull] ${baseName}`;
+        if (IS_WIN) {
+          // cmd 구문: `2>nul` 로 stderr 버리고, `||` 로 실패 시 remote add 수행
+          const remoteCmd = githubUrl
+            ? `(git remote set-url origin "${githubUrl}" 2>nul || git remote add origin "${githubUrl}") && `
+            : '';
+          openTerminalWithCmd(`${remoteCmd}git pull`, workDir, title);
+        } else {
+          const escTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const remoteCmd = githubUrl
+            ? `git remote set-url origin '${escapeSq(githubUrl as string)}' 2>/dev/null || git remote add origin '${escapeSq(githubUrl as string)}'; `
+            : '';
+          const cmd = `cd '${escapeSq(workDir)}' && ${remoteCmd}git pull`;
+          const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escTitle}"\n  end tell\nend tell`;
+          spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        }
         return new Response(JSON.stringify({ success: true, message: "터미널에서 git pull 실행" }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
@@ -1146,19 +1169,25 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-terminal-git-push" && req.method === "POST") {
       try {
         const { folderPath, name, githubUrl } = await req.json();
-        // push는 항상 메인 folderPath에서 실행
         const workDir = folderPath as string;
         const baseName = (name || 'git-push') as string;
-        const displayName = baseName;
-        const title = `[git-push] ${displayName}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        // GitHub URL이 있으면 origin remote 보장
-        const remoteCmd = githubUrl
-          ? `git remote set-url origin '${escapeSq(githubUrl as string)}' 2>/dev/null || git remote add origin '${escapeSq(githubUrl as string)}'; `
-          : '';
-        const cmd = `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && ${remoteCmd}git push || git push --set-upstream origin $(git branch --show-current)`;
-        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        const title = `[git-push] ${baseName}`;
+        if (IS_WIN) {
+          // cmd 구문: 최초 push 시 upstream 없으면 `-u origin HEAD`로 폴백 (bash의 `$(git branch --show-current)` 대체)
+          const remoteCmd = githubUrl
+            ? `(git remote set-url origin "${githubUrl}" 2>nul || git remote add origin "${githubUrl}") && `
+            : '';
+          openTerminalWithCmd(`${remoteCmd}(git push || git push -u origin HEAD)`, workDir, title);
+        } else {
+          const escTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const remoteCmd = githubUrl
+            ? `git remote set-url origin '${escapeSq(githubUrl as string)}' 2>/dev/null || git remote add origin '${escapeSq(githubUrl as string)}'; `
+            : '';
+          const cmd = `cd '${escapeSq(workDir)}' && ${remoteCmd}git push || git push --set-upstream origin $(git branch --show-current)`;
+          const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escTitle}"\n  end tell\nend tell`;
+          spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        }
         return new Response(JSON.stringify({ success: true, message: "터미널에서 git push 실행" }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
@@ -1172,15 +1201,21 @@ const server = Bun.serve({
         const workDir = (worktreePath as string | undefined) || (folderPath as string);
         const baseName = (name || 'git-commit') as string;
         const worktreeName = worktreePath
-          ? (worktreePath as string).replace(/\/$/, '').split('/').pop()
+          ? (worktreePath as string).replace(/[\\/]+$/, '').split(/[\\/]/).pop()
           : null;
         const displayName = worktreeName ? `${baseName}(${worktreeName})` : baseName;
-        const title = `[git-commit] ${displayName}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        // git add -A → commit (메시지 입력 프롬프트)
-        const cmd = `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && git add -A && git status && echo "" && read -p "커밋 메시지: " msg && git commit -m "$msg"`;
-        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        const title = `[git-commit] ${displayName}`;
+        if (IS_WIN) {
+          // cmd.exe: set /p 로 입력 받고 %msg% 로 참조. git status로 변경 확인 후 메시지 입력
+          const shellCmd = `git add -A && git status && echo. && set /p msg=커밋 메시지: && git commit -m "%msg%"`;
+          openTerminalWithCmd(shellCmd, workDir, title);
+        } else {
+          const escTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const cmd = `cd '${escapeSq(workDir)}' && git add -A && git status && echo "" && read -p "커밋 메시지: " msg && git commit -m "$msg"`;
+          const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escTitle}"\n  end tell\nend tell`;
+          spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        }
         return new Response(JSON.stringify({ success: true, message: "터미널에서 git commit 실행" }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
@@ -1206,42 +1241,93 @@ const server = Bun.serve({
         }
         const workDir = worktreePath as string;
         const baseName = (name || 'run') as string;
-        const wtName = workDir.replace(/\/$/, '').split('/').pop() || baseName;
+        const wtName = workDir.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || baseName;
         const portLabel = port ? `(${port})` : '';
-        const displayName = `${baseName}${portLabel}(${wtName})`;
-        const title = `[run] ${displayName}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        // PORT= 환경변수 prefix + terminalCommand, 없으면 package.json/pyproject.toml 감지 후 자동 실행
-        const portPrefix = port ? `PORT=${port} ` : '';
-        let runCmd = (terminalCommand as string | undefined) || '';
-        const targetPort = port as number | undefined;
-        if (!runCmd) {
-          if (existsSync(join(workDir, 'package.json'))) {
-            // Next.js: use next dev -p directly to bypass hardcoded port in package.json
-            if (existsSync(join(workDir, 'next.config.ts')) || existsSync(join(workDir, 'next.config.js')) || existsSync(join(workDir, 'next.config.mjs'))) {
-              runCmd = targetPort ? `./node_modules/.bin/next dev -p ${targetPort}` : 'npm run dev';
-            } else {
-              runCmd = 'npm run dev';
-            }
-          } else if (existsSync(join(workDir, 'pyproject.toml'))) runCmd = 'uv run python app.py';
-          else if (existsSync(join(workDir, 'Cargo.toml'))) runCmd = 'cargo run';
-        } else if (targetPort) {
-          // Replace hardcoded -p NNNN in terminalCommand with target port
-          runCmd = runCmd.replace(/-p\s+\d+/, `-p ${targetPort}`);
-        }
-        // Auto-symlink node_modules if worktree lacks it but main project has it
+        const title = `[run] ${baseName}${portLabel}(${wtName})`;
         const mainFolder = folderPath as string | undefined;
-        const symlinkSetup = (!existsSync(join(workDir, 'node_modules')) && mainFolder && existsSync(join(mainFolder, 'node_modules')))
-          ? `ln -s '${escapeSq(join(mainFolder, 'node_modules'))}' node_modules && `
-          : '';
-        // For ./node_modules/.bin/next, PORT prefix is embedded in -p flag — skip prefix
-        const effectivePrefix = runCmd.startsWith('./node_modules/.bin/next dev') ? '' : portPrefix;
-        const cmd = runCmd
-          ? `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007' && ${symlinkSetup}${effectivePrefix}${runCmd}`
-          : `cd '${escapeSq(workDir)}' && printf '\\033]0;${title}\\007'`;
-        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
-        return new Response(JSON.stringify({ success: true, message: "워크트리 터미널 실행" }), { headers });
+        const targetPort = port as number | undefined;
+
+        // 패키지 매니저 감지 — 메인 프로젝트 lockfile 기준 (워크트리는 lockfile 없을 수 있음)
+        const detectPkgMgr = (dir: string): 'bun' | 'pnpm' | 'yarn' | 'npm' => {
+          if (existsSync(join(dir, 'bun.lock')) || existsSync(join(dir, 'bun.lockb'))) return 'bun';
+          if (existsSync(join(dir, 'pnpm-lock.yaml'))) return 'pnpm';
+          if (existsSync(join(dir, 'yarn.lock'))) return 'yarn';
+          return 'npm';
+        };
+        const pkgMgr = mainFolder && existsSync(join(mainFolder, 'package.json'))
+          ? detectPkgMgr(mainFolder)
+          : detectPkgMgr(workDir);
+
+        // run 커맨드 결정
+        let runCmd = (terminalCommand as string | undefined) || '';
+        const hasPackageJson = existsSync(join(workDir, 'package.json'));
+        const hasNextConfig = ['next.config.ts', 'next.config.js', 'next.config.mjs'].some(f => existsSync(join(workDir, f)));
+        const hasViteConfig = ['vite.config.ts', 'vite.config.js', 'vite.config.mjs'].some(f => existsSync(join(workDir, f)));
+        if (!runCmd) {
+          if (hasPackageJson) {
+            // Next.js → next dev -p N (binary에 직접 포트 전달)
+            // Vite → vite --port N (binary 직접 실행, npm/bun run dev 스크립트 우회)
+            //   이유: bun on Windows는 `a & b` 백그라운드 연산자 미지원 → 복잡한 dev 스크립트 실패
+            //   bunx/npx로 바로 호출하면 스크립트 설정 의존성 제거 + 포트 커스터마이즈 가능
+            if (hasNextConfig) {
+              const runner = pkgMgr === 'bun' ? 'bunx' : pkgMgr === 'npm' ? 'npx' : pkgMgr === 'pnpm' ? 'pnpm dlx' : 'yarn dlx';
+              runCmd = targetPort ? `${runner} next dev -p ${targetPort}` : `${runner} next dev`;
+            } else if (hasViteConfig) {
+              const runner = pkgMgr === 'bun' ? 'bunx' : pkgMgr === 'npm' ? 'npx' : pkgMgr === 'pnpm' ? 'pnpm dlx' : 'yarn dlx';
+              runCmd = targetPort ? `${runner} vite --port ${targetPort}` : `${runner} vite`;
+            } else {
+              runCmd = `${pkgMgr} run dev`;
+            }
+          } else if (existsSync(join(workDir, 'pyproject.toml'))) {
+            runCmd = 'uv run python app.py';
+          } else if (existsSync(join(workDir, 'Cargo.toml'))) {
+            runCmd = 'cargo run';
+          }
+        } else if (targetPort) {
+          // 기존 커맨드에 -p NNNN 가 있으면 교체, --port NNNN 도 교체
+          runCmd = runCmd.replace(/-p\s+\d+/, `-p ${targetPort}`).replace(/--port(?:=|\s+)\d+/, `--port ${targetPort}`);
+        }
+
+        // node_modules 준비 — 워크트리에 없으면 메인 것 공유(junction/symlink) 또는 설치
+        const hasWtDeps = existsSync(join(workDir, 'node_modules'));
+        const mainHasRealDeps = !!(mainFolder && existsSync(join(mainFolder, 'node_modules', '.package-lock.json')) ||
+                                    mainFolder && existsSync(join(mainFolder, 'node_modules', 'react')));
+        const canShare = !hasWtDeps && mainHasRealDeps;
+        // 메인에도 실제 deps 없으면 워크트리에서 직접 install 필요
+        const needsInstall = !hasWtDeps && !mainHasRealDeps && hasPackageJson;
+
+        if (IS_WIN) {
+          // cmd.exe용 체인. `set "PORT=N"` 으로 trailing space 버그 회피
+          // mklink /J 가 실패해도 계속 진행(||), 그래야 사용자가 원인을 볼 수 있음
+          const linkSetup = canShare
+            ? `(if not exist node_modules (mklink /J node_modules "${mainFolder}\\node_modules")) & `
+            : '';
+          const installSetup = needsInstall ? `${pkgMgr} install && ` : '';
+          // next 바이너리가 -p 를 받으므로 PORT 중복 skip
+          const isNextDev = /\bnext\s+dev\b/.test(runCmd);
+          const isViteDev = /\bvite\b/.test(runCmd) || (hasViteConfig && /run\s+dev/.test(runCmd));
+          const portPrefix = (targetPort && !isNextDev && !isViteDev) ? `set "PORT=${targetPort}" && ` : '';
+          const shellCmd = runCmd
+            ? `${linkSetup}${installSetup}${portPrefix}${runCmd}`
+            : 'echo 작업 디렉터리 열림';
+          openTerminalWithCmd(shellCmd, workDir, title);
+        } else {
+          const escTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const linkSetup = canShare
+            ? `(test -e node_modules || ln -s '${escapeSq(join(mainFolder as string, 'node_modules'))}' node_modules) && `
+            : '';
+          const installSetup = needsInstall ? `${pkgMgr} install && ` : '';
+          const isNextDev = /\bnext\s+dev\b/.test(runCmd);
+          const isViteDev = /\bvite\b/.test(runCmd) || (hasViteConfig && /run\s+dev/.test(runCmd));
+          const portPrefix = (targetPort && !isNextDev && !isViteDev) ? `PORT=${targetPort} ` : '';
+          const cmd = runCmd
+            ? `cd '${escapeSq(workDir)}' && ${linkSetup}${installSetup}${portPrefix}${runCmd}`
+            : `cd '${escapeSq(workDir)}'`;
+          const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escTitle}"\n  end tell\nend tell`;
+          spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        }
+        return new Response(JSON.stringify({ success: true, message: "워크트리 터미널 실행", pkgMgr, runCmd }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
@@ -1712,7 +1798,7 @@ const server = Bun.serve({
         if (!folderPath || !branchName) {
           return new Response(JSON.stringify({ error: "folderPath and branchName required" }), { status: 400, headers });
         }
-        if (!(folderPath as string).startsWith('/')) {
+        if (!isAbsolute(folderPath as string)) {
           return new Response(JSON.stringify({ error: "folderPath must be absolute" }), { status: 400, headers });
         }
         // Allow Unicode (Korean etc.) — only strip truly invalid git branch chars
@@ -1720,16 +1806,21 @@ const server = Bun.serve({
         // Directory name must be ASCII-only — claude -w rejects non-ASCII paths
         const dirSafeBranch = safeBranch.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-').replace(/^[-.]|[-.]$/g, '') || `wt${Date.now().toString(36).slice(-6)}`;
         const isICloud = (folderPath as string).includes('com~apple~CloudDocs') || (folderPath as string).includes('Mobile Documents');
-        const home = process.env.HOME || `/Users/${process.env.USER}`;
-        const basename = (folderPath as string).replace(/\/$/, '').split('/').pop() || 'project';
+        const home = homedir();
+        // 플랫폼 공통 basename: / 와 \ 둘 다 처리
+        const baseName = (folderPath as string).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'project';
         const targetPath = worktreePath || (() => {
           if (isICloud) {
             // iCloud 경로: git checkout이 SIGBUS → ~/worktrees/ (iCloud 밖)에 생성
-            return `${home}/worktrees/${basename}-${dirSafeBranch}`;
+            return join(home, 'worktrees', `${baseName}-${dirSafeBranch}`);
           }
-          const parts = (folderPath as string).replace(/\/$/, '').split('/');
+          // 형제 디렉터리로 생성: <parent>/<baseName>-<branch>
+          const trimmed = (folderPath as string).replace(/[\\/]+$/, '');
+          const sepMatch = trimmed.match(/[\\/]/);
+          const sep = sepMatch ? sepMatch[0] : (IS_WIN ? '\\' : '/');
+          const parts = trimmed.split(/[\\/]/);
           parts[parts.length - 1] = parts[parts.length - 1] + '-' + dirSafeBranch;
-          return parts.join('/');
+          return parts.join(sep);
         })();
         // Check if worktree for this branch already exists
         const listProc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
@@ -1748,7 +1839,9 @@ const server = Bun.serve({
         if (existingPath) {
           // 이미 ~/worktrees/ 안이고 ASCII 경로면 바로 반환
           const isAscii = (s: string) => /^[\x00-\x7F]*$/.test(s);
-          if (existingPath.startsWith(`${home}/worktrees/`) && isAscii(existingPath)) {
+          const normSlashes = (s: string) => s.replace(/\\/g, '/');
+          const homeWtPrefix = normSlashes(join(home, 'worktrees')) + '/';
+          if (normSlashes(existingPath).startsWith(homeWtPrefix) && isAscii(existingPath)) {
             return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
           }
           // 파일이 있으면 반환, 없으면(no-checkout 잔재) 제거 후 ~/worktrees/ 재생성
@@ -1807,37 +1900,89 @@ const server = Bun.serve({
         if (!worktreePath) {
           return new Response(JSON.stringify({ error: "worktreePath required" }), { status: 400, headers });
         }
-        if (!(worktreePath as string).startsWith('/')) {
+        if (!isAbsolute(worktreePath as string)) {
           return new Response(JSON.stringify({ error: "worktreePath must be absolute" }), { status: 400, headers });
         }
         if (!existsSync(worktreePath as string)) {
           return new Response(JSON.stringify({ error: `Worktree path does not exist: ${worktreePath}` }), { status: 400, headers });
         }
         // git worktree remove은 메인 레포 컨텍스트에서 실행 필요
-        // worktree/.git 파일에서 메인 레포 경로 추출
+        // worktree/.git 파일에서 메인 레포 경로 추출 (경로 구분자는 / 또는 \ 둘 다 가능)
+        const parentDir = (p: string) => p.replace(/[\\/][^\\/]+[\\/]?$/, '') || (IS_WIN ? 'C:\\' : '/tmp');
         let mainRepoDir: string;
         try {
           const gitFile = await Bun.file(`${worktreePath}/.git`).text();
-          // content: "gitdir: /path/to/main/.git/worktrees/name\n"
+          // content: "gitdir: <path>/.git/worktrees/<name>\n" — / 와 \ 혼재 가능
           const gitdirMatch = gitFile.match(/gitdir:\s*(.+)/);
           if (gitdirMatch) {
-            // /path/to/main/.git/worktrees/name → /path/to/main
-            mainRepoDir = gitdirMatch[1].trim().replace(/\/\.git\/worktrees\/[^/]+$/, '');
+            mainRepoDir = gitdirMatch[1].trim().replace(/[\\/]\.git[\\/]worktrees[\\/][^\\/]+[\\/]?$/, '');
           } else {
-            mainRepoDir = (worktreePath as string).replace(/\/[^/]+$/, '') || '/tmp';
+            mainRepoDir = parentDir(worktreePath as string);
           }
         } catch {
-          mainRepoDir = (worktreePath as string).replace(/\/[^/]+$/, '') || '/tmp';
+          mainRepoDir = parentDir(worktreePath as string);
         }
-        const proc = Bun.spawn([GIT_PATH, "worktree", "remove", "--force", worktreePath], {
-          cwd: mainRepoDir, stdout: "pipe", stderr: "pipe",
-        });
-        await proc.exited;
-        const stderr = await new Response(proc.stderr).text();
-        if (proc.exitCode !== 0) {
-          return new Response(JSON.stringify({ error: stderr.trim() || "git worktree remove failed" }), { status: 500, headers });
+        // `git worktree remove --force` 실행 + 재시도 + 폴백 정리
+        // Windows에서 Explorer가 폴더 열면 EPERM/EBUSY 발생 → 지연 후 재시도
+        const runRemove = async () => {
+          const p = Bun.spawn([GIT_PATH, "worktree", "remove", "--force", worktreePath], {
+            cwd: mainRepoDir, stdout: "pipe", stderr: "pipe",
+          });
+          await p.exited;
+          const err = (await new Response(p.stderr).text()).trim();
+          return { ok: p.exitCode === 0, err };
+        };
+        // Windows는 파일 락이면 git이 "Invalid argument" 또는 "failed to delete" 를 뱉을 수 있음
+        const isLockError = (err: string) => /permission denied|being used|EBUSY|EPERM|cannot access|access is denied|invalid argument|failed to delete/i.test(err);
+
+        let result = await runRemove();
+        let attempts = 1;
+        // 파일 락 에러면 최대 3회 재시도 (200ms, 400ms, 800ms 점증)
+        while (!result.ok && isLockError(result.err) && attempts < 3) {
+          await new Promise(r => setTimeout(r, 200 * Math.pow(2, attempts - 1)));
+          result = await runRemove();
+          attempts++;
         }
-        return new Response(JSON.stringify({ success: true }), { headers });
+
+        // 재시도해도 실패했으면: .git/worktrees/<name> 메타 남을 수 있음 → prune으로 정리하고 물리 디렉터리 직접 삭제 시도
+        if (!result.ok) {
+          const { rmSync } = await import('fs');
+          // 1) prune — 기록된 메타 중 디렉터리 없거나 손상된 것 정리
+          const pruneProc = Bun.spawn([GIT_PATH, "worktree", "prune"], { cwd: mainRepoDir, stdout: "pipe", stderr: "pipe" });
+          await pruneProc.exited;
+          // 2) 물리 디렉터리가 여전히 존재하면 rm -rf 시도 (Bun fs sync)
+          if (existsSync(worktreePath as string)) {
+            try {
+              rmSync(worktreePath as string, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+            } catch {}
+          }
+          // 3) prune 한 번 더 — 방금 rm으로 사라진 워크트리의 stale 메타 정리
+          const pruneProc2 = Bun.spawn([GIT_PATH, "worktree", "prune"], { cwd: mainRepoDir, stdout: "pipe", stderr: "pipe" });
+          await pruneProc2.exited;
+          // 4) 결과 확인 — 메타 + 디렉터리 모두 사라졌으면 성공 처리
+          const listProc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], { cwd: mainRepoDir, stdout: "pipe", stderr: "pipe" });
+          await listProc.exited;
+          const listOut = await new Response(listProc.stdout).text();
+          const stillRegistered = listOut.includes(`worktree ${worktreePath}`) || listOut.includes(`worktree ${(worktreePath as string).replace(/\\/g, '/')}`);
+          if (!stillRegistered && !existsSync(worktreePath as string)) {
+            return new Response(JSON.stringify({ success: true, recovered: true, attempts }), { headers });
+          }
+          // 부분 성공: git 메타는 정리됐지만 물리 디렉터리가 락 때문에 남음 — 유저 관점에선 사실상 제거됨
+          if (!stillRegistered && existsSync(worktreePath as string)) {
+            return new Response(JSON.stringify({
+              success: true,
+              partial: true,
+              attempts,
+              message: `워크트리 등록은 제거되었지만 폴더(${worktreePath})는 다른 프로그램이 사용 중이라 남아 있습니다. 해당 폴더를 연 창을 닫고 수동으로 삭제해주세요.`
+            }), { headers });
+          }
+          // 여전히 실패: 사용자 친화 메시지
+          const friendly = isLockError(result.err)
+            ? `파일이 사용 중이라 삭제하지 못했습니다. 해당 폴더를 열어둔 탐색기/터미널/에디터를 모두 닫은 뒤 다시 시도하세요.\n\n원본 에러: ${result.err}`
+            : result.err || "git worktree remove failed";
+          return new Response(JSON.stringify({ error: friendly, attempts }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true, attempts }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
       }
@@ -1930,12 +2075,19 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-terminal-git-merge" && req.method === "POST") {
       try {
         const { folderPath, branchName, name } = await req.json();
-        const label = ((name || branchName) as string).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const title = `[git-merge] ${label}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const cmd = `cd '${escapeSq(folderPath as string)}' && printf '\\033]0;${title}\\007' && git merge --no-ff --autostash '${escapeSq(branchName as string)}'`;
-        const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${title}"\n  end tell\nend tell`;
-        spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        const label = (name || branchName) as string;
+        const title = `[git-merge] ${label}`;
+        if (IS_WIN) {
+          // cmd.exe: 변수 이스케이프 걱정 없이 큰따옴표로 감싸면 됨
+          const shellCmd = `git merge --no-ff --autostash "${(branchName as string).replace(/"/g, '""')}"`;
+          openTerminalWithCmd(shellCmd, folderPath as string, title);
+        } else {
+          const escTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const cmd = `cd '${escapeSq(folderPath as string)}' && git merge --no-ff --autostash '${escapeSq(branchName as string)}'`;
+          const escapedCmd = cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          const script = `tell application "iTerm"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text "${escapedCmd}"\n    delay 0.5\n    set name to "${escTitle}"\n  end tell\nend tell`;
+          spawn({ cmd: ["osascript", "-e", script], stdout: "inherit", stderr: "inherit" });
+        }
         return new Response(JSON.stringify({ success: true }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
@@ -1948,7 +2100,7 @@ const server = Bun.serve({
         if (!folderPath || !branchName) {
           return new Response(JSON.stringify({ error: "folderPath and branchName required" }), { status: 400, headers });
         }
-        if (!(folderPath as string).startsWith('/')) {
+        if (!isAbsolute(folderPath as string)) {
           return new Response(JSON.stringify({ error: "folderPath must be absolute" }), { status: 400, headers });
         }
         // --autostash: 변경 사항 자동 스태시 후 머지, 이후 자동 팝
