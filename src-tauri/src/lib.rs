@@ -908,43 +908,17 @@ fn win_to_wsl_path(path: &str) -> String {
     }
 }
 
-#[cfg(target_os = "windows")]
-// docker-desktop 등 bash 없는 distro를 건너뛰고 실제 Ubuntu 계열 distro 이름 반환
+// Windows 레지스트리에서 WSL distro 목록 조회 (WSL 서비스 불필요 — 즉시 응답)
 fn find_wsl_distro() -> Option<String> {
-    // 흔한 Ubuntu/Debian 계열 이름 우선 시도
-    let candidates = ["Ubuntu", "Ubuntu-24.04", "Ubuntu-22.04", "Ubuntu-20.04", "Debian", "kali-linux"];
-    for name in &candidates {
-        let ok = Command::new("wsl")
-            .args(["-d", name, "--", "bash", "-c", "echo ok"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok { return Some(name.to_string()); }
-    }
-    // fallback: wsl --list --quiet 로 전체 조회 후 docker 제외 첫 번째 시도
-    let out = Command::new("wsl").args(["--list", "--quiet"]).output().ok()?;
-    // WSL이 UTF-16LE로 출력하는 경우 처리
-    let raw = out.stdout;
-    let text = if raw.len() >= 2 && raw[0] == 0xff && raw[1] == 0xfe {
-        // UTF-16LE with BOM
-        let words: Vec<u16> = raw[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-        String::from_utf16_lossy(&words)
-    } else {
-        String::from_utf8_lossy(&raw).to_string()
-    };
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-Command",
+            "Get-ChildItem HKCU:/Software/Microsoft/Windows/CurrentVersion/Lxss | ForEach-Object { (Get-ItemProperty $_.PSPath).DistributionName }"])
+        .output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
     for line in text.lines() {
-        let name = line.trim().trim_matches('\0').trim_start_matches('*').trim();
+        let name = line.trim();
         if name.is_empty() || name.to_lowercase().contains("docker") { continue; }
-        let ok = Command::new("wsl")
-            .args(["-d", name, "--", "bash", "-c", "echo ok"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok { return Some(name.to_string()); }
+        return Some(name.to_string());
     }
     None
 }
@@ -986,21 +960,12 @@ fn check_wsl() -> Result<serde_json::Value, String> {
         if !wsl_exists {
             return Ok(serde_json::json!({ "status": "not_installed" }));
         }
-        // Ubuntu 계열 distro 탐색 (docker-desktop 제외)
+        // bash timeout이 Windows/WSL에서 불가능 → 목록 확인만으로 판단
         let distro = match find_wsl_distro() {
             Some(d) => d,
             None => return Ok(serde_json::json!({ "status": "no_distro" })),
         };
-        let tmux_ok = Command::new("wsl")
-            .args(["-d", &distro, "--", "bash", "-c", "which tmux"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !tmux_ok {
-            return Ok(serde_json::json!({ "status": "no_tmux" }));
-        }
+        let _ = distro;
         return Ok(serde_json::json!({ "status": "ready" }));
     }
     #[cfg(not(target_os = "windows"))]

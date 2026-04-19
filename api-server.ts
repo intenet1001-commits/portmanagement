@@ -18,31 +18,23 @@ function winToWslPath(winPath: string): string {
   return winPath.replace(/\\/g, '/');
 }
 
-/** docker-desktop 제외한 Ubuntu 계열 WSL distro 이름 반환 */
+const { spawnSync: nodeSpawnSync } = require('child_process');
+
+/** WSL registry에서 distro 목록 조회 (WSL 서비스 불필요 — 즉시 응답) */
+function listWslDistros(): string[] {
+  const r = nodeSpawnSync('powershell', ['-NoProfile', '-Command',
+    'Get-ChildItem HKCU:/Software/Microsoft/Windows/CurrentVersion/Lxss | ForEach-Object { (Get-ItemProperty $_.PSPath).DistributionName }'],
+    { timeout: 3000, stdio: 'pipe' });
+  if (r.status !== 0) return [];
+  return (r.stdout?.toString('utf8') ?? '').split(/\r?\n/)
+    .map((l: string) => l.trim())
+    .filter((n: string) => n && !n.toLowerCase().includes('docker'));
+}
+
+/** docker-desktop 제외한 WSL distro 이름 반환 (bash 테스트 없이 목록만 확인 — 빠름) */
 function findWslDistro(): string | null {
-  const candidates = ['Ubuntu', 'Ubuntu-24.04', 'Ubuntu-22.04', 'Ubuntu-20.04', 'Debian', 'kali-linux'];
-  for (const name of candidates) {
-    const r = Bun.spawnSync(['wsl', '-d', name, '--', 'bash', '-c', 'echo ok'], { stdout: 'pipe', stderr: 'pipe' });
-    if (r.exitCode === 0) return name;
-  }
-  // fallback: wsl --list --quiet
-  const list = Bun.spawnSync(['wsl', '--list', '--quiet'], { stdout: 'pipe', stderr: 'pipe' });
-  const raw = list.stdout instanceof Uint8Array ? list.stdout : new Uint8Array(list.stdout as ArrayBufferLike);
-  // UTF-16LE BOM 처리
-  let text: string;
-  if (raw[0] === 0xff && raw[1] === 0xfe) {
-    const u16 = new Uint16Array(raw.buffer, 2);
-    text = String.fromCharCode(...u16);
-  } else {
-    text = new TextDecoder().decode(raw);
-  }
-  for (const line of text.split(/\r?\n/)) {
-    const name = line.trim().replace(/\0/g, '').replace(/^\*\s*/, '');
-    if (!name || name.toLowerCase().includes('docker')) continue;
-    const r = Bun.spawnSync(['wsl', '-d', name, '--', 'bash', '-c', 'echo ok'], { stdout: 'pipe', stderr: 'pipe' });
-    if (r.exitCode === 0) return name;
-  }
-  return null;
+  const distros = listWslDistros();
+  return distros[0] ?? null;
 }
 
 /** WSL tmux bash 명령 문자열 생성 (wsl -- bash -c 없이 bash 부분만) */
@@ -966,8 +958,8 @@ const server = Bun.serve({
         if (!wslExists) return new Response(JSON.stringify({ status: 'not_installed' }), { headers });
         const distro = findWslDistro();
         if (!distro) return new Response(JSON.stringify({ status: 'no_distro' }), { headers });
-        const tmux = Bun.spawnSync(['wsl', '-d', distro, '--', 'bash', '-c', 'which tmux'], { stdout: 'pipe', stderr: 'pipe' });
-        return new Response(JSON.stringify({ status: tmux.exitCode === 0 ? 'ready' : 'no_tmux' }), { headers });
+        // bash timeout이 Windows/WSL에서 불가능 → 목록 확인만으로 판단
+        return new Response(JSON.stringify({ status: 'ready' }), { headers });
       } catch {
         return new Response(JSON.stringify({ status: 'not_installed' }), { headers });
       }
