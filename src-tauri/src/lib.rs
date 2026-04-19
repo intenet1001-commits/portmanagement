@@ -896,6 +896,125 @@ fn escape_sq(s: &str) -> String {
     s.replace("'", "'\\''")
 }
 
+#[cfg(target_os = "windows")]
+fn win_to_wsl_path(path: &str) -> String {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        let drive = path.chars().next().unwrap().to_ascii_lowercase();
+        let rest = path[2..].replace('\\', "/");
+        format!("/mnt/{}{}", drive, rest)
+    } else {
+        path.replace('\\', "/")
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn spawn_wt_wsl(bash_cmd: &str) -> Result<(), String> {
+    let has_wt = Command::new("where")
+        .args(["wt.exe"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if has_wt {
+        Command::new("wt.exe")
+            .args(["wsl", "--", "bash", "-c", bash_cmd])
+            .spawn()
+            .map_err(|e| format!("Windows Terminal 실행 실패: {}", e))?;
+    } else {
+        Command::new("cmd.exe")
+            .args(["/c", "start", "wsl", "--", "bash", "-c", bash_cmd])
+            .spawn()
+            .map_err(|e| format!("WSL 터미널 실행 실패: {}", e))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn check_wsl() -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "windows")]
+    {
+        // bash 유무로 진짜 Ubuntu 계열 distro 확인 (docker-desktop 등 미니멀 distro 걸러냄)
+        let bash_check = Command::new("wsl")
+            .args(["--", "bash", "-c", "echo ok"])
+            .output();
+        match bash_check {
+            Err(_) => return Ok(serde_json::json!({ "status": "not_installed" })),
+            Ok(out) if !out.status.success() => {
+                // wsl.exe 존재 여부로 not_installed vs no_distro 구분
+                let wsl_exists = Command::new("where")
+                    .arg("wsl.exe")
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                return Ok(serde_json::json!({
+                    "status": if wsl_exists { "no_distro" } else { "not_installed" }
+                }));
+            }
+            Ok(_) => {}
+        }
+        let tmux_ok = Command::new("wsl")
+            .args(["--", "bash", "-c", "which tmux"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !tmux_ok {
+            return Ok(serde_json::json!({ "status": "no_tmux" }));
+        }
+        return Ok(serde_json::json!({ "status": "ready" }));
+    }
+    #[cfg(not(target_os = "windows"))]
+    Ok(serde_json::json!({ "status": "ready" }))
+}
+
+#[tauri::command]
+fn install_wsl() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("powershell")
+            .args([
+                "-Command",
+                "Start-Process powershell -Verb RunAs -ArgumentList '-NoExit', '-Command', 'wsl --install; Write-Host \"설치 완료. PC를 재시작하세요.\"; pause'"
+            ])
+            .spawn()
+            .map_err(|e| format!("관리자 PowerShell 실행 실패: {}", e))?;
+        return Ok("WSL2 설치 창이 열렸습니다. UAC 허용 후 설치가 시작됩니다.".to_string());
+    }
+    #[cfg(not(target_os = "windows"))]
+    Ok("".to_string())
+}
+
+#[tauri::command]
+fn install_wsl_tmux() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        // root인 경우 sudo 불필요
+        let whoami = Command::new("wsl").args(["--", "bash", "-c", "whoami"]).output().ok();
+        let is_root = whoami.as_ref().map(|o| String::from_utf8_lossy(&o.stdout).trim() == "root").unwrap_or(false);
+        let install_cmd = if is_root {
+            "apt-get update -qq && apt-get install -y tmux"
+        } else {
+            "sudo apt-get update -qq && sudo apt-get install -y tmux"
+        };
+        let out = Command::new("wsl")
+            .args(["--", "bash", "-c", install_cmd])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if out.status.success() {
+            return Ok("tmux 설치 완료".to_string());
+        }
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("tmux 설치 실패: {}", stderr));
+    }
+    #[cfg(not(target_os = "windows"))]
+    Ok("".to_string())
+}
+
 #[tauri::command]
 fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
@@ -944,6 +1063,17 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
             .arg(&script)
             .spawn()
             .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let cd_path = worktree_path.as_ref()
+            .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+            .or_else(|| folder_path.clone())
+            .map(|p| win_to_wsl_path(&p));
+        let cd_part = cd_path.map(|p| format!("cd '{}' && ", escape_sq(&p))).unwrap_or_default();
+        let bash_cmd = format!("{}tmux new-session -A -s '{}' 'claude'", cd_part, escape_sq(&session_name));
+        spawn_wt_wsl(&bash_cmd)?;
     }
 
     Ok(format!("tmux + Claude 실행 중 (세션: {})", session_name))
@@ -998,6 +1128,21 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
             .spawn()
             .map_err(|e| format!("Failed to open iTerm: {}", e))?;
     }
+
+    #[cfg(target_os = "windows")]
+    {
+        let cd_path = worktree_path.as_ref()
+            .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+            .or_else(|| folder_path.clone())
+            .map(|p| win_to_wsl_path(&p));
+        let cd_part = cd_path.map(|p| format!("cd '{}' && ", escape_sq(&p))).unwrap_or_default();
+        let bash_cmd = format!(
+            "{}tmux kill-session -t '{}' 2>/dev/null; tmux new-session -s '{}' 'claude'",
+            cd_part, escape_sq(&session_name), escape_sq(&session_name)
+        );
+        spawn_wt_wsl(&bash_cmd)?;
+    }
+
     Ok(format!("tmux 새 세션 시작 (세션: {})", session_name))
 }
 
@@ -1048,6 +1193,22 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
             .spawn()
             .map_err(|e| format!("Failed to open iTerm: {}", e))?;
     }
+
+    #[cfg(target_os = "windows")]
+    {
+        let cd_path = worktree_path.as_ref()
+            .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+            .or_else(|| folder_path.clone())
+            .map(|p| win_to_wsl_path(&p));
+        let cd_part = cd_path.map(|p| format!("cd '{}' && ", escape_sq(&p))).unwrap_or_default();
+        let bypass_session = format!("{}-bypass", escape_sq(&session_name));
+        let bash_cmd = format!(
+            "{}tmux new-session -A -s '{}' 'claude --dangerously-skip-permissions'",
+            cd_part, bypass_session
+        );
+        spawn_wt_wsl(&bash_cmd)?;
+    }
+
     Ok(format!("tmux + Claude (bypass) 실행 중 (세션: {}-bypass)", session_name))
 }
 
@@ -1610,6 +1771,9 @@ pub fn run() {
         import_ports_from_file,
         open_in_chrome,
         open_log,
+        check_wsl,
+        install_wsl,
+        install_wsl_tmux,
         open_tmux_claude,
         open_tmux_claude_fresh,
         open_tmux_claude_bypass,

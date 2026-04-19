@@ -332,6 +332,25 @@ const API = {
     }
   },
 
+  async checkWsl(): Promise<{ status: string }> {
+    if (isTauri()) return invoke<{ status: string }>('check_wsl');
+    const res = await fetch('/api/check-wsl');
+    return res.json();
+  },
+
+  async installWsl(): Promise<string> {
+    if (isTauri()) return invoke<string>('install_wsl');
+    throw new Error('WSL 설치는 설치된 앱에서만 가능합니다');
+  },
+
+  async installWslTmux(): Promise<string> {
+    if (isTauri()) return invoke<string>('install_wsl_tmux');
+    const res = await fetch('/api/install-wsl-tmux', { method: 'POST' });
+    const d = await res.json();
+    if (!d.success) throw new Error(d.error);
+    return d.message ?? 'tmux 설치 완료';
+  },
+
   async openTerminalClaudeBypass(folderPath?: string, name?: string, worktreePath?: string): Promise<string> {
     if (isTauri()) {
       return invoke<string>('open_terminal_claude_bypass', { folderPath: folderPath ?? null, name: name ?? null, worktreePath: worktreePath ?? null });
@@ -782,6 +801,82 @@ function MemoAccordionItem({ portId, memo, onSave }: {
   );
 }
 
+// WSL 설치/설정 안내 모달
+function WslSetupModal({ status, onClose, onInstallTmux }: {
+  status: string;
+  onClose: () => void;
+  onInstallTmux: () => void;
+}) {
+  const Step = ({ n, text }: { n: number; text: React.ReactNode }) => (
+    <li className="flex gap-2">
+      <span className="shrink-0 w-4 h-4 rounded-full bg-blue-600 text-white text-[10px] flex items-center justify-center mt-0.5">{n}</span>
+      <span className="text-zinc-400">{text}</span>
+    </li>
+  );
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+      <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 w-[460px] shadow-2xl">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-white">
+            {status === 'not_installed' ? '⚙️ WSL2 설치 필요' :
+             status === 'no_distro'    ? '🐧 Ubuntu 설치 필요' :
+             status === 'no_tmux'      ? '📦 tmux 설치 필요' : 'WSL2 설정'}
+          </h2>
+          <button onClick={onClose} className="text-zinc-500 hover:text-white transition-colors"><XIcon size={16} /></button>
+        </div>
+
+        {status === 'not_installed' && (
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-400">Windows에서 tmux를 쓰려면 <strong className="text-zinc-200">WSL2 + Ubuntu</strong>가 필요합니다.</p>
+            <ol className="text-xs space-y-2 list-none">
+              <Step n={1} text={<>아래 버튼 클릭 → UAC 허용 → <code className="text-zinc-300 bg-zinc-800 px-1 rounded">wsl --install</code> 자동 실행</>} />
+              <Step n={2} text="설치 완료 후 PC 재시작" />
+              <Step n={3} text="Ubuntu 첫 실행 시 사용자명/비밀번호 설정" />
+              <Step n={4} text={<>Ubuntu 터미널에서: <code className="text-zinc-300 bg-zinc-800 px-1 rounded">sudo apt install tmux</code></>} />
+              <Step n={5} text={<>Claude Code 설치: <code className="text-zinc-300 bg-zinc-800 px-1 rounded">npm i -g @anthropic-ai/claude-code</code></>} />
+            </ol>
+            <button
+              onClick={async () => { await API.installWsl().catch(() => {}); onClose(); }}
+              className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors font-medium"
+            >🚀 WSL2 + Ubuntu 설치 시작 (관리자 권한 필요)</button>
+          </div>
+        )}
+
+        {status === 'no_distro' && (
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-400">WSL2 커널은 있지만 <strong className="text-zinc-200">Ubuntu가 없습니다</strong>. (Docker Desktop 전용 WSL만 감지됨)</p>
+            <ol className="text-xs space-y-2 list-none">
+              <Step n={1} text={<>아래 버튼 클릭 → UAC 허용 → <code className="text-zinc-300 bg-zinc-800 px-1 rounded">wsl --install -d Ubuntu</code> 실행</>} />
+              <Step n={2} text="Ubuntu 첫 실행 시 사용자명/비밀번호 설정 완료" />
+              <Step n={3} text={<>Ubuntu 터미널에서: <code className="text-zinc-300 bg-zinc-800 px-1 rounded">sudo apt install tmux</code></>} />
+              <Step n={4} text={<>Claude Code 설치: <code className="text-zinc-300 bg-zinc-800 px-1 rounded">npm i -g @anthropic-ai/claude-code</code></>} />
+            </ol>
+            <button
+              onClick={async () => { await API.installWsl().catch(() => {}); onClose(); }}
+              className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors font-medium"
+            >🐧 Ubuntu 설치 시작 (관리자 권한 필요)</button>
+            <p className="text-[10px] text-zinc-600">또는 PowerShell에서 직접: <code className="text-zinc-500">wsl --install -d Ubuntu</code></p>
+          </div>
+        )}
+
+        {status === 'no_tmux' && (
+          <div className="space-y-3">
+            <p className="text-xs text-zinc-400">WSL2 Ubuntu는 준비됐지만 <strong className="text-zinc-200">tmux가 없습니다</strong>. 자동 설치가 가능합니다.</p>
+            <div className="bg-zinc-800 rounded-lg p-3 text-xs text-zinc-300 font-mono">sudo apt-get install -y tmux</div>
+            <button
+              onClick={() => { onInstallTmux(); onClose(); }}
+              className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors font-medium"
+            >📦 tmux 자동 설치</button>
+            <p className="text-[10px] text-zinc-500">설치 후 다시 tmux 버튼을 누르면 됩니다. Claude Code도 WSL 안에 설치되어야 합니다: <code>npm i -g @anthropic-ai/claude-code</code></p>
+            <button onClick={onClose} className="w-full px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-white text-xs rounded-lg transition-colors">취소</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -804,6 +899,7 @@ function App() {
   const [openPortalSettings, setOpenPortalSettings] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [showGuideModal, setShowGuideModal] = useState(false);
+  const [wslSetupStatus, setWslSetupStatus] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [memos, setMemos] = useState<Record<string, { content: string; updatedAt: string }>>({});
   const [sortBy, setSortBy] = useState<SortType>(
@@ -1077,7 +1173,30 @@ function App() {
     }
   };
 
+  const checkWslReady = async (): Promise<boolean> => {
+    if (!isWindows()) return true;
+    try {
+      const { status } = await API.checkWsl();
+      if (status === 'ready') return true;
+      setWslSetupStatus(status);
+      return false;
+    } catch {
+      return true; // WSL 확인 실패 시 그냥 진행
+    }
+  };
+
+  const handleInstallWslTmux = async () => {
+    showToast('tmux 설치 중...', 'success');
+    try {
+      await API.installWslTmux();
+      showToast('tmux 설치 완료!', 'success');
+    } catch (e) {
+      showToast(`tmux 설치 실패: ${e}`, 'error');
+    }
+  };
+
   const openTmuxClaudeFresh = async (item: PortInfo) => {
+    if (!await checkWslReady()) return;
     const sessionName = getSessionName(item);
     try {
       if (bypassPermissions) {
@@ -1093,6 +1212,7 @@ function App() {
   };
 
   const _executeTmuxClaude = async (item: PortInfo, worktreePath: string | undefined) => {
+    if (!await checkWslReady()) return;
     const sessionName = getSessionName(item);
     try {
       if (bypassPermissions) {
@@ -3520,6 +3640,14 @@ function App() {
             </div>
           );
         })()}
+
+        {wslSetupStatus && (
+          <WslSetupModal
+            status={wslSetupStatus}
+            onClose={() => setWslSetupStatus(null)}
+            onInstallTmux={handleInstallWslTmux}
+          />
+        )}
 
         {showSetupWizard && (
           <SetupWizard

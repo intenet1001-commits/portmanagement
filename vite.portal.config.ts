@@ -6,7 +6,7 @@ export default defineConfig({
   build: {
     outDir: 'dist-portal',
     rollupOptions: {
-      input: { index: 'portal.html' },
+      input: { index: 'portal.html', setup: 'setup.html' },
     },
   },
   optimizeDeps: {

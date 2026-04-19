@@ -8,6 +8,39 @@ const escapeSq = (s: string): string => s.replace(/'/g, "'\\''");
 
 const IS_WIN = process.platform === 'win32';
 
+/** Windows 경로를 WSL /mnt/... 경로로 변환 */
+function winToWslPath(winPath: string): string {
+  if (winPath.length >= 2 && winPath[1] === ':') {
+    const drive = winPath[0].toLowerCase();
+    const rest = winPath.slice(2).replace(/\\/g, '/');
+    return `/mnt/${drive}${rest}`;
+  }
+  return winPath.replace(/\\/g, '/');
+}
+
+/** WSL tmux bash 명령 문자열 생성 (wsl -- bash -c 없이 bash 부분만) */
+function buildWslTmuxBashCmd(sessionName: string, folderPath: string | null, worktreePath: string | null, fresh: boolean, bypass: boolean): string {
+  const rawPath = worktreePath?.split(',')[0]?.trim() || folderPath;
+  const wslPath = rawPath ? winToWslPath(rawPath) : null;
+  const cdPart = wslPath ? `cd '${escapeSq(wslPath)}' && ` : '';
+  const sess = escapeSq(bypass ? `${sessionName}-bypass` : sessionName);
+  const claudeArgs = bypass ? 'claude --dangerously-skip-permissions' : 'claude';
+  if (fresh) {
+    return `${cdPart}tmux kill-session -t '${sess}' 2>/dev/null; tmux new-session -s '${sess}' '${claudeArgs}'`;
+  }
+  return `${cdPart}tmux new-session -A -s '${sess}' '${claudeArgs}'`;
+}
+
+/** WSL tmux 세션 열기 (Windows Terminal 우선, 없으면 cmd 폴백) */
+function spawnWslTmux(bashCmd: string): void {
+  const hasWt = Bun.spawnSync(['where', 'wt.exe'], { stdout: 'pipe', stderr: 'pipe' }).exitCode === 0;
+  if (hasWt) {
+    spawn({ cmd: ['wt.exe', 'wsl', '--', 'bash', '-c', bashCmd], stdout: 'inherit', stderr: 'inherit' });
+  } else {
+    spawn({ cmd: ['cmd.exe', '/c', 'start', 'wsl', '--', 'bash', '-c', bashCmd], stdout: 'inherit', stderr: 'inherit' });
+  }
+}
+
 /** 포트를 사용 중인 PID 목록 반환 (Windows/macOS 공용) */
 async function getPidsByPort(port: number): Promise<string[]> {
   if (IS_WIN) {
@@ -855,10 +888,12 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
-        const claudeCmd = IS_WIN
-          ? (worktreePath ? `claude -w "${worktreePath}"` : 'claude')
-          : `tmux new-session -A -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
-        openTerminalWithCmd(claudeCmd, folderPath ?? null, `[tmux] ${sessionName}`);
+        if (IS_WIN) {
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, false));
+        } else {
+          const claudeCmd = `tmux new-session -A -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
+          openTerminalWithCmd(claudeCmd, folderPath ?? null, `[tmux] ${sessionName}`);
+        }
         return new Response(JSON.stringify({ success: true, message: `Claude 실행 중 (세션: ${sessionName})` }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
@@ -868,10 +903,12 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude-fresh" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
-        const claudeCmd = IS_WIN
-          ? (worktreePath ? `claude -w "${worktreePath}"` : 'claude')
-          : `tmux kill-session -t '${escapeSq(sessionName)}' 2>/dev/null; tmux new-session -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
-        openTerminalWithCmd(claudeCmd, folderPath ?? null, `[fresh] ${sessionName}`);
+        if (IS_WIN) {
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, true, false));
+        } else {
+          const claudeCmd = `tmux kill-session -t '${escapeSq(sessionName)}' 2>/dev/null; tmux new-session -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
+          openTerminalWithCmd(claudeCmd, folderPath ?? null, `[fresh] ${sessionName}`);
+        }
         return new Response(JSON.stringify({ success: true, message: `Claude 새 세션 시작 (${sessionName})` }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
@@ -881,13 +918,49 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-tmux-claude-bypass" && req.method === "POST") {
       try {
         const { sessionName, folderPath, worktreePath } = await req.json();
-        const claudeCmd = IS_WIN
-          ? (worktreePath ? `claude --dangerously-skip-permissions -w "${worktreePath}"` : 'claude --dangerously-skip-permissions')
-          : `tmux new-session -A -s '${escapeSq(sessionName)}-bypass' '${worktreePath ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'` : 'claude --dangerously-skip-permissions'}'`;
-        openTerminalWithCmd(claudeCmd, folderPath ?? null, `[bypass] ${sessionName}`);
+        if (IS_WIN) {
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, true));
+        } else {
+          const claudeCmd = `tmux new-session -A -s '${escapeSq(sessionName)}-bypass' '${worktreePath ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'` : 'claude --dangerously-skip-permissions'}'`;
+          openTerminalWithCmd(claudeCmd, folderPath ?? null, `[bypass] ${sessionName}`);
+        }
         return new Response(JSON.stringify({ success: true, message: `Claude bypass 실행 중 (${sessionName})` }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/check-wsl" && req.method === "GET") {
+      if (!IS_WIN) return new Response(JSON.stringify({ status: 'ready' }), { headers });
+      try {
+        // bash 유무로 진짜 Ubuntu 계열 distro 확인 (docker-desktop 등 미니멀 distro 걸러냄)
+        const bashCheck = Bun.spawnSync(['wsl', '--', 'bash', '-c', 'echo ok'], { stdout: 'pipe', stderr: 'pipe' });
+        if (bashCheck.exitCode !== 0) {
+          // wsl.exe 자체가 없으면 not_installed, 있지만 bash 없으면 no_distro
+          const wslExists = Bun.spawnSync(['where', 'wsl.exe'], { stdout: 'pipe', stderr: 'pipe' });
+          return new Response(JSON.stringify({ status: wslExists.exitCode === 0 ? 'no_distro' : 'not_installed' }), { headers });
+        }
+        const tmux = Bun.spawnSync(['wsl', '--', 'bash', '-c', 'which tmux'], { stdout: 'pipe', stderr: 'pipe' });
+        return new Response(JSON.stringify({ status: tmux.exitCode === 0 ? 'ready' : 'no_tmux' }), { headers });
+      } catch {
+        return new Response(JSON.stringify({ status: 'not_installed' }), { headers });
+      }
+    }
+
+    if (url.pathname === "/api/install-wsl-tmux" && req.method === "POST") {
+      if (!IS_WIN) return new Response(JSON.stringify({ success: true }), { headers });
+      try {
+        // root인 경우 sudo 불필요
+        const whoami = Bun.spawnSync(['wsl', '--', 'bash', '-c', 'whoami'], { stdout: 'pipe', stderr: 'pipe' });
+        const isRoot = new TextDecoder().decode(whoami.stdout).trim() === 'root';
+        const installCmd = isRoot
+          ? 'apt-get update -qq && apt-get install -y tmux'
+          : 'sudo apt-get update -qq && sudo apt-get install -y tmux';
+        const out = Bun.spawnSync(['wsl', '--', 'bash', '-c', installCmd], { stdout: 'pipe', stderr: 'pipe', timeout: 120000 });
+        if (out.exitCode === 0) return new Response(JSON.stringify({ success: true }), { headers });
+        return new Response(JSON.stringify({ success: false, error: new TextDecoder().decode(out.stderr) }), { status: 500, headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers });
       }
     }
 

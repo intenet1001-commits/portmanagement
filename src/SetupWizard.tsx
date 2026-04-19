@@ -9,7 +9,7 @@ interface SetupWizardProps {
   onSkip: () => void;
 }
 
-type Mode = 'choose' | 'first' | 'additional' | 'portal';
+type Mode = 'choose' | 'first' | 'additional' | 'portal' | 'windows_env' | 'mac_env';
 type OS = 'mac' | 'windows';
 
 // ─── CLI Auto-fill Component ──────────────────────────────────────────────────
@@ -746,6 +746,288 @@ create table if not exists portal_categories (
 alter table portal_items disable row level security;
 alter table portal_categories disable row level security;`;
 
+// ─── Shared helpers ───────────────────────────────────────────────────────────
+
+function CmdBlock({ cmd, label }: { cmd: string; label?: string }) {
+  const [copied, setCopied] = React.useState(false);
+  return (
+    <div className="relative group">
+      {label && <p className="text-[10px] text-zinc-500 mb-1">{label}</p>}
+      <div className="flex items-center gap-2 bg-zinc-800/80 border border-zinc-700/50 rounded-lg px-3 py-2">
+        <code className="text-xs text-zinc-200 font-mono flex-1 select-all">{cmd}</code>
+        <button
+          onClick={() => { navigator.clipboard.writeText(cmd); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+          className="shrink-0 text-zinc-500 hover:text-zinc-200 transition-colors"
+        >
+          {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StepDots({ total, current }: { total: number; current: number }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {Array.from({ length: total }).map((_, i) => (
+        <div key={i} className={`w-1.5 h-1.5 rounded-full transition-all ${i === current ? 'bg-blue-400 w-3' : i < current ? 'bg-zinc-500' : 'bg-zinc-700'}`} />
+      ))}
+    </div>
+  );
+}
+
+// ─── Windows 개발 환경 설정 마법사 ─────────────────────────────────────────────
+
+function WindowsEnvWizard({ onBack }: { onBack: () => void }) {
+  const [step, setStep] = useState(0);
+  const [wslStatus, setWslStatus] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [installMsg, setInstallMsg] = useState('');
+  const totalSteps = 4;
+
+  async function checkWsl() {
+    setChecking(true);
+    try {
+      const res = await fetch('/api/check-wsl');
+      if (res.ok) { const d = await res.json(); setWslStatus(d.status); }
+      else setWslStatus('unknown');
+    } catch { setWslStatus('offline'); }
+    finally { setChecking(false); }
+  }
+
+  async function installTmux() {
+    setInstalling(true); setInstallMsg('tmux 설치 중...');
+    try {
+      const res = await fetch('/api/install-wsl-tmux', { method: 'POST' });
+      const d = await res.json();
+      setInstallMsg(d.success ? '✅ tmux 설치 완료' : `❌ ${d.error}`);
+      if (d.success) setWslStatus('ready');
+    } catch { setInstallMsg('❌ api-server에 연결할 수 없습니다'); }
+    finally { setInstalling(false); }
+  }
+
+  const statusLabel: Record<string, { color: string; text: string }> = {
+    ready:          { color: 'text-green-400',  text: '✅ 준비 완료' },
+    no_tmux:        { color: 'text-yellow-400', text: '⚠️ tmux 미설치' },
+    no_distro:      { color: 'text-orange-400', text: '⚠️ Ubuntu 없음' },
+    not_installed:  { color: 'text-red-400',    text: '❌ WSL2 미설치' },
+    offline:        { color: 'text-zinc-500',   text: '— 앱에서 확인 가능' },
+    unknown:        { color: 'text-zinc-500',   text: '— 확인 불가' },
+  };
+
+  const steps = [
+    {
+      title: 'WSL2 + Ubuntu 설치',
+      content: (
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">Windows에서 tmux·Claude Code를 쓰려면 <strong className="text-zinc-200">WSL2 + Ubuntu</strong>가 필요합니다.</p>
+          <div className="space-y-2">
+            <CmdBlock cmd="wsl --install" label="① PowerShell (관리자)에서 실행" />
+            <p className="text-xs text-zinc-500">→ 설치 후 <strong className="text-zinc-300">PC 재시작</strong>, Ubuntu 첫 실행 시 사용자명·비밀번호 설정</p>
+          </div>
+          <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-3 text-xs text-zinc-400 space-y-1">
+            <p className="font-medium text-zinc-300">이미 설치되어 있다면?</p>
+            <p>아래 버튼으로 상태 확인 후 다음 단계로 넘어가세요.</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={checkWsl} disabled={checking}
+              className="flex-1 px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-white text-xs rounded-lg transition-colors disabled:opacity-50">
+              {checking ? '확인 중...' : '🔍 WSL 상태 확인'}
+            </button>
+            {wslStatus && (
+              <span className={`flex items-center text-xs font-mono ${statusLabel[wslStatus]?.color ?? 'text-zinc-500'}`}>
+                {statusLabel[wslStatus]?.text ?? wslStatus}
+              </span>
+            )}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: 'Claude Code 설치 (WSL)',
+      content: (
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">Ubuntu 터미널 또는 Windows Terminal에서 WSL을 열고 아래 명령을 실행하세요.</p>
+          <CmdBlock cmd="curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs" label="① Node.js 설치 (없는 경우)" />
+          <CmdBlock cmd="npm install -g @anthropic-ai/claude-code" label="② Claude Code 설치" />
+          <CmdBlock cmd="claude --version" label="③ 설치 확인" />
+          <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
+            💡 Claude Code는 WSL Ubuntu 안에 설치합니다. Windows 네이티브 설치는 지원하지 않습니다.
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: 'tmux 설치',
+      content: (
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">멀티 에이전트 기능(tmux 버튼)을 쓰려면 WSL 안에 tmux가 필요합니다.</p>
+          <CmdBlock cmd="sudo apt-get install -y tmux" label="Ubuntu 터미널에서 실행" />
+          <CmdBlock cmd="tmux -V" label="설치 확인" />
+          {installMsg && <p className={`text-xs font-mono ${installMsg.startsWith('✅') ? 'text-green-400' : 'text-red-400'}`}>{installMsg}</p>}
+          <button onClick={installTmux} disabled={installing}
+            className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors disabled:opacity-50">
+            {installing ? '설치 중...' : '📦 앱에서 자동 설치 (api-server 실행 중인 경우)'}
+          </button>
+        </div>
+      ),
+    },
+    {
+      title: '완료',
+      content: (
+        <div className="space-y-4 text-center">
+          <div className="text-5xl">🎉</div>
+          <p className="text-base font-semibold text-white">설정 완료!</p>
+          <p className="text-sm text-zinc-400">이제 앱의 tmux 버튼으로 WSL 안에서 Claude Code 세션을 바로 열 수 있습니다.</p>
+          <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-3 text-xs text-zinc-400 text-left space-y-1.5">
+            <p className="font-medium text-zinc-300 mb-1">다음 단계</p>
+            <p>• <strong className="text-zinc-300">Supabase 연동</strong>: 여러 기기 간 포트/포털 동기화</p>
+            <p>• <strong className="text-zinc-300">포털 Vercel 배포</strong>: 북마크를 스마트폰에서도 접근</p>
+            <p>• 상단 메뉴 → <strong className="text-zinc-300">⚙️ 설정</strong>에서 언제든 다시 열 수 있습니다</p>
+          </div>
+          <button onClick={onBack}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors">
+            설정 마법사 홈으로
+          </button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <div className="h-full flex flex-col p-8">
+      <button onClick={onBack} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-6 transition-colors w-fit">
+        <ChevronRight className="w-3.5 h-3.5 rotate-180" /> 뒤로
+      </button>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-bold text-white flex items-center gap-2">
+          <Monitor className="w-5 h-5 text-blue-400" /> Windows 개발 환경 설정
+        </h2>
+        <StepDots total={totalSteps} current={step} />
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <h3 className="text-sm font-semibold text-zinc-300 mb-4">{step + 1}. {steps[step].title}</h3>
+        {steps[step].content}
+      </div>
+      <div className="flex gap-3 mt-6 pt-4 border-t border-zinc-800">
+        {step > 0 && (
+          <button onClick={() => setStep(s => s - 1)}
+            className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white text-xs rounded-lg transition-colors">
+            이전
+          </button>
+        )}
+        {step < totalSteps - 1 && (
+          <button onClick={() => setStep(s => s + 1)}
+            className="ml-auto px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors">
+            다음 →
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── macOS 개발 환경 설정 마법사 ──────────────────────────────────────────────
+
+function MacEnvWizard({ onBack }: { onBack: () => void }) {
+  const [step, setStep] = useState(0);
+  const totalSteps = 4;
+
+  const steps = [
+    {
+      title: 'Homebrew 설치',
+      content: (
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">macOS 패키지 매니저 Homebrew가 없으면 먼저 설치합니다.</p>
+          <CmdBlock cmd='/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"' label="Terminal에서 실행" />
+          <CmdBlock cmd="brew --version" label="설치 확인" />
+          <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-3 text-xs text-zinc-400">
+            이미 설치되어 있다면 그냥 다음으로 넘어가세요.
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: 'Claude Code 설치',
+      content: (
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">Node.js가 필요합니다. Homebrew로 설치하는 방법이 가장 편합니다.</p>
+          <CmdBlock cmd="brew install node" label="① Node.js 설치 (없는 경우)" />
+          <CmdBlock cmd="npm install -g @anthropic-ai/claude-code" label="② Claude Code 설치" />
+          <CmdBlock cmd="claude --version" label="③ 설치 확인" />
+          <CmdBlock cmd="claude" label="④ 첫 실행 → Anthropic 계정 인증" />
+        </div>
+      ),
+    },
+    {
+      title: 'tmux + iTerm2 설치',
+      content: (
+        <div className="space-y-4">
+          <p className="text-sm text-zinc-400">tmux 버튼은 iTerm2 터미널에서 tmux 세션을 엽니다. 두 가지 모두 설치하세요.</p>
+          <CmdBlock cmd="brew install tmux" label="tmux 설치" />
+          <CmdBlock cmd="brew install --cask iterm2" label="iTerm2 설치 (없는 경우)" />
+          <CmdBlock cmd="tmux -V" label="tmux 설치 확인" />
+          <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3 text-xs text-blue-300">
+            💡 iTerm2가 없으면 tmux 버튼이 동작하지 않습니다. Terminal.app은 지원하지 않습니다.
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: '완료',
+      content: (
+        <div className="space-y-4 text-center">
+          <div className="text-5xl">🎉</div>
+          <p className="text-base font-semibold text-white">설정 완료!</p>
+          <p className="text-sm text-zinc-400">이제 앱의 tmux 버튼으로 iTerm2에서 Claude Code 세션을 바로 열 수 있습니다.</p>
+          <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-3 text-xs text-zinc-400 text-left space-y-1.5">
+            <p className="font-medium text-zinc-300 mb-1">다음 단계</p>
+            <p>• <strong className="text-zinc-300">Supabase 연동</strong>: 여러 기기 간 포트/포털 동기화 → "처음 사용"</p>
+            <p>• <strong className="text-zinc-300">포털 Vercel 배포</strong>: 북마크를 스마트폰에서도 접근</p>
+          </div>
+          <button onClick={onBack}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors">
+            설정 마법사 홈으로
+          </button>
+        </div>
+      ),
+    },
+  ];
+
+  return (
+    <div className="h-full flex flex-col p-8">
+      <button onClick={onBack} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 mb-6 transition-colors w-fit">
+        <ChevronRight className="w-3.5 h-3.5 rotate-180" /> 뒤로
+      </button>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-xl font-bold text-white flex items-center gap-2">
+          <Terminal className="w-5 h-5 text-emerald-400" /> macOS 개발 환경 설정
+        </h2>
+        <StepDots total={totalSteps} current={step} />
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        <h3 className="text-sm font-semibold text-zinc-300 mb-4">{step + 1}. {steps[step].title}</h3>
+        {steps[step].content}
+      </div>
+      <div className="flex gap-3 mt-6 pt-4 border-t border-zinc-800">
+        {step > 0 && (
+          <button onClick={() => setStep(s => s - 1)}
+            className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 text-white text-xs rounded-lg transition-colors">
+            이전
+          </button>
+        )}
+        {step < totalSteps - 1 && (
+          <button onClick={() => setStep(s => s + 1)}
+            className="ml-auto px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors">
+            다음 →
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function PortalVercelWizard({ onBack, onClose }: { onBack: () => void; onClose: () => void }) {
   const [step, setStep] = useState(0);
   const [os, setOs] = useState<OS>('mac');
@@ -1095,7 +1377,7 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                 <h2 className="text-2xl font-bold text-white">어떤 상황인가요?</h2>
                 <p className="text-zinc-400 text-sm">상황에 맞는 맞춤 가이드로 안내합니다.</p>
               </div>
-              <div className="grid grid-cols-3 gap-4 w-full max-w-2xl">
+              <div className="grid grid-cols-3 gap-4 w-full max-w-3xl">
                 <button onClick={() => setMode('first')}
                   className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-blue-500/50 rounded-2xl p-7 text-left transition-all duration-200">
                   <div className="w-10 h-10 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-blue-500/20 transition-all">
@@ -1129,12 +1411,36 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
+                <button onClick={() => setMode('windows_env')}
+                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-sky-500/50 rounded-2xl p-7 text-left transition-all duration-200">
+                  <div className="w-10 h-10 bg-sky-500/10 border border-sky-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-sky-500/20 transition-all">
+                    <Monitor className="w-5 h-5 text-sky-400" />
+                  </div>
+                  <h3 className="text-base font-semibold text-white mb-1">Windows 개발 환경</h3>
+                  <p className="text-sm text-zinc-500 leading-relaxed">WSL2 · Claude Code · tmux<br />Windows 초기 설정 가이드</p>
+                  <div className="flex items-center gap-1 text-sky-400 text-xs mt-4 group-hover:gap-2 transition-all">
+                    시작하기 <ChevronRight className="w-3.5 h-3.5" />
+                  </div>
+                </button>
+                <button onClick={() => setMode('mac_env')}
+                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-orange-500/50 rounded-2xl p-7 text-left transition-all duration-200">
+                  <div className="w-10 h-10 bg-orange-500/10 border border-orange-500/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-orange-500/20 transition-all">
+                    <Terminal className="w-5 h-5 text-orange-400" />
+                  </div>
+                  <h3 className="text-base font-semibold text-white mb-1">macOS 개발 환경</h3>
+                  <p className="text-sm text-zinc-500 leading-relaxed">Homebrew · Claude Code · tmux<br />macOS 초기 설정 가이드</p>
+                  <div className="flex items-center gap-1 text-orange-400 text-xs mt-4 group-hover:gap-2 transition-all">
+                    시작하기 <ChevronRight className="w-3.5 h-3.5" />
+                  </div>
+                </button>
               </div>
             </div>
           )}
           {mode === 'first' && <FirstSetupWizard onComplete={onComplete} onBack={() => setMode('choose')} />}
           {mode === 'additional' && <AdditionalDeviceWizard onComplete={onComplete} onBack={() => setMode('choose')} />}
           {mode === 'portal' && <PortalVercelWizard onBack={() => setMode('choose')} onClose={onSkip} />}
+          {mode === 'windows_env' && <WindowsEnvWizard onBack={() => setMode('choose')} />}
+          {mode === 'mac_env' && <MacEnvWizard onBack={() => setMode('choose')} />}
         </div>
       </div>
     </div>
