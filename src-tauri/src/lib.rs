@@ -1021,17 +1021,8 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
     #[cfg(target_os = "macos")]
     {
         let esc_session = escape_sq(&session_name);
-        // 워크트리 basename 추출 → 창 제목에 포함
-        let wt_basename = worktree_path.as_ref().and_then(|wt| {
-            wt.trim_end_matches('/').rsplit('/').next().map(|s| s.to_string())
-        });
-        let display_name = if let Some(ref wt) = wt_basename {
-            format!("{} ({})", session_name, wt)
-        } else {
-            session_name.clone()
-        };
-        let esc_display = escape_sq(&display_name);
-        let escaped_title = format!("[tmux] {}", display_name).replace('\\', "\\\\").replace('"', "\\\"");
+        let esc_display = escape_sq(&session_name);
+        let escaped_title = format!("[tmux] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
@@ -1049,9 +1040,9 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
             .or_else(|| folder_path.clone());
         let claude_cmd_dq = claude_cmd.replace('"', "'");
         let cmd = if let Some(ref cd) = cd_target {
-            format!("cd '{}' && printf '\\033]0;[tmux] {}\\007'; tmux new-session -A -s '{}' \"{}\"", escape_sq(cd), esc_display, esc_session, claude_cmd_dq)
+            format!("cd '{}' && printf '\\033]0;[tmux] {}\\007'; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux new-session -A -s '{}' -n '{}' \"{}\"", escape_sq(cd), esc_display, esc_session, esc_display, esc_session, esc_display, claude_cmd_dq)
         } else {
-            format!("printf '\\033]0;[tmux] {}\\007'; tmux new-session -A -s '{}' \"{}\"", esc_display, esc_session, claude_cmd_dq)
+            format!("printf '\\033]0;[tmux] {}\\007'; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux new-session -A -s '{}' -n '{}' \"{}\"", esc_display, esc_session, esc_display, esc_session, esc_display, claude_cmd_dq)
         };
 
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
@@ -1085,16 +1076,8 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
     #[cfg(target_os = "macos")]
     {
         let esc_session = escape_sq(&session_name);
-        let wt_basename = worktree_path.as_ref().and_then(|wt| {
-            wt.trim_end_matches('/').rsplit('/').next().map(|s| s.to_string())
-        });
-        let display_name = if let Some(ref wt) = wt_basename {
-            format!("{} ({})", session_name, wt)
-        } else {
-            session_name.clone()
-        };
-        let esc_display = escape_sq(&display_name);
-        let escaped_title = format!("[tmux-fresh] {}", display_name).replace('\\', "\\\\").replace('"', "\\\"");
+        let esc_display = escape_sq(&session_name);
+        let escaped_title = format!("[tmux-fresh] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
@@ -1113,9 +1096,9 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
             .or_else(|| folder_path.clone());
         let claude_cmd_dq = claude_cmd.replace('"', "'");
         let new_cmd = if let Some(ref cd) = cd_target {
-            format!("cd '{}' && printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' \"{}\"", escape_sq(cd), esc_display, esc_session, claude_cmd_dq)
+            format!("cd '{}' && printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' -n '{}' \"{}\"", escape_sq(cd), esc_display, esc_session, esc_display, claude_cmd_dq)
         } else {
-            format!("printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' \"{}\"", esc_display, esc_session, claude_cmd_dq)
+            format!("printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' -n '{}' \"{}\"", esc_display, esc_session, esc_display, claude_cmd_dq)
         };
         let cmd = format!("{}; {}", kill_cmd, new_cmd);
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
@@ -1152,16 +1135,8 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
     #[cfg(target_os = "macos")]
     {
         let esc_session = escape_sq(&session_name);
-        let wt_basename = worktree_path.as_ref().and_then(|wt| {
-            wt.trim_end_matches('/').rsplit('/').next().map(|s| s.to_string())
-        });
-        let display_name = if let Some(ref wt) = wt_basename {
-            format!("{} ({})", session_name, wt)
-        } else {
-            session_name.clone()
-        };
-        let esc_display = escape_sq(&display_name);
-        let escaped_title = format!("[tmux-bypass] {}", display_name).replace('\\', "\\\\").replace('"', "\\\"");
+        let esc_display = escape_sq(&session_name);
+        let escaped_title = format!("[tmux-bypass] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
         let claude_cmd = if let Some(ref wt) = worktree_path {
             let flags: String = wt.split(',')
                 .map(|p| p.trim())
@@ -1179,9 +1154,9 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
             .or_else(|| folder_path.clone());
         let claude_cmd_dq = claude_cmd.replace('"', "'");
         let cmd = if let Some(ref cd) = cd_target {
-            format!("cd '{}' && printf '\\033]0;[tmux-bypass] {}\\007'; tmux new-session -A -s '{}-bypass' \"{}\"", escape_sq(cd), esc_display, esc_session, claude_cmd_dq)
+            format!("cd '{}' && printf '\\033]0;[tmux-bypass] {}\\007'; tmux rename-window -t '{}-bypass' '{}' 2>/dev/null; tmux new-session -A -s '{}-bypass' -n '{}' \"{}\"", escape_sq(cd), esc_display, esc_session, esc_display, esc_session, esc_display, claude_cmd_dq)
         } else {
-            format!("printf '\\033]0;[tmux-bypass] {}\\007'; tmux new-session -A -s '{}-bypass' \"{}\"", esc_display, esc_session, claude_cmd_dq)
+            format!("printf '\\033]0;[tmux-bypass] {}\\007'; tmux rename-window -t '{}-bypass' '{}' 2>/dev/null; tmux new-session -A -s '{}-bypass' -n '{}' \"{}\"", esc_display, esc_session, esc_display, esc_session, esc_display, claude_cmd_dq)
         };
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(

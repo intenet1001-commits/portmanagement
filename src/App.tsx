@@ -606,11 +606,8 @@ const idbDeleteHandle = async (id: string) => {
 };
 
 const getSessionName = (item: PortInfo): string => {
-  if (item.folderPath) {
-    const parts = item.folderPath.replace(/\/$/, '').split('/');
-    return parts[parts.length - 1] || item.name;
-  }
-  return item.name.replace(/\s+/g, '-');
+  const label = item.aiName || item.name;
+  return label.replace(/[\s/\\:*?"<>|]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'unnamed';
 };
 
 /**
@@ -911,7 +908,7 @@ function App() {
   const [filterType, setFilterType] = useState<'all' | 'with-port' | 'without-port'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [bypassPermissions, setBypassPermissions] = useState(false);
+  const [bypassPermissions, setBypassPermissions] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editPort, setEditPort] = useState('');
@@ -955,6 +952,10 @@ function App() {
   const [buildType, setBuildType] = useState<'app' | 'dmg' | 'windows'>('app');
   const lastLogIndexRef = useRef<number>(0);
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>([]);
+  const [workspaceRootsOpen, setWorkspaceRootsOpen] = useState(false);
+  const [visitCounts, setVisitCounts] = useState<{ portId: string; count: number }[]>([]);
+  const [visitWindow, setVisitWindow] = useState<'alltime' | 'weekly' | 'daily'>('alltime');
+  const [highlightedPortId, setHighlightedPortId] = useState<string | null>(null);
   const dirHandlesRef = useRef<Map<string, FileSystemDirectoryHandle>>(new Map());
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showOptionalFields, setShowOptionalFields] = useState(false);
@@ -1162,13 +1163,20 @@ function App() {
   }, [mergeConfirm, loadWorktrees]);
 
   const openTmuxClaude = (item: PortInfo) => {
+    recordVisit(item.id);
     setWorktreePickerState({ item, mode: 'tmux' });
     // Only pre-fill if saved path is absolute — relative names (e.g. '합산') are invalid for -w
     setWorktreePickerValue((item.worktreePath?.startsWith('/') ? item.worktreePath : '') ?? '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
-        .then(list => setDetectedWorktrees(list))
+        .then(list => {
+          setDetectedWorktrees(list);
+          const savedPath = item.worktreePath?.startsWith('/') ? item.worktreePath : '';
+          if (savedPath && !list.some(wt => wt.path === savedPath)) {
+            setWorktreePickerValue('');
+          }
+        })
         .catch(() => {});
     }
   };
@@ -1197,7 +1205,9 @@ function App() {
 
   const openTmuxClaudeFresh = async (item: PortInfo) => {
     if (!await checkWslReady()) return;
-    const sessionName = getSessionName(item);
+    const baseName = getSessionName(item);
+    const wtSuffix = item.worktreePath ? `-${item.worktreePath.replace(/\/$/, '').split('/').pop()}` : '';
+    const sessionName = baseName + wtSuffix;
     try {
       if (bypassPermissions) {
         await API.openTmuxClaudeBypass(sessionName, item.folderPath, item.worktreePath);
@@ -1213,7 +1223,9 @@ function App() {
 
   const _executeTmuxClaude = async (item: PortInfo, worktreePath: string | undefined) => {
     if (!await checkWslReady()) return;
-    const sessionName = getSessionName(item);
+    const baseName = getSessionName(item);
+    const wtSuffix = worktreePath ? `-${worktreePath.replace(/\/$/, '').split('/').pop()}` : '';
+    const sessionName = baseName + wtSuffix;
     try {
       if (bypassPermissions) {
         await API.openTmuxClaudeBypass(sessionName, item.folderPath, worktreePath);
@@ -1228,23 +1240,31 @@ function App() {
   };
 
   const openTerminalClaude = (item: PortInfo) => {
+    recordVisit(item.id);
     setWorktreePickerState({ item, mode: 'claude' });
     setWorktreePickerValue((item.worktreePath?.startsWith('/') ? item.worktreePath : '') ?? '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
-        .then(list => setDetectedWorktrees(list))
+        .then(list => {
+          setDetectedWorktrees(list);
+          const savedPath = item.worktreePath?.startsWith('/') ? item.worktreePath : '';
+          if (savedPath && !list.some(wt => wt.path === savedPath)) {
+            setWorktreePickerValue('');
+          }
+        })
         .catch(() => {});
     }
   };
 
   const _executeTerminalClaude = async (item: PortInfo, worktreePath: string | undefined) => {
     try {
+      const displayName = item.aiName || item.name;
       if (bypassPermissions) {
-        await API.openTerminalClaudeBypass(item.folderPath, item.name, worktreePath);
+        await API.openTerminalClaudeBypass(item.folderPath, displayName, worktreePath);
         showToast(`Terminal에서 Claude (bypass) 실행 중`, 'success');
       } else {
-        await API.openTerminalClaude(item.folderPath, item.name, worktreePath);
+        await API.openTerminalClaude(item.folderPath, displayName, worktreePath);
         showToast(`Terminal에서 Claude 실행 중`, 'success');
       }
     } catch (e) {
@@ -1451,6 +1471,12 @@ function App() {
       hasWorkspaceRootsLoaded.current = true;
     });
   }, []);
+
+  // 방문 기록 초기 로드 + window 변경 시 재조회
+  useEffect(() => {
+    const timer = setTimeout(() => fetchVisitCounts(visitWindow), 2000);
+    return () => clearTimeout(timer);
+  }, [visitWindow]);
 
   // 작업 루트 변경 시 저장 (초기 로드 완료 후에만)
   useEffect(() => {
@@ -1733,6 +1759,7 @@ function App() {
           p.id === item.id ? { ...p, isRunning: true } : p
         ));
         showToast(`${item.name} 서버가 시작되었습니다!`, 'success');
+        recordVisit(item.id);
         if (item.port) {
           window.open(`http://localhost:${item.port}`, '_blank');
         }
@@ -2344,6 +2371,45 @@ function App() {
       setBuildLogs(prev => [...prev, '❌ DMG 빌드 실패: ' + error]);
       setIsBuilding(false);
     }
+  };
+
+  const fetchVisitCounts = async (w: 'alltime' | 'weekly' | 'daily' = visitWindow) => {
+    const cfg = portalConfigRef.current;
+    if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey || !cfg?.deviceId) return;
+    try {
+      const params = new URLSearchParams({
+        supabaseUrl: cfg.supabaseUrl,
+        supabaseKey: cfg.supabaseAnonKey,
+        deviceId: cfg.deviceId,
+        window: w,
+      });
+      const res = await fetch(`http://localhost:3001/api/port-visits?${params}`);
+      if (res.ok) setVisitCounts(await res.json());
+    } catch {}
+  };
+
+  const recordVisit = async (portId: string) => {
+    const cfg = portalConfigRef.current;
+    if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey || !cfg?.deviceId) return;
+    try {
+      await fetch('http://localhost:3001/api/port-visits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portId, deviceId: cfg.deviceId, supabaseUrl: cfg.supabaseUrl, supabaseKey: cfg.supabaseAnonKey }),
+      });
+      setVisitCounts(prev => {
+        const existing = prev.find(v => v.portId === portId);
+        if (existing) return prev.map(v => v.portId === portId ? { ...v, count: v.count + 1 } : v).sort((a, b) => b.count - a.count);
+        return [...prev, { portId, count: 1 }].sort((a, b) => b.count - a.count);
+      });
+    } catch {}
+  };
+
+  const scrollToPort = (portId: string) => {
+    setHighlightedPortId(portId);
+    const el = document.getElementById(`port-card-${portId}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => setHighlightedPortId(null), 2000);
   };
 
   const handleAddWorkspaceRoot = async () => {
@@ -3035,8 +3101,10 @@ function App() {
                       }`}
                     >
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`font-semibold ${isSelected ? 'text-violet-300' : wt.is_main ? 'text-zinc-300' : 'text-teal-300'}`}>{displayName}</span>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <span className="text-zinc-400 text-[10px]">{worktreePickerState.item.aiName || worktreePickerState.item.name}</span>
+                          <span className="text-zinc-600 text-[10px]">/</span>
+                          <span className={`font-semibold text-xs ${isSelected ? 'text-violet-300' : wt.is_main ? 'text-zinc-300' : 'text-teal-300'}`}>{displayName}</span>
                           {wt.is_main && <span className="text-[10px] text-zinc-500">(main)</span>}
                         </div>
                         <span className="text-zinc-600 font-mono text-[10px] truncate block">{wtBasename}</span>
@@ -3862,12 +3930,18 @@ function App() {
         {/* 작업 루트 */}
         <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-4 mb-6">
           <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={() => setWorkspaceRootsOpen(v => !v)}
+              className="flex items-center gap-2 min-w-0 flex-1 text-left"
+            >
               <div className="bg-zinc-900 p-1.5 rounded-lg border border-zinc-700 shrink-0">
                 <Folder className="w-4 h-4 text-zinc-500" />
               </div>
               <div className="min-w-0">
-                <p className="text-sm font-medium text-zinc-300">작업 루트</p>
+                <p className="text-sm font-medium text-zinc-300 flex items-center gap-1.5">
+                  작업 루트
+                  <span className="text-zinc-600 text-xs">{workspaceRootsOpen ? '▲' : '▼'}</span>
+                </p>
                 <button
                   onClick={() => API.openAppDataDir().catch(e => showToast('폴더 열기 실패: ' + e, 'error'))}
                   className="text-xs text-zinc-600 font-mono truncate hover:text-zinc-400 transition-colors text-left"
@@ -3881,7 +3955,7 @@ function App() {
               {workspaceRoots.length > 0 && (
                 <span className="text-xs text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded-md shrink-0">{workspaceRoots.length}</span>
               )}
-            </div>
+            </button>
             <button
               onClick={handleAddWorkspaceRoot}
               className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
@@ -3891,7 +3965,7 @@ function App() {
             </button>
           </div>
 
-          {workspaceRoots.length === 0 ? (
+          {workspaceRootsOpen && (workspaceRoots.length === 0 ? (
             <p className="text-sm text-zinc-600 italic text-center py-2">루트 폴더를 추가하세요</p>
           ) : (
             <div className="flex flex-col gap-2">
@@ -3920,7 +3994,7 @@ function App() {
                 </div>
               ))}
             </div>
-          )}
+          ))}
         </div>
 
         {/* 새 프로젝트 폴더 생성 모달 */}
@@ -3979,6 +4053,45 @@ function App() {
         {ports.length > 0 ? (
           <div className="bg-[#18181b] rounded-xl border border-zinc-800 overflow-hidden">
             <div className="bg-zinc-900/50 px-6 py-4 border-b border-zinc-800">
+              {/* Frequent ports chips */}
+              {(() => {
+                const topPorts = visitCounts.slice(0, 8)
+                  .map(v => ports.find(p => p.id === v.portId))
+                  .filter(Boolean) as typeof ports;
+                if (topPorts.length === 0) return null;
+                return (
+                  <div className="mb-3">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-[10px] text-zinc-600 font-medium uppercase tracking-wider">자주 쓰는 포트</span>
+                      <div className="flex gap-0.5">
+                        {(['alltime', 'weekly', 'daily'] as const).map(w => (
+                          <button key={w} onClick={() => { setVisitWindow(w); fetchVisitCounts(w); }}
+                            className={`px-1.5 py-0.5 rounded text-[10px] transition-all ${visitWindow === w ? 'bg-zinc-700 text-zinc-200' : 'text-zinc-600 hover:text-zinc-400'}`}>
+                            {w === 'alltime' ? '전체' : w === 'weekly' ? '이번 주' : '오늘'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {topPorts.map(p => {
+                        const vc = visitCounts.find(v => v.portId === p.id);
+                        return (
+                          <button
+                            key={p.id}
+                            onClick={() => { recordVisit(p.id); scrollToPort(p.id); }}
+                            className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded-full border border-zinc-700 hover:border-zinc-500 transition-all flex items-center gap-1.5"
+                          >
+                            {p.isRunning && <span className="w-1.5 h-1.5 rounded-full bg-green-400 shrink-0 animate-pulse" />}
+                            {p.aiName || p.name}
+                            {(p.port ?? 0) > 0 && <span className="text-zinc-500">:{p.port}</span>}
+                            <span className="text-zinc-600 text-[10px]">{vc?.count}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
               {/* Row 1: Search input */}
               <div className="relative mb-3">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
@@ -4109,7 +4222,12 @@ function App() {
                 return displayedPorts.map((item) => (
                 <div
                   key={item.id}
-                  className="group p-4 hover:bg-zinc-900/30 transition-all duration-200"
+                  id={`port-card-${item.id}`}
+                  className={`group p-4 hover:bg-zinc-900/30 transition-all duration-500 ${
+                    highlightedPortId === item.id
+                      ? 'ring-2 ring-blue-500/70 bg-blue-500/5 shadow-[0_0_24px_rgba(59,130,246,0.25)]'
+                      : ''
+                  }`}
                 >
                   {editingId === item.id ? (
                     // 수정 모드

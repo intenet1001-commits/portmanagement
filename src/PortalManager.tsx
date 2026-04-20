@@ -1421,14 +1421,22 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             </>
           ) : (
             <>
-              <label className="block text-xs text-zinc-400 mb-1">폴더 경로 *</label>
+              <label className="block text-xs text-zinc-400 mb-1">폴더 경로 * <span className="text-zinc-600 font-normal">(숨김 폴더: ~/.claude 등 직접 입력)</span></label>
               <div className="flex gap-2 mb-3">
                 <input
                   type="text"
                   value={form.path}
                   onChange={e => setForm(f => ({ ...f, path: e.target.value }))}
+                  onBlur={e => {
+                    const v = e.target.value.trim();
+                    if (v.startsWith('~/') || v === '~') {
+                      setForm(f => ({ ...f, path: v.replace(/^~/, (window as any).__homeDir__ || v) }));
+                      fetch('/api/expand-path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: v }) })
+                        .then(r => r.json()).then(d => { if (d.path) setForm(f => ({ ...f, path: d.path })); }).catch(() => {});
+                    }
+                  }}
                   className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                  placeholder="/Users/..."
+                  placeholder="/Users/... 또는 ~/.config"
                 />
                 <button
                     onClick={async () => {

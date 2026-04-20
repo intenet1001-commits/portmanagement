@@ -122,6 +122,19 @@ function resolveClaudePath(): string | null {
 }
 const CLAUDE_PATH = resolveClaudePath();
 
+// Resolve git binary path once at startup
+function resolveGitPath(): string {
+  if (!IS_WIN) {
+    if (existsSync('/opt/homebrew/bin/git')) return '/opt/homebrew/bin/git';
+    if (existsSync('/usr/bin/git')) return '/usr/bin/git';
+  }
+  const finder = IS_WIN ? ['where', 'git'] : ['which', 'git'];
+  const result = Bun.spawnSync(finder, { env: { ...process.env } });
+  const resolved = result.stdout.toString().trim().split('\n')[0].trim();
+  return resolved || 'git';
+}
+const GIT_PATH = resolveGitPath();
+
 const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
 let buildStatus = { isBuilding: false, type: '', output: [] as string[], exitCode: null as number | null };
@@ -820,8 +833,22 @@ const server = Bun.serve({
           await ps.exited;
           picked = (await new Response(ps.stdout).text()).trim();
         } else {
+          const appleScript = `
+use framework "AppKit"
+use scripting additions
+set panel to current application's NSOpenPanel's openPanel()
+panel's setShowsHiddenFiles_(true)
+panel's setCanChooseDirectories_(true)
+panel's setCanChooseFiles_(false)
+panel's setAllowsMultipleSelection_(false)
+panel's setPrompt_("선택")
+if panel's runModal() is 1 then
+  return (panel's URL()'s |path|()) as string
+end if
+return ""`;
           const proc = Bun.spawn({
-            cmd: ['osascript', '-e', 'POSIX path of (choose folder)'],
+            cmd: ['osascript', '-'],
+            stdin: new Blob([appleScript]),
             stdout: 'pipe', stderr: 'pipe',
           });
           await proc.exited;
@@ -833,6 +860,17 @@ const server = Bun.serve({
         return new Response(JSON.stringify({ path: picked }), { headers });
       } catch (e) {
         return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/expand-path" && req.method === "POST") {
+      try {
+        const { path: inputPath } = await req.json();
+        const home = process.env.HOME || homedir();
+        const expanded = (inputPath as string).replace(/^~/, home);
+        return new Response(JSON.stringify({ path: expanded }), { headers });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String(e) }), { status: 400, headers });
       }
     }
 
@@ -910,7 +948,7 @@ const server = Bun.serve({
         const escCmd = shellCmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const escTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const cdPart = folderPath ? `write text "cd '${escapeSq(folderPath)}'"\n    ` : '';
-        const script = `tell application "iTerm"\n  activate\n  set w to create window with default profile\n  tell current session of w\n    ${cdPart}write text "${escCmd}"\n    delay 0.3\n    set name to "${escTitle}"\n  end tell\nend tell`;
+        const script = `tell application "iTerm"\n  activate\n  set w to create window with default profile\n  tell current session of w\n    ${cdPart}write text "${escCmd}"\n    delay 2.0\n    set name to "${escTitle}"\n  end tell\nend tell`;
         spawn({ cmd: ['osascript', '-e', script], stdout: 'inherit', stderr: 'inherit' });
       }
     }
@@ -921,7 +959,10 @@ const server = Bun.serve({
         if (IS_WIN) {
           spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, false));
         } else {
-          const claudeCmd = `tmux new-session -A -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
+          const esc = escapeSq(sessionName);
+          const winName = escapeSq(`[tmux] ${sessionName}`);
+          const inner = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
+          const claudeCmd = `tmux new-session -d -s '${esc}' -n '${winName}' '${inner}' 2>/dev/null; tmux set-window-option -t '${esc}' automatic-rename off 2>/dev/null; tmux rename-window -t '${esc}' '${winName}' 2>/dev/null; tmux attach-session -t '${esc}'`;
           openTerminalWithCmd(claudeCmd, folderPath ?? null, `[tmux] ${sessionName}`);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude 실행 중 (세션: ${sessionName})` }), { headers });
@@ -936,7 +977,10 @@ const server = Bun.serve({
         if (IS_WIN) {
           spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, true, false));
         } else {
-          const claudeCmd = `tmux kill-session -t '${escapeSq(sessionName)}' 2>/dev/null; tmux new-session -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
+          const esc = escapeSq(sessionName);
+          const winName = escapeSq(`[fresh] ${sessionName}`);
+          const inner = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
+          const claudeCmd = `tmux kill-session -t '${esc}' 2>/dev/null; tmux new-session -d -s '${esc}' -n '${winName}' '${inner}'; tmux set-window-option -t '${esc}' automatic-rename off 2>/dev/null; tmux rename-window -t '${esc}' '${winName}' 2>/dev/null; tmux attach-session -t '${esc}'`;
           openTerminalWithCmd(claudeCmd, folderPath ?? null, `[fresh] ${sessionName}`);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude 새 세션 시작 (${sessionName})` }), { headers });
@@ -951,7 +995,11 @@ const server = Bun.serve({
         if (IS_WIN) {
           spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, true));
         } else {
-          const claudeCmd = `tmux new-session -A -s '${escapeSq(sessionName)}-bypass' '${worktreePath ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'` : 'claude --dangerously-skip-permissions'}'`;
+          const esc = escapeSq(sessionName);
+          const bypassSess = `${esc}-bypass`;
+          const winName = escapeSq(`[bypass] ${sessionName}`);
+          const inner = worktreePath ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'` : 'claude --dangerously-skip-permissions';
+          const claudeCmd = `tmux new-session -d -s '${bypassSess}' -n '${winName}' '${inner}' 2>/dev/null; tmux set-window-option -t '${bypassSess}' automatic-rename off 2>/dev/null; tmux rename-window -t '${bypassSess}' '${winName}' 2>/dev/null; tmux attach-session -t '${bypassSess}'`;
           openTerminalWithCmd(claudeCmd, folderPath ?? null, `[bypass] ${sessionName}`);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude bypass 실행 중 (${sessionName})` }), { headers });
@@ -1675,7 +1723,10 @@ const server = Bun.serve({
           worktrees.push({ path: currentPath, branch: currentBranch ?? undefined, is_main: isFirst });
         }
 
-        return new Response(JSON.stringify({ success: true, worktrees }), { headers });
+        // Filter out worktrees whose directory no longer exists (deleted but not pruned)
+        const validWorktrees = worktrees.filter(wt => existsSync(wt.path));
+
+        return new Response(JSON.stringify({ success: true, worktrees: validWorktrees }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ success: true, worktrees: [] }), { headers });
       }
@@ -1978,6 +2029,55 @@ const server = Bun.serve({
         return new Response(JSON.stringify({ success: true }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // Port visits: record a click/action
+    if (url.pathname === "/api/port-visits" && req.method === "POST") {
+      try {
+        const { portId, deviceId, supabaseUrl, supabaseKey } = await req.json() as {
+          portId: string; deviceId: string; supabaseUrl: string; supabaseKey: string;
+        };
+        if (!supabaseUrl || !supabaseKey) return new Response(JSON.stringify({ error: 'no_credentials' }), { status: 400, headers });
+        const res = await fetch(`${supabaseUrl}/rest/v1/port_visits`, {
+          method: 'POST',
+          headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ port_id: portId, device_id: deviceId }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // Port visits: get top ports by window (alltime | weekly | daily)
+    if (url.pathname === "/api/port-visits" && req.method === "GET") {
+      try {
+        const supabaseUrl = url.searchParams.get('supabaseUrl') || '';
+        const supabaseKey = url.searchParams.get('supabaseKey') || '';
+        const window = url.searchParams.get('window') || 'alltime';
+        const deviceId = url.searchParams.get('deviceId') || '';
+        if (!supabaseUrl || !supabaseKey) return new Response(JSON.stringify([]), { headers });
+        let filter = `device_id=eq.${encodeURIComponent(deviceId)}`;
+        if (window === 'daily') {
+          const since = new Date(Date.now() - 86400000).toISOString();
+          filter += `&visited_at=gte.${encodeURIComponent(since)}`;
+        } else if (window === 'weekly') {
+          const since = new Date(Date.now() - 7 * 86400000).toISOString();
+          filter += `&visited_at=gte.${encodeURIComponent(since)}`;
+        }
+        const res = await fetch(`${supabaseUrl}/rest/v1/port_visits?select=port_id&${filter}`, {
+          headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` },
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const rows = await res.json() as { port_id: string }[];
+        const counts: Record<string, number> = {};
+        for (const r of rows) counts[r.port_id] = (counts[r.port_id] || 0) + 1;
+        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([portId, count]) => ({ portId, count }));
+        return new Response(JSON.stringify(sorted), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify([]), { headers });
       }
     }
 
