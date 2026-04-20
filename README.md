@@ -246,7 +246,8 @@ bun run start
 
 앱을 처음 사용한다면 설정 마법사에서 Supabase 연결, 기기 등록, 환경 설정을 한 번에 완료하세요.
 
-> Vercel 배포된 설정 마법사는 비공개 운영 중입니다.  
+**🌐 [portmanager-portal.vercel.app](https://portmanager-portal.vercel.app)**
+
 > 로컬에서 실행하려면: `bun run dev` 후 `http://localhost:9000/setup` 접속
 
 ---
