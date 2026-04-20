@@ -952,18 +952,26 @@ fn spawn_wt_wsl(bash_cmd: &str, title: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-/// 창/탭 타이틀 빌더: `[tags] session · worktreeBasename`
-fn build_window_title(session: &str, worktree_path: Option<&str>, tags: &[&str]) -> String {
+/// 창/탭 타이틀 빌더: 이모지 prefix + 프로젝트명 › 워크트리
+/// ⚡️ tmux+bypass  🔷🆕 tmux+fresh  🔷 tmux  🛡️ bypass  🪟 normal
+fn build_window_title(session: &str, worktree_path: Option<&str>, is_tmux: bool, is_bypass: bool, is_fresh: bool) -> String {
     let wt_name = worktree_path
         .and_then(|wt| wt.split(',').next())
         .map(|p| p.trim())
         .filter(|p| !p.is_empty())
         .map(|p| path_basename(p));
     let base = match wt_name {
-        Some(n) => format!("{} · {}", session, n),
+        Some(n) => format!("{} \u{203A} {}", session, n),
         None => session.to_string(),
     };
-    if tags.is_empty() { base } else { format!("[{}] {}", tags.join("·"), base) }
+    let prefix = match (is_tmux, is_bypass, is_fresh) {
+        (true, true, _)      => "\u{26A1}\u{FE0F} ",
+        (true, false, true)  => "\u{1F537}\u{1F195} ",
+        (true, false, false) => "\u{1F537} ",
+        (false, true, _)     => "\u{1F6E1}\u{FE0F} ",
+        _                    => "\u{1FA9F} ",
+    };
+    format!("{}{}", prefix, base)
 }
 
 #[tauri::command]
@@ -1042,32 +1050,22 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
     {
         let esc_session = escape_sq(&session_name);
         let esc_display = escape_sq(&session_name);
-        let escaped_title = format!("[tmux] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
-        let claude_cmd = if let Some(ref wt) = worktree_path {
-            let flags: String = wt.split(',')
-                .map(|p| p.trim())
-                .filter(|p| !p.is_empty() && p.starts_with('/'))
-                .map(|p| format!("-w '{}'", escape_sq(p)))
-                .collect::<Vec<_>>()
-                .join(" ");
-            if flags.is_empty() { "claude".to_string() } else { if flags.is_empty() { "claude".to_string() } else { format!("claude {}", flags) } }
-        } else {
-            "claude".to_string()
-        };
+        let title = build_window_title(&session_name, worktree_path.as_deref(), true, false, false);
+        let esc_title_sq = escape_sq(&title);
+        let escaped_title = title.replace('\\', "\\\\").replace('"', "\\\"");
         let cd_target = worktree_path.as_ref()
             .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
             .filter(|p| p.starts_with('/'))
             .or_else(|| folder_path.clone());
-        let claude_cmd_dq = claude_cmd.replace('"', "'");
         let cmd = if let Some(ref cd) = cd_target {
-            format!("cd '{}' && printf '\\033]0;[tmux] {}\\007'; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux new-session -A -s '{}' -n '{}' \"{}\"", escape_sq(cd), esc_display, esc_session, esc_display, esc_session, esc_display, claude_cmd_dq)
+            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -d -s '{}' -n '{}' \"claude\" 2>/dev/null || true; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}' automatic-rename off 2>/dev/null; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux attach-session -t '{}'", escape_sq(cd), esc_title_sq, esc_session, esc_display, esc_session, esc_session, esc_display, esc_session)
         } else {
-            format!("printf '\\033]0;[tmux] {}\\007'; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux new-session -A -s '{}' -n '{}' \"{}\"", esc_display, esc_session, esc_display, esc_session, esc_display, claude_cmd_dq)
+            format!("printf '\\033]0;{}\\007'; tmux new-session -d -s '{}' -n '{}' \"claude\" 2>/dev/null || true; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}' automatic-rename off 2>/dev/null; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux attach-session -t '{}'", esc_title_sq, esc_session, esc_display, esc_session, esc_session, esc_display, esc_session)
         };
 
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
-            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 2.0\n    set name to \"{}\"\n  end tell\nend tell",
             escaped, escaped_title
         );
         Command::new("osascript")
@@ -1086,7 +1084,7 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
         let cd_part = cd_path.map(|p| format!("cd '{}' && ", escape_sq(&p))).unwrap_or_default();
         // claude 실행 실패 시 login shell로 fallback → 에러 진단 가능
         let bash_cmd = format!("{}tmux new-session -A -s '{}' 'claude || bash -l'", cd_part, escape_sq(&session_name));
-        let title = build_window_title(&session_name, worktree_path.as_deref(), &["tmux"]);
+        let title = build_window_title(&session_name, worktree_path.as_deref(), true, false, false);
         spawn_wt_wsl(&bash_cmd, Some(&title))?;
     }
 
@@ -1099,33 +1097,23 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
     {
         let esc_session = escape_sq(&session_name);
         let esc_display = escape_sq(&session_name);
-        let escaped_title = format!("[tmux-fresh] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
-        let claude_cmd = if let Some(ref wt) = worktree_path {
-            let flags: String = wt.split(',')
-                .map(|p| p.trim())
-                .filter(|p| !p.is_empty() && p.starts_with('/'))
-                .map(|p| format!("-w '{}'", escape_sq(p)))
-                .collect::<Vec<_>>()
-                .join(" ");
-            if flags.is_empty() { "claude".to_string() } else { format!("claude {}", flags) }
-        } else {
-            "claude".to_string()
-        };
+        let title = build_window_title(&session_name, worktree_path.as_deref(), true, false, true);
+        let esc_title_sq = escape_sq(&title);
+        let escaped_title = title.replace('\\', "\\\\").replace('"', "\\\"");
         let kill_cmd = format!("tmux kill-session -t '{}' 2>/dev/null || true", esc_session);
         let cd_target = worktree_path.as_ref()
             .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
             .filter(|p| p.starts_with('/'))
             .or_else(|| folder_path.clone());
-        let claude_cmd_dq = claude_cmd.replace('"', "'");
         let new_cmd = if let Some(ref cd) = cd_target {
-            format!("cd '{}' && printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' -n '{}' \"{}\"", escape_sq(cd), esc_display, esc_session, esc_display, claude_cmd_dq)
+            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -d -s '{}' -n '{}' \"claude\"; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}' automatic-rename off 2>/dev/null; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux attach-session -t '{}'", escape_sq(cd), esc_title_sq, esc_session, esc_display, esc_session, esc_session, esc_display, esc_session)
         } else {
-            format!("printf '\\033]0;[tmux-fresh] {}\\007'; tmux new-session -s '{}' -n '{}' \"{}\"", esc_display, esc_session, esc_display, claude_cmd_dq)
+            format!("printf '\\033]0;{}\\007'; tmux new-session -d -s '{}' -n '{}' \"claude\"; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}' automatic-rename off 2>/dev/null; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux attach-session -t '{}'", esc_title_sq, esc_session, esc_display, esc_session, esc_session, esc_display, esc_session)
         };
         let cmd = format!("{}; {}", kill_cmd, new_cmd);
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
-            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 2.0\n    set name to \"{}\"\n  end tell\nend tell",
             escaped, escaped_title
         );
         Command::new("osascript")
@@ -1147,7 +1135,7 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
             "{}(tmux kill-session -t '{}' 2>/dev/null || :) && tmux new-session -s '{}' 'claude || bash -l'",
             cd_part, escape_sq(&session_name), escape_sq(&session_name)
         );
-        let title = build_window_title(&session_name, worktree_path.as_deref(), &["tmux", "fresh"]);
+        let title = build_window_title(&session_name, worktree_path.as_deref(), true, false, true);
         spawn_wt_wsl(&bash_cmd, Some(&title))?;
     }
 
@@ -1160,31 +1148,21 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
     {
         let esc_session = escape_sq(&session_name);
         let esc_display = escape_sq(&session_name);
-        let escaped_title = format!("[tmux-bypass] {}", session_name).replace('\\', "\\\\").replace('"', "\\\"");
-        let claude_cmd = if let Some(ref wt) = worktree_path {
-            let flags: String = wt.split(',')
-                .map(|p| p.trim())
-                .filter(|p| !p.is_empty() && p.starts_with('/'))
-                .map(|p| format!("-w '{}'", escape_sq(p)))
-                .collect::<Vec<_>>()
-                .join(" ");
-            if flags.is_empty() { "claude --dangerously-skip-permissions".to_string() } else { format!("claude --dangerously-skip-permissions {}", flags) }
-        } else {
-            "claude --dangerously-skip-permissions".to_string()
-        };
+        let title = build_window_title(&session_name, worktree_path.as_deref(), true, true, false);
+        let esc_title_sq = escape_sq(&title);
+        let escaped_title = title.replace('\\', "\\\\").replace('"', "\\\"");
         let cd_target = worktree_path.as_ref()
             .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
             .filter(|p| p.starts_with('/'))
             .or_else(|| folder_path.clone());
-        let claude_cmd_dq = claude_cmd.replace('"', "'");
         let cmd = if let Some(ref cd) = cd_target {
-            format!("cd '{}' && printf '\\033]0;[tmux-bypass] {}\\007'; tmux rename-window -t '{}-bypass' '{}' 2>/dev/null; tmux new-session -A -s '{}-bypass' -n '{}' \"{}\"", escape_sq(cd), esc_display, esc_session, esc_display, esc_session, esc_display, claude_cmd_dq)
+            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -d -s '{}-bypass' -n '{}' \"claude --dangerously-skip-permissions\" 2>/dev/null || true; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}-bypass' automatic-rename off 2>/dev/null; tmux rename-window -t '{}-bypass' '{}' 2>/dev/null; tmux attach-session -t '{}-bypass'", escape_sq(cd), esc_title_sq, esc_session, esc_display, esc_session, esc_session, esc_display, esc_session)
         } else {
-            format!("printf '\\033]0;[tmux-bypass] {}\\007'; tmux rename-window -t '{}-bypass' '{}' 2>/dev/null; tmux new-session -A -s '{}-bypass' -n '{}' \"{}\"", esc_display, esc_session, esc_display, esc_session, esc_display, claude_cmd_dq)
+            format!("printf '\\033]0;{}\\007'; tmux new-session -d -s '{}-bypass' -n '{}' \"claude --dangerously-skip-permissions\" 2>/dev/null || true; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}-bypass' automatic-rename off 2>/dev/null; tmux rename-window -t '{}-bypass' '{}' 2>/dev/null; tmux attach-session -t '{}-bypass'", esc_title_sq, esc_session, esc_display, esc_session, esc_session, esc_display, esc_session)
         };
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
-            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 2.0\n    set name to \"{}\"\n  end tell\nend tell",
             escaped, escaped_title
         );
         Command::new("osascript")
@@ -1206,7 +1184,7 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
             "{}tmux new-session -A -s '{}' 'claude --dangerously-skip-permissions || bash -l'",
             cd_part, bypass_session
         );
-        let title = build_window_title(&session_name, worktree_path.as_deref(), &["tmux", "bypass"]);
+        let title = build_window_title(&session_name, worktree_path.as_deref(), true, true, false);
         spawn_wt_wsl(&bash_cmd, Some(&title))?;
     }
 
@@ -1243,31 +1221,21 @@ fn spawn_wt_cmd(shell_cmd: &str, work_dir: Option<&str>, title: &str) -> Result<
 fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let escaped_name = format!("[bypass] {}", name.as_deref().unwrap_or("Claude"))
-            .replace('\\', "\\\\").replace('"', "\\\"");
-        let claude_cmd = if let Some(ref wt) = worktree_path {
-            let flags: String = wt.split(',')
-                .map(|p| p.trim())
-                .filter(|p| !p.is_empty() && p.starts_with('/'))
-                .map(|p| format!("-w '{}'", escape_sq(p)))
-                .collect::<Vec<_>>()
-                .join(" ");
-            if flags.is_empty() { "claude --dangerously-skip-permissions".to_string() } else { format!("claude --dangerously-skip-permissions {}", flags) }
-        } else {
-            "claude --dangerously-skip-permissions".to_string()
-        };
+        let title = build_window_title(name.as_deref().unwrap_or("Claude"), worktree_path.as_deref(), false, true, false);
+        let esc_title_sq = escape_sq(&title);
+        let escaped_name = title.replace('\\', "\\\\").replace('"', "\\\"");
         let cd_target = worktree_path.as_ref()
             .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
             .filter(|p| p.starts_with('/'))
             .or_else(|| folder_path.clone());
         let cmd = if let Some(ref cd) = cd_target {
-            format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(cd), escaped_name, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;{}\\007' && claude --dangerously-skip-permissions", escape_sq(cd), esc_title_sq)
         } else {
-            format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
+            format!("printf '\\033]0;{}\\007' && claude --dangerously-skip-permissions", esc_title_sq)
         };
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
-            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 2.0\n    set name to \"{}\"\n  end tell\nend tell",
             escaped, escaped_name
         );
         Command::new("osascript")
@@ -1279,17 +1247,12 @@ fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>
 
     #[cfg(target_os = "windows")]
     {
-        // Windows: worktree 있으면 claude -w "<path>", cd는 workDir
         let wt_first = worktree_path.as_ref()
             .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
             .filter(|p| !p.is_empty() && is_absolute_path(p));
-        let claude_cmd = match &wt_first {
-            Some(wt) => format!("claude --dangerously-skip-permissions -w \"{}\"", wt),
-            None => "claude --dangerously-skip-permissions".to_string(),
-        };
-        let work_dir = wt_first.clone().or_else(|| folder_path.clone());
-        let title = build_window_title(name.as_deref().unwrap_or("Claude"), worktree_path.as_deref(), &["bypass"]);
-        spawn_wt_cmd(&claude_cmd, work_dir.as_deref(), &title)?;
+        let work_dir = wt_first.or_else(|| folder_path.clone());
+        let title = build_window_title(name.as_deref().unwrap_or("Claude"), worktree_path.as_deref(), false, true, false);
+        spawn_wt_cmd("claude --dangerously-skip-permissions", work_dir.as_deref(), &title)?;
     }
     Ok("Claude (bypass) 실행".to_string())
 }
@@ -1298,31 +1261,21 @@ fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>
 fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     {
-        let escaped_name = name.as_deref().unwrap_or("Claude")
-            .replace('\\', "\\\\").replace('"', "\\\"");
-        let claude_cmd = if let Some(ref wt) = worktree_path {
-            let flags: String = wt.split(',')
-                .map(|p| p.trim())
-                .filter(|p| !p.is_empty() && p.starts_with('/'))
-                .map(|p| format!("-w '{}'", escape_sq(p)))
-                .collect::<Vec<_>>()
-                .join(" ");
-            if flags.is_empty() { "claude".to_string() } else { format!("claude {}", flags) }
-        } else {
-            "claude".to_string()
-        };
+        let title = build_window_title(name.as_deref().unwrap_or("Claude"), worktree_path.as_deref(), false, false, false);
+        let esc_title_sq = escape_sq(&title);
+        let escaped_name = title.replace('\\', "\\\\").replace('"', "\\\"");
         let cd_target = worktree_path.as_ref()
             .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
             .filter(|p| p.starts_with('/'))
             .or_else(|| folder_path.clone());
         let cmd = if let Some(ref cd) = cd_target {
-            format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(cd), escaped_name, claude_cmd)
+            format!("cd '{}' && printf '\\033]0;{}\\007' && claude", escape_sq(cd), esc_title_sq)
         } else {
-            format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
+            format!("printf '\\033]0;{}\\007' && claude", esc_title_sq)
         };
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
         let script = format!(
-            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 2.0\n    set name to \"{}\"\n  end tell\nend tell",
             escaped, escaped_name
         );
         Command::new("osascript")
@@ -1337,13 +1290,9 @@ fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, workt
         let wt_first = worktree_path.as_ref()
             .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
             .filter(|p| !p.is_empty() && is_absolute_path(p));
-        let claude_cmd = match &wt_first {
-            Some(wt) => format!("claude -w \"{}\"", wt),
-            None => "claude".to_string(),
-        };
-        let work_dir = wt_first.clone().or_else(|| folder_path.clone());
-        let title = build_window_title(name.as_deref().unwrap_or("Claude"), worktree_path.as_deref(), &[]);
-        spawn_wt_cmd(&claude_cmd, work_dir.as_deref(), &title)?;
+        let work_dir = wt_first.or_else(|| folder_path.clone());
+        let title = build_window_title(name.as_deref().unwrap_or("Claude"), worktree_path.as_deref(), false, false, false);
+        spawn_wt_cmd("claude", work_dir.as_deref(), &title)?;
     }
     Ok("Claude 실행".to_string())
 }

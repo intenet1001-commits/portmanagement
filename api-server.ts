@@ -80,14 +80,22 @@ function findWslDistro(): string | null {
   return distros[0] ?? null;
 }
 
-/** 터미널/탭 타이틀 조합: [tags] 프로젝트명 · 워크트리명 — tags는 ['tmux', 'bypass', 'fresh'] 등 */
+/** 터미널/탭 타이틀: ⚡️ tmux+bypass  🔷🆕 tmux+fresh  🔷 tmux  🛡️ bypass  🪟 normal */
 function buildWindowTitle(sessionName: string, worktreePath?: string | null, tags?: string | string[] | null): string {
   const wtRaw = worktreePath?.split(',')[0]?.trim();
-  // Windows \ 와 POSIX / 모두 지원, 마지막 구분자 이후 basename 추출
   const wtName = wtRaw ? wtRaw.split(/[\\/]/).filter(Boolean).pop() : undefined;
-  const base = wtName ? `${sessionName} · ${wtName}` : sessionName;
+  const base = wtName ? `${sessionName} \u203A ${wtName}` : sessionName;
   const tagList = Array.isArray(tags) ? tags : tags ? [tags] : [];
-  return tagList.length ? `[${tagList.join('·')}] ${base}` : base;
+  const isTmux = tagList.includes('tmux');
+  const isBypass = tagList.includes('bypass');
+  const isFresh = tagList.includes('fresh');
+  let prefix: string;
+  if (isTmux && isBypass) prefix = '\u26A1\uFE0F ';
+  else if (isTmux && isFresh) prefix = '\u{1F537}\u{1F195} ';
+  else if (isTmux) prefix = '\u{1F537} ';
+  else if (isBypass) prefix = '\u{1F6E1}\uFE0F ';
+  else prefix = '\u{1FA9F} ';
+  return `${prefix}${base}`;
 }
 
 /** WSL tmux bash 명령 문자열 생성 (외부에서 bash -c로 실행됨 — WSL default PATH가 Windows npm 포함) */
@@ -189,7 +197,7 @@ function resolveGitPath(): string {
   const resolved = result.stdout.toString().trim().split('\n')[0].trim();
   return resolved || 'git';
 }
-const GIT_PATH = resolveGitPath();
+// GIT_PATH already declared at line 27
 
 const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
@@ -1018,9 +1026,9 @@ return ""`;
         } else {
           const esc = escapeSq(sessionName);
           const winName = escapeSq(title);
-          const inner = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
-          const claudeCmd = `tmux new-session -d -s '${esc}' -n '${winName}' '${inner}' 2>/dev/null; tmux set-window-option -t '${esc}' automatic-rename off 2>/dev/null; tmux rename-window -t '${esc}' '${winName}' 2>/dev/null; tmux attach-session -t '${esc}'`;
-          openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
+          const claudeCmd = `tmux new-session -d -s '${esc}' -n '${winName}' 'claude' 2>/dev/null; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '${esc}' automatic-rename off 2>/dev/null; tmux rename-window -t '${esc}' '${winName}' 2>/dev/null; tmux attach-session -t '${esc}'`;
+          const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
+          openTerminalWithCmd(claudeCmd, cdPath, title);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude 실행 중 (세션: ${sessionName})` }), { headers });
       } catch (error: any) {
@@ -1037,9 +1045,9 @@ return ""`;
         } else {
           const esc = escapeSq(sessionName);
           const winName = escapeSq(title);
-          const inner = worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude';
-          const claudeCmd = `tmux kill-session -t '${esc}' 2>/dev/null; tmux new-session -d -s '${esc}' -n '${winName}' '${inner}'; tmux set-window-option -t '${esc}' automatic-rename off 2>/dev/null; tmux rename-window -t '${esc}' '${winName}' 2>/dev/null; tmux attach-session -t '${esc}'`;
-          openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
+          const claudeCmd = `tmux kill-session -t '${esc}' 2>/dev/null; tmux new-session -d -s '${esc}' -n '${winName}' 'claude'; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '${esc}' automatic-rename off 2>/dev/null; tmux rename-window -t '${esc}' '${winName}' 2>/dev/null; tmux attach-session -t '${esc}'`;
+          const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
+          openTerminalWithCmd(claudeCmd, cdPath, title);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude 새 세션 시작 (${sessionName})` }), { headers });
       } catch (error: any) {
@@ -1057,9 +1065,9 @@ return ""`;
           const esc = escapeSq(sessionName);
           const bypassSess = `${esc}-bypass`;
           const winName = escapeSq(title);
-          const inner = worktreePath ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'` : 'claude --dangerously-skip-permissions';
-          const claudeCmd = `tmux new-session -d -s '${bypassSess}' -n '${winName}' '${inner}' 2>/dev/null; tmux set-window-option -t '${bypassSess}' automatic-rename off 2>/dev/null; tmux rename-window -t '${bypassSess}' '${winName}' 2>/dev/null; tmux attach-session -t '${bypassSess}'`;
-          openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
+          const claudeCmd = `tmux new-session -d -s '${bypassSess}' -n '${winName}' 'claude --dangerously-skip-permissions' 2>/dev/null; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '${bypassSess}' automatic-rename off 2>/dev/null; tmux rename-window -t '${bypassSess}' '${winName}' 2>/dev/null; tmux attach-session -t '${bypassSess}'`;
+          const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
+          openTerminalWithCmd(claudeCmd, cdPath, title);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude bypass 실행 중 (${sessionName})` }), { headers });
       } catch (error: any) {
@@ -1138,10 +1146,8 @@ return ""`;
     if (url.pathname === "/api/open-terminal-claude" && req.method === "POST") {
       try {
         const { folderPath, name, worktreePath } = await req.json();
-        const claudeCmd = worktreePath
-          ? (IS_WIN ? `claude -w "${worktreePath}"` : `claude -w '${escapeSq(worktreePath)}'`)
-          : 'claude';
-        openTerminalWithCmd(claudeCmd, folderPath ?? null, buildWindowTitle(name || 'Claude', worktreePath));
+        const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
+        openTerminalWithCmd('claude', cdPath, buildWindowTitle(name || 'Claude', worktreePath));
         return new Response(JSON.stringify({ success: true, message: 'Terminal에서 Claude 실행' }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
@@ -1151,12 +1157,10 @@ return ""`;
     if (url.pathname === "/api/open-terminal-claude-bypass" && req.method === "POST") {
       try {
         const { folderPath, name, worktreePath } = await req.json();
-        const claudeCmd = worktreePath
-          ? (IS_WIN ? `claude --dangerously-skip-permissions -w "${worktreePath}"` : `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`)
-          : 'claude --dangerously-skip-permissions';
+        const claudeCmd = 'claude --dangerously-skip-permissions';
+        const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
         const title = buildWindowTitle(name || 'Claude', worktreePath, 'bypass');
-        console.log('[terminal-claude-bypass] name:', JSON.stringify(name), 'worktreePath:', JSON.stringify(worktreePath), 'title:', JSON.stringify(title));
-        openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
+        openTerminalWithCmd(claudeCmd, cdPath, title);
         return new Response(JSON.stringify({ success: true, message: 'Terminal에서 Claude (bypass) 실행' }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });

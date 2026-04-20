@@ -911,7 +911,9 @@ function App() {
   const [filterType, setFilterType] = useState<'all' | 'with-port' | 'without-port'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [bypassPermissions, setBypassPermissions] = useState(true);
+  const [bypassPermissions, setBypassPermissions] = useState(
+    () => localStorage.getItem('portmanager-bypassPermissions') !== 'false'
+  );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editPort, setEditPort] = useState('');
@@ -1494,6 +1496,7 @@ function App() {
   // 정렬 설정 localStorage 저장
   useEffect(() => { localStorage.setItem('portmanager-sortBy', sortBy); }, [sortBy]);
   useEffect(() => { localStorage.setItem('portmanager-sortOrder', sortOrder); }, [sortOrder]);
+  useEffect(() => { localStorage.setItem('portmanager-bypassPermissions', String(bypassPermissions)); }, [bypassPermissions]);
 
   useEffect(() => {
     const handler = () => {
@@ -4457,9 +4460,13 @@ function App() {
                         <div className="inline-flex rounded-lg overflow-hidden border border-violet-500/30">
                           <button
                             onClick={() => openTmuxClaude(item)}
-                            title={bypassPermissions
-                              ? `tmux + Claude --dangerously-skip-permissions (세션: ${getSessionName(item)}-bypass)`
-                              : `tmux 세션에서 Claude 실행 (세션: ${getSessionName(item)})`}
+                            title={(() => {
+                              const base = getSessionName(item);
+                              const wt = item.worktreePath ? `-${item.worktreePath.replace(/\/$/, '').split('/').pop()}` : '';
+                              return bypassPermissions
+                                ? `tmux + Claude --dangerously-skip-permissions (세션: ${base}${wt}-bypass)`
+                                : `tmux 세션에서 Claude 실행 (세션: ${base}${wt})`;
+                            })()}
                             className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
                               bypassPermissions
                                 ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-400'
