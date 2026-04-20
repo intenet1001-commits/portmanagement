@@ -610,6 +610,9 @@ const getSessionName = (item: PortInfo): string => {
   return label.replace(/[\s/\\:*?"<>|]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'unnamed';
 };
 
+/** POSIX `/...` 과 Windows `C:\...` 둘 다 절대경로로 인정 */
+const isAbsolutePath = (p: string): boolean => /^(\/|[A-Za-z]:[\\/])/.test(p);
+
 /**
  * 워크트리용 다음 사용 가능한 포트.
  * mainPort가 있으면 mainPort×10 + 1,2,3... 순으로 탐색 (예: 9025 → 90251, 90252...)
@@ -1166,7 +1169,8 @@ function App() {
     recordVisit(item.id);
     setWorktreePickerState({ item, mode: 'tmux' });
     // Only pre-fill if saved path is absolute — relative names (e.g. '합산') are invalid for -w
-    setWorktreePickerValue((item.worktreePath?.startsWith('/') ? item.worktreePath : '') ?? '');
+    // Windows: C:\... / POSIX: /... 둘 다 인정
+    setWorktreePickerValue((item.worktreePath && isAbsolutePath(item.worktreePath)) ? item.worktreePath : '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
@@ -1242,7 +1246,7 @@ function App() {
   const openTerminalClaude = (item: PortInfo) => {
     recordVisit(item.id);
     setWorktreePickerState({ item, mode: 'claude' });
-    setWorktreePickerValue((item.worktreePath?.startsWith('/') ? item.worktreePath : '') ?? '');
+    setWorktreePickerValue((item.worktreePath && isAbsolutePath(item.worktreePath)) ? item.worktreePath : '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
@@ -1282,7 +1286,8 @@ function App() {
     let resolvedPath = worktreePath;
 
     // 브랜치명(상대경로)을 입력한 경우 → git worktree 자동 생성
-    if (worktreePath && !worktreePath.startsWith('/') && item.folderPath) {
+    // Windows(C:\...) / POSIX(/...) 절대경로는 제외
+    if (worktreePath && !isAbsolutePath(worktreePath) && item.folderPath) {
       try {
         showToast(`워크트리 생성 중: ${worktreePath}...`, 'success');
         const result = await API.gitWorktreeAdd(item.folderPath, worktreePath);

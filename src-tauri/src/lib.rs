@@ -823,7 +823,7 @@ fn open_folder(folder_path: String) -> Result<String, String> {
     if folder_path.is_empty() {
         return Err("폴더 경로가 비어 있습니다".to_string());
     }
-    if !folder_path.starts_with('/') {
+    if !is_absolute_path(&folder_path) {
         return Err(format!("절대 경로가 필요합니다: \"{}\"", folder_path));
     }
     if !std::path::Path::new(&folder_path).exists() {
@@ -923,7 +923,7 @@ fn find_wsl_distro() -> Option<String> {
     None
 }
 
-fn spawn_wt_wsl(bash_cmd: &str) -> Result<(), String> {
+fn spawn_wt_wsl(bash_cmd: &str, title: Option<&str>) -> Result<(), String> {
     let distro = find_wsl_distro().ok_or_else(|| "WSL Ubuntu distro를 찾을 수 없습니다.".to_string())?;
     let has_wt = Command::new("where")
         .args(["wt.exe"])
@@ -933,17 +933,37 @@ fn spawn_wt_wsl(bash_cmd: &str) -> Result<(), String> {
         .map(|s| s.success())
         .unwrap_or(false);
     if has_wt {
-        Command::new("wt.exe")
-            .args(["wsl", "-d", &distro, "--", "bash", "-c", bash_cmd])
+        let mut cmd = Command::new("wt.exe");
+        if let Some(t) = title { cmd.args(["--title", t]); }
+        cmd.args(["wsl", "-d", &distro, "--", "bash", "-c", bash_cmd])
             .spawn()
             .map_err(|e| format!("Windows Terminal 실행 실패: {}", e))?;
     } else {
-        Command::new("cmd.exe")
-            .args(["/c", "start", "wsl", "-d", &distro, "--", "bash", "-c", bash_cmd])
-            .spawn()
+        let mut cmd = Command::new("cmd.exe");
+        if let Some(t) = title {
+            // `start "title" ...` 에서 첫 인자는 창 타이틀로 취급됨
+            cmd.args(["/c", "start", t, "wsl", "-d", &distro, "--", "bash", "-c", bash_cmd]);
+        } else {
+            cmd.args(["/c", "start", "wsl", "-d", &distro, "--", "bash", "-c", bash_cmd]);
+        }
+        cmd.spawn()
             .map_err(|e| format!("WSL 터미널 실행 실패: {}", e))?;
     }
     Ok(())
+}
+
+/// 창/탭 타이틀 빌더: `[tags] session · worktreeBasename`
+fn build_window_title(session: &str, worktree_path: Option<&str>, tags: &[&str]) -> String {
+    let wt_name = worktree_path
+        .and_then(|wt| wt.split(',').next())
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .map(|p| path_basename(p));
+    let base = match wt_name {
+        Some(n) => format!("{} · {}", session, n),
+        None => session.to_string(),
+    };
+    if tags.is_empty() { base } else { format!("[{}] {}", tags.join("·"), base) }
 }
 
 #[tauri::command]
@@ -1064,8 +1084,10 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
             .or_else(|| folder_path.clone())
             .map(|p| win_to_wsl_path(&p));
         let cd_part = cd_path.map(|p| format!("cd '{}' && ", escape_sq(&p))).unwrap_or_default();
-        let bash_cmd = format!("{}tmux new-session -A -s '{}' 'claude'", cd_part, escape_sq(&session_name));
-        spawn_wt_wsl(&bash_cmd)?;
+        // claude 실행 실패 시 login shell로 fallback → 에러 진단 가능
+        let bash_cmd = format!("{}tmux new-session -A -s '{}' 'claude || bash -l'", cd_part, escape_sq(&session_name));
+        let title = build_window_title(&session_name, worktree_path.as_deref(), &["tmux"]);
+        spawn_wt_wsl(&bash_cmd, Some(&title))?;
     }
 
     Ok(format!("tmux + Claude 실행 중 (세션: {})", session_name))
@@ -1120,11 +1142,13 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
             .or_else(|| folder_path.clone())
             .map(|p| win_to_wsl_path(&p));
         let cd_part = cd_path.map(|p| format!("cd '{}' && ", escape_sq(&p))).unwrap_or_default();
+        // kill-session 실패해도(세션 없음) 계속 진행 — wt.exe 세미콜론 이슈 회피 위해 `|| :`
         let bash_cmd = format!(
-            "{}tmux kill-session -t '{}' 2>/dev/null; tmux new-session -s '{}' 'claude'",
+            "{}(tmux kill-session -t '{}' 2>/dev/null || :) && tmux new-session -s '{}' 'claude || bash -l'",
             cd_part, escape_sq(&session_name), escape_sq(&session_name)
         );
-        spawn_wt_wsl(&bash_cmd)?;
+        let title = build_window_title(&session_name, worktree_path.as_deref(), &["tmux", "fresh"]);
+        spawn_wt_wsl(&bash_cmd, Some(&title))?;
     }
 
     Ok(format!("tmux 새 세션 시작 (세션: {})", session_name))
@@ -1179,87 +1203,149 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
         let cd_part = cd_path.map(|p| format!("cd '{}' && ", escape_sq(&p))).unwrap_or_default();
         let bypass_session = format!("{}-bypass", escape_sq(&session_name));
         let bash_cmd = format!(
-            "{}tmux new-session -A -s '{}' 'claude --dangerously-skip-permissions'",
+            "{}tmux new-session -A -s '{}' 'claude --dangerously-skip-permissions || bash -l'",
             cd_part, bypass_session
         );
-        spawn_wt_wsl(&bash_cmd)?;
+        let title = build_window_title(&session_name, worktree_path.as_deref(), &["tmux", "bypass"]);
+        spawn_wt_wsl(&bash_cmd, Some(&title))?;
     }
 
     Ok(format!("tmux + Claude (bypass) 실행 중 (세션: {}-bypass)", session_name))
 }
 
+/// Windows: wt.exe + cmd.exe로 claude 실행 (tmux 없이). workDir이 있으면 -d로 시작 디렉터리 지정
+#[cfg(target_os = "windows")]
+fn spawn_wt_cmd(shell_cmd: &str, work_dir: Option<&str>, title: &str) -> Result<(), String> {
+    let has_wt = Command::new("where")
+        .args(["wt.exe"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if has_wt {
+        let mut cmd = Command::new("cmd.exe");
+        cmd.args(["/c", "start", "wt"]);
+        if let Some(d) = work_dir { cmd.args(["-d", d]); }
+        cmd.args(["--title", title, "--", "cmd", "/k", shell_cmd]);
+        cmd.spawn().map_err(|e| format!("Windows Terminal 실행 실패: {}", e))?;
+    } else {
+        let cd_part = work_dir.map(|d| format!("cd /d \"{}\" && ", d)).unwrap_or_default();
+        Command::new("cmd")
+            .args(["/c", "start", title, "cmd", "/k", &format!("{}{}", cd_part, shell_cmd)])
+            .spawn()
+            .map_err(|e| format!("cmd 실행 실패: {}", e))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
-    let escaped_name = format!("[bypass] {}", name.as_deref().unwrap_or("Claude"))
-        .replace('\\', "\\\\").replace('"', "\\\"");
-    let claude_cmd = if let Some(ref wt) = worktree_path {
-        let flags: String = wt.split(',')
-            .map(|p| p.trim())
-            .filter(|p| !p.is_empty() && p.starts_with('/'))
-            .map(|p| format!("-w '{}'", escape_sq(p)))
-            .collect::<Vec<_>>()
-            .join(" ");
-        if flags.is_empty() { "claude --dangerously-skip-permissions".to_string() } else { format!("claude --dangerously-skip-permissions {}", flags) }
-    } else {
-        "claude --dangerously-skip-permissions".to_string()
-    };
-    let cd_target = worktree_path.as_ref()
-        .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
-        .filter(|p| p.starts_with('/'))
-        .or_else(|| folder_path.clone());
-    let cmd = if let Some(ref cd) = cd_target {
-        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(cd), escaped_name, claude_cmd)
-    } else {
-        format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
-    };
-    let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
-    let script = format!(
-        "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
-        escaped, escaped_name
-    );
-    Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .spawn()
-        .map_err(|e| format!("Failed to open iTerm: {}", e))?;
-    Ok("iTerm에서 Claude (bypass) 실행".to_string())
+    #[cfg(target_os = "macos")]
+    {
+        let escaped_name = format!("[bypass] {}", name.as_deref().unwrap_or("Claude"))
+            .replace('\\', "\\\\").replace('"', "\\\"");
+        let claude_cmd = if let Some(ref wt) = worktree_path {
+            let flags: String = wt.split(',')
+                .map(|p| p.trim())
+                .filter(|p| !p.is_empty() && p.starts_with('/'))
+                .map(|p| format!("-w '{}'", escape_sq(p)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            if flags.is_empty() { "claude --dangerously-skip-permissions".to_string() } else { format!("claude --dangerously-skip-permissions {}", flags) }
+        } else {
+            "claude --dangerously-skip-permissions".to_string()
+        };
+        let cd_target = worktree_path.as_ref()
+            .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+            .filter(|p| p.starts_with('/'))
+            .or_else(|| folder_path.clone());
+        let cmd = if let Some(ref cd) = cd_target {
+            format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(cd), escaped_name, claude_cmd)
+        } else {
+            format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
+        };
+        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+            escaped, escaped_name
+        );
+        Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn()
+            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Windows: worktree 있으면 claude -w "<path>", cd는 workDir
+        let wt_first = worktree_path.as_ref()
+            .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+            .filter(|p| !p.is_empty() && is_absolute_path(p));
+        let claude_cmd = match &wt_first {
+            Some(wt) => format!("claude --dangerously-skip-permissions -w \"{}\"", wt),
+            None => "claude --dangerously-skip-permissions".to_string(),
+        };
+        let work_dir = wt_first.clone().or_else(|| folder_path.clone());
+        let title = build_window_title(name.as_deref().unwrap_or("Claude"), worktree_path.as_deref(), &["bypass"]);
+        spawn_wt_cmd(&claude_cmd, work_dir.as_deref(), &title)?;
+    }
+    Ok("Claude (bypass) 실행".to_string())
 }
 
 #[tauri::command]
 fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
-    let escaped_name = name.as_deref().unwrap_or("Claude")
-        .replace('\\', "\\\\").replace('"', "\\\"");
-    let claude_cmd = if let Some(ref wt) = worktree_path {
-        let flags: String = wt.split(',')
-            .map(|p| p.trim())
-            .filter(|p| !p.is_empty() && p.starts_with('/'))
-            .map(|p| format!("-w '{}'", escape_sq(p)))
-            .collect::<Vec<_>>()
-            .join(" ");
-        if flags.is_empty() { "claude".to_string() } else { format!("claude {}", flags) }
-    } else {
-        "claude".to_string()
-    };
-    let cd_target = worktree_path.as_ref()
-        .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
-        .filter(|p| p.starts_with('/'))
-        .or_else(|| folder_path.clone());
-    let cmd = if let Some(ref cd) = cd_target {
-        format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(cd), escaped_name, claude_cmd)
-    } else {
-        format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
-    };
-    let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
-    let script = format!(
-        "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
-        escaped, escaped_name
-    );
-    Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .spawn()
-        .map_err(|e| format!("Failed to open iTerm: {}", e))?;
-    Ok("iTerm에서 Claude 실행".to_string())
+    #[cfg(target_os = "macos")]
+    {
+        let escaped_name = name.as_deref().unwrap_or("Claude")
+            .replace('\\', "\\\\").replace('"', "\\\"");
+        let claude_cmd = if let Some(ref wt) = worktree_path {
+            let flags: String = wt.split(',')
+                .map(|p| p.trim())
+                .filter(|p| !p.is_empty() && p.starts_with('/'))
+                .map(|p| format!("-w '{}'", escape_sq(p)))
+                .collect::<Vec<_>>()
+                .join(" ");
+            if flags.is_empty() { "claude".to_string() } else { format!("claude {}", flags) }
+        } else {
+            "claude".to_string()
+        };
+        let cd_target = worktree_path.as_ref()
+            .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+            .filter(|p| p.starts_with('/'))
+            .or_else(|| folder_path.clone());
+        let cmd = if let Some(ref cd) = cd_target {
+            format!("cd '{}' && printf '\\033]0;{}\\007' && {}", escape_sq(cd), escaped_name, claude_cmd)
+        } else {
+            format!("printf '\\033]0;{}\\007' && {}", escaped_name, claude_cmd)
+        };
+        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(
+            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 0.5\n    set name to \"{}\"\n  end tell\nend tell",
+            escaped, escaped_name
+        );
+        Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .spawn()
+            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let wt_first = worktree_path.as_ref()
+            .and_then(|wt| wt.split(',').next().map(|p| p.trim().to_string()))
+            .filter(|p| !p.is_empty() && is_absolute_path(p));
+        let claude_cmd = match &wt_first {
+            Some(wt) => format!("claude -w \"{}\"", wt),
+            None => "claude".to_string(),
+        };
+        let work_dir = wt_first.clone().or_else(|| folder_path.clone());
+        let title = build_window_title(name.as_deref().unwrap_or("Claude"), worktree_path.as_deref(), &[]);
+        spawn_wt_cmd(&claude_cmd, work_dir.as_deref(), &title)?;
+    }
+    Ok("Claude 실행".to_string())
 }
 
 #[tauri::command]
@@ -1405,9 +1491,24 @@ struct WorktreeInfo {
     is_main: bool,
 }
 
+/// POSIX `/...` 과 Windows `C:\...` / `C:/...` 둘 다 절대경로로 인정
+fn is_absolute_path(p: &str) -> bool {
+    if p.starts_with('/') { return true; }
+    let bytes = p.as_bytes();
+    bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
+/// 경로 basename (Windows \ 와 POSIX / 둘 다 지원)
+fn path_basename(p: &str) -> &str {
+    p.trim_end_matches(|c| c == '/' || c == '\\')
+        .rsplit(|c| c == '/' || c == '\\')
+        .next()
+        .unwrap_or("project")
+}
+
 #[tauri::command]
 fn git_worktree_add(folder_path: String, branch_name: String, worktree_path: Option<String>) -> Result<String, String> {
-    if !folder_path.starts_with('/') {
+    if !is_absolute_path(&folder_path) {
         return Err("folder_path must be absolute".to_string());
     }
     // Allow Unicode branch names — only strip truly invalid git branch chars
@@ -1424,13 +1525,17 @@ fn git_worktree_add(folder_path: String, branch_name: String, worktree_path: Opt
         format!("wt{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() % 1000000)
     } else { dir_safe_branch };
     let is_icloud = folder_path.contains("com~apple~CloudDocs") || folder_path.contains("Mobile Documents");
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    // Windows: HOME 미설정 시 USERPROFILE 사용
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| if cfg!(windows) { "C:\\".to_string() } else { "/tmp".to_string() });
     let target = worktree_path.filter(|p| !p.is_empty()).unwrap_or_else(|| {
         if is_icloud {
-            let base = folder_path.trim_end_matches('/').rsplit('/').next().unwrap_or("project");
+            let base = path_basename(&folder_path);
             format!("{}/worktrees/{}-{}", home, base, dir_safe_branch)
         } else {
-            let base = folder_path.trim_end_matches('/');
+            // 형제 디렉터리: 끝에 붙은 `/` 또는 `\` 제거 후 `-<branch>` 붙이기
+            let base = folder_path.trim_end_matches(|c| c == '/' || c == '\\');
             format!("{}-{}", base, dir_safe_branch)
         }
     });
@@ -1465,10 +1570,11 @@ fn git_worktree_add(folder_path: String, branch_name: String, worktree_path: Opt
 
 #[tauri::command]
 fn git_worktree_remove(worktree_path: String) -> Result<(), String> {
-    if !worktree_path.starts_with('/') {
+    if !is_absolute_path(&worktree_path) {
         return Err("worktree_path must be absolute".to_string());
     }
-    // Find main repo from the worktree's .git file (e.g. "gitdir: /main/.git/worktrees/name")
+    // Find main repo from the worktree's .git file (e.g. "gitdir: <path>/.git/worktrees/<name>")
+    // Windows 경로는 / 와 \ 혼재 가능 — 두 구분자 모두 대응
     let git_file = format!("{}/.git", worktree_path);
     let main_repo_dir = std::fs::read_to_string(&git_file)
         .ok()
@@ -1477,28 +1583,90 @@ fn git_worktree_remove(worktree_path: String) -> Result<(), String> {
                 .find_map(|l| l.strip_prefix("gitdir: ").map(|s| s.trim().to_string()))
         })
         .and_then(|gitdir| {
-            gitdir.find("/.git/worktrees/").map(|idx| gitdir[..idx].to_string())
+            // `/.git/worktrees/` 또는 `\.git\worktrees\` — 둘 다 찾아 더 앞선 것 선택
+            let posix_idx = gitdir.find("/.git/worktrees/");
+            let win_idx = gitdir.find("\\.git\\worktrees\\");
+            let idx = match (posix_idx, win_idx) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            idx.map(|i| gitdir[..i].to_string())
         })
         .unwrap_or_else(|| {
             std::path::Path::new(&worktree_path)
                 .parent()
                 .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| "/tmp".to_string())
+                .unwrap_or_else(|| if cfg!(windows) { "C:\\".to_string() } else { "/tmp".to_string() })
         });
-    let output = Command::new("git")
-        .args(["worktree", "remove", "--force", &worktree_path])
-        .current_dir(&main_repo_dir)
-        .output()
-        .map_err(|e| format!("git not found: {}", e))?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    let run_remove = || -> Result<(bool, String), String> {
+        let out = Command::new("git")
+            .args(["worktree", "remove", "--force", &worktree_path])
+            .current_dir(&main_repo_dir)
+            .output()
+            .map_err(|e| format!("git not found: {}", e))?;
+        Ok((out.status.success(), String::from_utf8_lossy(&out.stderr).trim().to_string()))
+    };
+    let is_lock_error = |err: &str| {
+        let low = err.to_lowercase();
+        low.contains("permission denied") || low.contains("being used") || low.contains("ebusy")
+            || low.contains("eperm") || low.contains("access is denied") || low.contains("cannot access")
+            || low.contains("invalid argument") || low.contains("failed to delete")
+    };
+
+    let (mut ok, mut err) = run_remove()?;
+    let mut attempts = 1;
+    // 파일 락 에러면 최대 3회 재시도 (200/400/800 ms 점증)
+    while !ok && is_lock_error(&err) && attempts < 3 {
+        std::thread::sleep(std::time::Duration::from_millis(200u64 * (1u64 << (attempts - 1))));
+        let (o, e) = run_remove()?;
+        ok = o;
+        err = e;
+        attempts += 1;
+    }
+
+    if !ok {
+        // 폴백: prune + 물리 디렉터리 강제 삭제 + 재prune
+        let _ = Command::new("git").args(["worktree", "prune"]).current_dir(&main_repo_dir).output();
+        if std::path::Path::new(&worktree_path).exists() {
+            let _ = std::fs::remove_dir_all(&worktree_path);
+        }
+        let _ = Command::new("git").args(["worktree", "prune"]).current_dir(&main_repo_dir).output();
+        // 검증: 메타 등록과 물리 디렉터리 모두 사라졌으면 성공 처리
+        let list_out = Command::new("git")
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(&main_repo_dir)
+            .output()
+            .map_err(|e| format!("git not found: {}", e))?;
+        let list_str = String::from_utf8_lossy(&list_out.stdout);
+        let wt_posix = worktree_path.replace('\\', "/");
+        let still_registered = list_str.contains(&format!("worktree {}", worktree_path))
+            || list_str.contains(&format!("worktree {}", wt_posix));
+        if !still_registered && !std::path::Path::new(&worktree_path).exists() {
+            return Ok(());
+        }
+        // 부분 성공: git 메타는 정리됐지만 물리 디렉터리가 락 때문에 남음
+        if !still_registered && std::path::Path::new(&worktree_path).exists() {
+            // Tauri invoke는 Result<(), String>이라 성공으로 처리하되, 경고 로그
+            eprintln!(
+                "[git_worktree_remove] partial: registration removed, folder still exists (locked): {}",
+                worktree_path
+            );
+            return Ok(());
+        }
+        if is_lock_error(&err) {
+            return Err(format!(
+                "파일이 사용 중이라 삭제하지 못했습니다. 해당 폴더를 열어둔 탐색기/터미널/에디터를 모두 닫은 뒤 다시 시도하세요.\n\n원본 에러: {}",
+                err
+            ));
+        }
+        return Err(err);
     }
     Ok(())
 }
 
 #[tauri::command]
 fn git_merge_branch(folder_path: String, branch_name: String) -> Result<String, String> {
-    if !folder_path.starts_with('/') {
+    if !is_absolute_path(&folder_path) {
         return Err("folder_path must be absolute".to_string());
     }
     // --autostash: 변경 사항 자동 스태시 후 머지, 이후 자동 팝
