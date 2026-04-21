@@ -1479,14 +1479,8 @@ fn git_worktree_add(folder_path: String, branch_name: String, worktree_path: Opt
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| if cfg!(windows) { "C:\\".to_string() } else { "/tmp".to_string() });
     let target = worktree_path.filter(|p| !p.is_empty()).unwrap_or_else(|| {
-        if is_icloud {
-            let base = path_basename(&folder_path);
-            format!("{}/worktrees/{}-{}", home, base, dir_safe_branch)
-        } else {
-            // 형제 디렉터리: 끝에 붙은 `/` 또는 `\` 제거 후 `-<branch>` 붙이기
-            let base = folder_path.trim_end_matches(|c| c == '/' || c == '\\');
-            format!("{}-{}", base, dir_safe_branch)
-        }
+        let base = path_basename(&folder_path);
+        format!("{}/worktrees/{}-{}", home, base, dir_safe_branch)
     });
     // Use --no-checkout on iCloud paths to avoid SIGBUS (signal 10)
     let is_icloud = folder_path.contains("com~apple~CloudDocs") || folder_path.contains("Mobile Documents");
@@ -1885,6 +1879,8 @@ pub fn run() {
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
+    .plugin(tauri_plugin_process::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

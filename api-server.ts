@@ -7,6 +7,9 @@ import { homedir } from "node:os";
 const escapeSq = (s: string): string => s.replace(/'/g, "'\\''");
 
 const IS_WIN = process.platform === 'win32';
+const DEV = process.env.NODE_ENV !== 'production';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const devLog = (...args: any[]) => { if (DEV) devLog(...args); };
 
 /** Git 바이너리 절대경로 — Tauri sandbox·다른 머신 호환성을 위해 PATH 대신 절대경로 사용 */
 function resolveGitPath(): string {
@@ -69,7 +72,7 @@ function listWslDistros(): string[] {
   const distros = Array.from(stdout.matchAll(/DistributionName\s+REG_SZ\s+(.+)/g))
     .map((m: RegExpMatchArray) => m[1].trim())
     .filter((n: string) => n && !n.toLowerCase().includes('docker'));
-  console.log('[listWslDistros] found:', distros);
+  devLog('[listWslDistros] found:', distros);
   if (distros.length > 0) _cachedDistros = distros;
   return distros;
 }
@@ -248,7 +251,7 @@ async function loadPortsData() {
       const data = await file.json();
       const { ports: remapped, changed } = remapPathsToCurrentUser(data);
       if (changed) {
-        console.log('[Data] Auto-remapped paths to current user home dir — saving');
+        devLog('[Data] Auto-remapped paths to current user home dir — saving');
         await Bun.write(PORTS_DATA_FILE, JSON.stringify(remapped, null, 2));
       }
       return remapped;
@@ -266,11 +269,11 @@ async function savePortsData(data: any) {
     if (!existsSync(APP_DATA_DIR)) {
       const { mkdirSync } = await import("node:fs");
       mkdirSync(APP_DATA_DIR, { recursive: true });
-      console.log("[Data] Created app data directory:", APP_DATA_DIR);
+      devLog("[Data] Created app data directory:", APP_DATA_DIR);
     }
 
     await Bun.write(PORTS_DATA_FILE, JSON.stringify(data, null, 2));
-    console.log("[Data] Ports data saved successfully to:", PORTS_DATA_FILE);
+    devLog("[Data] Ports data saved successfully to:", PORTS_DATA_FILE);
     return true;
   } catch (error) {
     console.error("[Data] Error saving ports data:", error);
@@ -406,7 +409,7 @@ const server = Bun.serve({
           projectName = fileName.replace(/\.(command|sh|bat|cmd)$/i, '');
         }
 
-        console.log(`[DetectPort] File: ${filePath}, Port: ${detectedPort}, Folder: ${folderPath}, Name: ${projectName}`);
+        devLog(`[DetectPort] File: ${filePath}, Port: ${detectedPort}, Folder: ${folderPath}, Name: ${projectName}`);
 
         return new Response(
           JSON.stringify({
@@ -430,7 +433,7 @@ const server = Bun.serve({
       try {
         const { portId, commandPath } = await req.json();
 
-        console.log(`[Execute] Received request for portId: ${portId}, path: ${commandPath}`);
+        devLog(`[Execute] Received request for portId: ${portId}, path: ${commandPath}`);
 
         if (!commandPath || !portId) {
           return new Response(
@@ -442,7 +445,7 @@ const server = Bun.serve({
         // 기존 프로세스가 실행 중이면 종료
         const existingProc = executableProcesses.get(portId);
         if (existingProc) {
-          console.log(`[Execute] Killing existing process for portId: ${portId}`);
+          devLog(`[Execute] Killing existing process for portId: ${portId}`);
           try {
             existingProc.kill();
           } catch (e) {
@@ -478,7 +481,7 @@ const server = Bun.serve({
               ? ['cmd', '/c', commandPath]
               : ['cmd', '/c', commandPath])
           : (isFilePath ? ['bash', commandPath] : ['bash', '-c', commandPath]);
-        console.log(`[Execute] Starting process: ${cmd.join(' ')}`);
+        devLog(`[Execute] Starting process: ${cmd.join(' ')}`);
 
         const proc = spawn({
           cmd,
@@ -489,11 +492,11 @@ const server = Bun.serve({
 
         executableProcesses.set(portId, proc);
 
-        console.log(`[Execute] Process started successfully with PID: ${proc.pid}`);
+        devLog(`[Execute] Process started successfully with PID: ${proc.pid}`);
 
         // 프로세스 종료 시 처리
         proc.exited.then((code) => {
-          console.log(`[Execute] Process for portId ${portId} exited with code: ${code}`);
+          devLog(`[Execute] Process for portId ${portId} exited with code: ${code}`);
           executableProcesses.delete(portId);
         });
 
@@ -521,7 +524,7 @@ const server = Bun.serve({
       try {
         const { portId, port } = await req.json();
 
-        console.log(`[Stop] Received stop request for portId: ${portId}, port: ${port}`);
+        devLog(`[Stop] Received stop request for portId: ${portId}, port: ${port}`);
 
         if (!portId) {
           return new Response(
@@ -535,11 +538,11 @@ const server = Bun.serve({
         // Map에서 프로세스 제거
         const proc = executableProcesses.get(portId);
         if (proc) {
-          console.log(`[Stop] Killing process from map for portId: ${portId}, PID: ${proc.pid}`);
+          devLog(`[Stop] Killing process from map for portId: ${portId}, PID: ${proc.pid}`);
           try {
             proc.kill();
             executableProcesses.delete(portId);
-            console.log(`[Stop] Process killed successfully`);
+            devLog(`[Stop] Process killed successfully`);
           } catch (e) {
             console.error(`[Stop] Error killing process:`, e);
           }
@@ -547,11 +550,11 @@ const server = Bun.serve({
 
         // 포트로 실행 중인 모든 프로세스 찾기
         if (port) {
-          console.log(`[Stop] Searching for all processes on port: ${port}`);
+          devLog(`[Stop] Searching for all processes on port: ${port}`);
           try {
             const pids = await getPidsByPort(port);
             if (pids.length > 0) {
-              console.log(`[Stop] Found ${pids.length} PIDs on port ${port}:`, pids);
+              devLog(`[Stop] Found ${pids.length} PIDs on port ${port}:`, pids);
               for (const pid of pids) {
                 await killPid(pid, false);
                 await new Promise(r => setTimeout(r, 200));
@@ -563,9 +566,9 @@ const server = Bun.serve({
                 }
                 killedPids.push(pid);
               }
-              console.log(`[Stop] Successfully killed ${killedPids.length} process(es)`);
+              devLog(`[Stop] Successfully killed ${killedPids.length} process(es)`);
             } else {
-              console.log(`[Stop] No process found on port ${port}`);
+              devLog(`[Stop] No process found on port ${port}`);
             }
           } catch (e) {
             console.error(`[Stop] Error finding/killing process by port:`, e);
@@ -597,7 +600,7 @@ const server = Bun.serve({
       try {
         const { portId, port, commandPath } = await req.json();
 
-        console.log(`[ForceRestart] Received request for portId: ${portId}, port: ${port}, path: ${commandPath}`);
+        devLog(`[ForceRestart] Received request for portId: ${portId}, port: ${port}, path: ${commandPath}`);
 
         if (!portId || !port || !commandPath) {
           return new Response(
@@ -607,12 +610,12 @@ const server = Bun.serve({
         }
 
         // 1단계: 포트로 실행 중인 모든 프로세스 강제 종료
-        console.log(`[ForceRestart] Killing all processes on port ${port}`);
+        devLog(`[ForceRestart] Killing all processes on port ${port}`);
 
         // Map에서도 제거
         const proc = executableProcesses.get(portId);
         if (proc) {
-          console.log(`[ForceRestart] Killing process from map, PID: ${proc.pid}`);
+          devLog(`[ForceRestart] Killing process from map, PID: ${proc.pid}`);
           try {
             proc.kill();
             executableProcesses.delete(portId);
@@ -625,14 +628,14 @@ const server = Bun.serve({
         try {
           const pids = await getPidsByPort(port);
           if (pids.length > 0) {
-            console.log(`[ForceRestart] Found PIDs on port ${port}:`, pids);
+            devLog(`[ForceRestart] Found PIDs on port ${port}:`, pids);
             for (const pid of pids) {
               await killPid(pid, true);
             }
             await new Promise(resolve => setTimeout(resolve, 500));
-            console.log(`[ForceRestart] Successfully killed all processes on port ${port}`);
+            devLog(`[ForceRestart] Successfully killed all processes on port ${port}`);
           } else {
-            console.log(`[ForceRestart] No process found on port ${port}`);
+            devLog(`[ForceRestart] No process found on port ${port}`);
           }
         } catch (e) {
           console.error(`[ForceRestart] Error finding/killing process by port:`, e);
@@ -645,7 +648,7 @@ const server = Bun.serve({
         const restartCmd = IS_WIN
           ? ['cmd', '/c', commandPath]
           : (isFilePath ? ['bash', commandPath] : ['bash', '-c', commandPath]);
-        console.log(`[ForceRestart] Starting new process: ${restartCmd.join(' ')}`);
+        devLog(`[ForceRestart] Starting new process: ${restartCmd.join(' ')}`);
 
         const newProc = spawn({
           cmd: restartCmd,
@@ -656,11 +659,11 @@ const server = Bun.serve({
 
         executableProcesses.set(portId, newProc);
 
-        console.log(`[ForceRestart] Process restarted successfully with PID: ${newProc.pid}`);
+        devLog(`[ForceRestart] Process restarted successfully with PID: ${newProc.pid}`);
 
         // 프로세스 종료 시 처리
         newProc.exited.then((code) => {
-          console.log(`[ForceRestart] Process for portId ${portId} exited with code: ${code}`);
+          devLog(`[ForceRestart] Process for portId ${portId} exited with code: ${code}`);
           executableProcesses.delete(portId);
         });
 
@@ -699,7 +702,7 @@ const server = Bun.serve({
         const pids = await getPidsByPort(port);
         const isRunning = pids.length > 0;
 
-        console.log(`[CheckPortStatus] Port ${port} is ${isRunning ? 'RUNNING' : 'NOT running'}`);
+        devLog(`[CheckPortStatus] Port ${port} is ${isRunning ? 'RUNNING' : 'NOT running'}`);
 
         return new Response(
           JSON.stringify({
@@ -720,11 +723,52 @@ const server = Bun.serve({
       }
     }
 
+    // 워크트리 폴더 경로와 CWD가 일치하는 프로세스의 실제 리스닝 포트 반환
+    if (url.pathname === "/api/find-worktree-port" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json();
+        if (!folderPath || IS_WIN) {
+          return new Response(JSON.stringify({ success: true, port: null }), { headers });
+        }
+        // 1) 10001-10499 범위에서 LISTEN 중인 포트+PID 수집
+        const r1 = Bun.spawnSync(['lsof', '-iTCP:10001-10499', '-sTCP:LISTEN', '-P', '-n', '-F', 'pn'], { stderr: 'pipe' });
+        const lines1 = r1.stdout.toString().split('\n');
+        const pidPortPairs: { pid: string; port: number }[] = [];
+        let curPid = '';
+        for (const line of lines1) {
+          if (line.startsWith('p')) { curPid = line.slice(1); }
+          else if (line.startsWith('n') && curPid) {
+            const m = line.match(/:(\d+)$/);
+            if (m) pidPortPairs.push({ pid: curPid, port: parseInt(m[1]) });
+          }
+        }
+        // 2) 각 고유 PID의 CWD가 folderPath 와 일치하는지 확인
+        const uniquePids = [...new Set(pidPortPairs.map(e => e.pid))];
+        for (const pid of uniquePids) {
+          const r2 = Bun.spawnSync(['lsof', '-a', '-p', pid, '-d', 'cwd', '-Fn'], { stderr: 'pipe' });
+          const cwdLine = r2.stdout.toString().split('\n').find(l => l.startsWith('n'));
+          if (!cwdLine) continue;
+          const cwd = cwdLine.slice(1).trim();
+          if (cwd === folderPath || cwd.startsWith(folderPath + '/') || folderPath.startsWith(cwd + '/')) {
+            const port = pidPortPairs.find(e => e.pid === pid)?.port ?? null;
+            if (port) {
+              devLog(`[FindWorktreePort] ${folderPath} → port ${port} (pid ${pid} cwd=${cwd})`);
+              return new Response(JSON.stringify({ success: true, port }), { headers });
+            }
+          }
+        }
+        return new Response(JSON.stringify({ success: true, port: null }), { headers });
+      } catch (error: any) {
+        console.error('[FindWorktreePort] Error:', error);
+        return new Response(JSON.stringify({ success: false, port: null, error: error.message }), { headers });
+      }
+    }
+
     if (url.pathname === "/api/open-add-command" && req.method === "POST") {
       try {
         const scriptPath = join(import.meta.dir, "포트에추가.command");
 
-        console.log(`[OpenAddCommand] Attempting to open: ${scriptPath}`);
+        devLog(`[OpenAddCommand] Attempting to open: ${scriptPath}`);
 
         // 파일 존재 여부 확인
         const file = Bun.file(scriptPath);
@@ -741,7 +785,7 @@ const server = Bun.serve({
           );
         }
 
-        console.log(`[OpenAddCommand] File exists, opening...`);
+        devLog(`[OpenAddCommand] File exists, opening...`);
 
         // macOS에서 .command 파일 열기
         spawn({
@@ -784,7 +828,7 @@ const server = Bun.serve({
 
         const buildCommand = type === 'dmg' ? 'tauri:build:dmg' : 'tauri:build';
 
-        console.log(`[Build] Starting ${type} build...`);
+        devLog(`[Build] Starting ${type} build...`);
 
         // bash를 통해 cargo 환경을 설정하고 실행
         buildProcess = spawn({
@@ -802,7 +846,7 @@ const server = Bun.serve({
             if (isStderr) {
               console.error(`[Build] ${text}`);
             } else {
-              console.log(`[Build] ${text}`);
+              devLog(`[Build] ${text}`);
             }
           }
         };
@@ -815,7 +859,7 @@ const server = Bun.serve({
           await Promise.all([stdoutDone, stderrDone]); // 스트림 완전 드레인 후
           buildStatus.exitCode = code;
           buildStatus.isBuilding = false;
-          console.log(`[Build] Process exited with code: ${code}`);
+          devLog(`[Build] Process exited with code: ${code}`);
         });
 
         return new Response(
@@ -852,7 +896,7 @@ const server = Bun.serve({
         // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
         const dmgFolder = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle/dmg");
 
-        console.log(`[OpenBuildFolder] Attempting to open: ${dmgFolder}`);
+        devLog(`[OpenBuildFolder] Attempting to open: ${dmgFolder}`);
 
         // macOS에서 폴더 열기
         spawn({
@@ -942,7 +986,7 @@ return ""`;
       try {
         const { folderPath } = await req.json();
 
-        console.log(`[OpenFolder] Attempting to open: ${folderPath}`);
+        devLog(`[OpenFolder] Attempting to open: ${folderPath}`);
 
         if (!folderPath) {
           return new Response(
@@ -1391,7 +1435,7 @@ return ""`;
         const appPath = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle/macos/포트관리기.app");
         const destPath = "/Applications/포트관리기.app";
 
-        console.log(`[InstallApp] Installing from: ${appPath} to: ${destPath}`);
+        devLog(`[InstallApp] Installing from: ${appPath} to: ${destPath}`);
 
         // 기존 앱이 있으면 삭제
         if (existsSync(destPath)) {
@@ -1431,7 +1475,7 @@ return ""`;
 
     if (url.pathname === "/api/export-dmg" && req.method === "POST") {
       try {
-        console.log(`[ExportDMG] Starting...`);
+        devLog(`[ExportDMG] Starting...`);
         // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
         const bundleDir = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle");
 
@@ -1445,16 +1489,16 @@ return ""`;
         let dmgFile: string | null = null;
 
         for (const dmgDir of dmgPaths) {
-          console.log(`[ExportDMG] Checking directory: ${dmgDir}`);
+          devLog(`[ExportDMG] Checking directory: ${dmgDir}`);
           if (existsSync(dmgDir)) {
             const { readdirSync } = await import("node:fs");
             const files = readdirSync(dmgDir);
-            console.log(`[ExportDMG] Files found:`, files);
+            devLog(`[ExportDMG] Files found:`, files);
 
             for (const file of files) {
               if (file.endsWith('.dmg') && !file.startsWith('rw.')) {
                 dmgFile = join(dmgDir, file);
-                console.log(`[ExportDMG] Found DMG: ${dmgFile}`);
+                devLog(`[ExportDMG] Found DMG: ${dmgFile}`);
                 break;
               }
             }
@@ -1481,7 +1525,7 @@ return ""`;
         const dmgFilename = basename(dmgFile);
         const destPath = join(desktop, dmgFilename);
 
-        console.log(`[ExportDMG] Copying from: ${dmgFile} to: ${destPath}`);
+        devLog(`[ExportDMG] Copying from: ${dmgFile} to: ${destPath}`);
 
         // 기존 파일이 있으면 삭제
         if (existsSync(destPath)) {
@@ -1493,7 +1537,7 @@ return ""`;
         const { copyFileSync } = await import("node:fs");
         copyFileSync(dmgFile, destPath);
 
-        console.log(`[ExportDMG] Copy successful`);
+        devLog(`[ExportDMG] Copy successful`);
 
         // Desktop 폴더 열기
         spawn({
@@ -1575,7 +1619,7 @@ return ""`;
           return new Response(JSON.stringify({ success: false, error: "이미 존재하는 폴더입니다" }), { status: 400, headers });
         }
         mkdirSync(folderPath, { recursive: true });
-        console.log(`[CreateFolder] Created: ${folderPath}`);
+        devLog(`[CreateFolder] Created: ${folderPath}`);
         spawn({ cmd: ["open", folderPath], stdout: "inherit", stderr: "inherit" });
         return new Response(JSON.stringify({ success: true, path: folderPath }), { headers });
       } catch (error: any) {
@@ -1864,19 +1908,7 @@ return ""`;
         const home = homedir();
         // 플랫폼 공통 basename: / 와 \ 둘 다 처리
         const baseName = (folderPath as string).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'project';
-        const targetPath = worktreePath || (() => {
-          if (isICloud) {
-            // iCloud 경로: git checkout이 SIGBUS → ~/worktrees/ (iCloud 밖)에 생성
-            return join(home, 'worktrees', `${baseName}-${dirSafeBranch}`);
-          }
-          // 형제 디렉터리로 생성: <parent>/<baseName>-<branch>
-          const trimmed = (folderPath as string).replace(/[\\/]+$/, '');
-          const sepMatch = trimmed.match(/[\\/]/);
-          const sep = sepMatch ? sepMatch[0] : (IS_WIN ? '\\' : '/');
-          const parts = trimmed.split(/[\\/]/);
-          parts[parts.length - 1] = parts[parts.length - 1] + '-' + dirSafeBranch;
-          return parts.join(sep);
-        })();
+        const targetPath = worktreePath || join(home, 'worktrees', `${baseName}-${dirSafeBranch}`);
         // Check if worktree for this branch already exists
         const listProc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
         await listProc.exited;
@@ -2554,4 +2586,4 @@ Analyze this project and reply with JSON only (no markdown, no explanation):
   },
 });
 
-console.log(`🚀 API Server running at http://localhost:${server.port}`);
+devLog(`🚀 API Server running at http://localhost:${server.port}`);

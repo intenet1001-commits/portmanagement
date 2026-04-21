@@ -22,7 +22,16 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost https://*.supabase.co http://localhost:3001; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:;"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/cs-company/portmanager/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "pubkey": "__REPLACE_WITH_TAURI_SIGNER_PUBKEY__"
     }
   },
   "bundle": {
