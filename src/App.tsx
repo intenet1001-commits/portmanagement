@@ -2183,6 +2183,35 @@ function App() {
         }
       }
 
+      // deployUrl/githubUrl → portal_items 자동 공유 (__shared__)
+      const now = new Date().toISOString();
+      const autoItems = ownedPorts.flatMap(p => {
+        const items: object[] = [];
+        if (p.deployUrl) items.push({
+          id: `auto:deploy:${p.id}`, name: p.name, type: 'web',
+          url: p.deployUrl, category: p.category || '프로젝트',
+          description: `배포 주소 — ${p.name}`, device_id: '__shared__',
+          pinned: false, visit_count: 0, created_at: now,
+        });
+        if (p.githubUrl) items.push({
+          id: `auto:github:${p.id}`, name: `${p.name} GitHub`, type: 'web',
+          url: p.githubUrl, category: 'GitHub',
+          description: `GitHub 저장소 — ${p.name}`, device_id: '__shared__',
+          pinned: false, visit_count: 0, created_at: now,
+        });
+        return items;
+      });
+      if (autoItems.length > 0) {
+        await supabase.from('portal_items').upsert(autoItems, { onConflict: 'id' });
+      }
+      // URL이 없어진 포트의 stale auto portal_items 삭제
+      const activeAutoIds = new Set(autoItems.map((x: any) => x.id));
+      const allAutoIds = ownedPorts.flatMap(p => [`auto:deploy:${p.id}`, `auto:github:${p.id}`]);
+      const staleAutoIds = allAutoIds.filter(id => !activeAutoIds.has(id));
+      if (staleAutoIds.length > 0) {
+        await supabase.from('portal_items').delete().in('id', staleAutoIds);
+      }
+
       // workspace_roots 업로드
       let rootsMsg = '';
       if (deviceId) {
