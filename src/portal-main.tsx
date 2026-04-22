@@ -314,12 +314,12 @@ function DeviceManagerModal({ devices, creds, onClose, onUpdate }: {
                     </p>
                   </div>
                   <button onClick={() => { setEditingId(d.id); setEditName(d.name ?? ''); }}
-                    className="shrink-0 p-1.5 text-zinc-600 hover:text-zinc-300 transition-colors" title="이름 편집">
-                    <Pencil className="w-3.5 h-3.5" />
+                    className="shrink-0 px-2 py-1 text-[11px] text-zinc-400 border border-zinc-700 rounded hover:bg-zinc-800 transition-colors flex items-center gap-1">
+                    <Pencil className="w-3 h-3" />편집
                   </button>
                   <button onClick={() => deleteDevice(d.id)} disabled={deletingId === d.id}
-                    className="shrink-0 p-1.5 text-zinc-600 hover:text-red-400 transition-colors disabled:opacity-50" title="삭제">
-                    <Trash2 className="w-3.5 h-3.5" />
+                    className="shrink-0 px-2 py-1 text-[11px] text-red-400 border border-red-900/50 rounded hover:bg-red-500/10 transition-colors disabled:opacity-50 flex items-center gap-1">
+                    <Trash2 className="w-3 h-3" />{deletingId === d.id ? '…' : '삭제'}
                   </button>
                 </>
               )}
@@ -384,6 +384,11 @@ function App() {
 
   async function registerThisDevice() {
     if (!creds || !registerName.trim()) return;
+    const trimmed = registerName.trim();
+    if (devices.some(d => d.name === trimmed)) {
+      showToast('같은 이름의 기기가 이미 있습니다', 'error');
+      return;
+    }
     setRegistering(true);
     try {
       const newId = crypto.randomUUID();
