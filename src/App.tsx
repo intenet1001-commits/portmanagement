@@ -2987,9 +2987,10 @@ function App() {
         borderRadius:8, cursor:'pointer',
         display:'flex', flexDirection:'column', gap:6,
         minHeight:108, position:'relative',
+        zIndex: menuOpen ? 50 : 'auto',
       }}
         onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor='rgba(255,240,220,0.12)'; }}
-        onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor='rgba(255,240,220,0.07)'; if(v3MenuOpenId===item.id) setV3MenuOpenId(null); }}
+        onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor='rgba(255,240,220,0.07)'; }}
       >
         <div style={{display:'flex',alignItems:'center',gap:5}}>
           <span style={{width:7,height:7,borderRadius:4,flexShrink:0,background:item.isRunning?'#8fb96e':'#6b6459'}} />
@@ -3064,8 +3065,20 @@ function App() {
                 const detectedPort = wtActualPorts[wt.path];
                 const wtPort = detectedPort ?? (wtPortEntry?.port ?? worktreePortFromPath(wt.path, usedPorts));
                 const isWtRunning = detectedPort != null || (wtPortEntry?.isRunning ?? wtPortStatuses[wtPort] ?? false);
+                const wtClaudeBypass = () => {
+                  const sessionName = `${item.name.replace(/\s+/g,'-')}-${wt.path.replace(/\/$/, '').split('/').pop()}`;
+                  API.openTmuxClaudeBypass(sessionName, item.folderPath, wt.path)
+                    .then(() => showToast(`Claude(bypass) 실행: ${displayName}`, 'success'))
+                    .catch(err => showToast(`Claude 실행 실패: ${err}`, 'error'));
+                };
                 return (
-                  <div key={wt.path} style={{padding:'5px 6px',borderRadius:5,background:'rgba(255,240,220,0.02)',border:'1px solid rgba(255,240,220,0.05)',display:'flex',flexDirection:'column',gap:4}}>
+                  <div key={wt.path} style={{
+                    padding:'5px 6px', borderRadius:5,
+                    background: wt.is_main ? 'rgba(232,165,87,0.04)' : 'rgba(255,240,220,0.02)',
+                    border:'1px solid rgba(255,240,220,0.05)',
+                    borderLeft: wt.is_main ? '2px solid rgba(232,165,87,0.35)' : '1px solid rgba(255,240,220,0.05)',
+                    display:'flex', flexDirection:'column', gap:4,
+                  }}>
                     {/* Branch name row */}
                     <div style={{display:'flex',alignItems:'center',gap:5}}>
                       <GitBranch style={{width:9,height:9,color:wt.is_main?'#6b6459':'#7ba7c9',flexShrink:0}}/>
@@ -3081,6 +3094,7 @@ function App() {
                       <button onClick={e=>{e.stopPropagation(); item.port && window.open(`http://localhost:${item.port}`, '_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
                       <button onClick={e=>{e.stopPropagation(); wt.path && API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
                       <button onClick={e=>{e.stopPropagation(); forceRestartCommand(item);}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
+                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}>Claude</button>
                       <button onClick={e=>{e.stopPropagation(); setCommitModal({item,wt,msg:''});}} style={miniBtn}>커밋</button>
                       <button onClick={e=>{e.stopPropagation();
                         const baseUrl = isTauri() ? 'http://localhost:3001' : '';
@@ -3101,6 +3115,7 @@ function App() {
                         else forceRestartCommand({...item, id:`${item.id}_wt_${wtName}`, port:wtPort, worktreePath:wt.path});
                       }} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
                       <button onClick={e=>{e.stopPropagation(); API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
+                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}>Claude</button>
                       <button onClick={e=>{e.stopPropagation(); setCommitModal({item,wt,msg:''});}} style={miniBtn}>커밋</button>
                       <button onClick={e=>{e.stopPropagation();
                         const baseUrl = isTauri() ? 'http://localhost:3001' : '';
@@ -3135,12 +3150,12 @@ function App() {
 
         {/* Secondary menu */}
         {menuOpen && (
-          <div style={{position:'absolute',bottom:46,right:8,zIndex:20,background:'#221f1b',border:'1px solid rgba(255,240,220,0.12)',borderRadius:8,padding:'4px 0',boxShadow:'0 8px 24px rgba(0,0,0,0.5)',minWidth:140}}>
+          <div style={{position:'absolute',bottom:42,right:8,zIndex:200,background:'#221f1b',border:'1px solid rgba(255,240,220,0.12)',borderRadius:8,padding:'4px 0',boxShadow:'0 12px 32px rgba(0,0,0,0.7)',minWidth:150}}>
             {[
               {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item)},
               {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath)},
               {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>API.openLog(item.id)},
-              {label:'터미널', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item)},
+              {label:'Claude (bypass)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item)},
               {label:'수정', icon:<Pencil style={{width:11,height:11}}/>, action:()=>startEdit(item)},
               {label:'삭제', icon:<Trash2 style={{width:11,height:11}}/>, action:()=>setDeleteConfirmId(item.id), danger:true},
             ].map(({label,icon,action,danger}:{label:string;icon:React.ReactNode;action:()=>void;danger?:boolean}) => (
