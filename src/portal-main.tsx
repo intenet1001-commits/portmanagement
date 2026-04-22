@@ -379,19 +379,51 @@ function App() {
     if (!creds) return;
     try {
       const sb = createClient(creds.url, creds.key);
-      // 1) devices 테이블
+      const nameMap = new Map<string, string>();
+      const seenIds = new Set<string>();
+
+      // 1) devices 테이블 (이름 우선)
       const { data: devRows } = await sb.from('devices').select('*').order('last_push_at', { ascending: false });
-      const list: DeviceRow[] = devRows ?? [];
-      const knownIds = new Set(list.map(d => d.id));
-      // 2) ports 테이블에서 device_id/device_name 보강 (devices 테이블에 없는 기기 추가)
-      const { data: portRows } = await sb.from('ports').select('device_id, device_name').not('device_id', 'is', null);
-      if (portRows) {
-        for (const r of portRows) {
-          if (!r.device_id || knownIds.has(r.device_id)) continue;
-          knownIds.add(r.device_id);
-          list.push({ id: r.device_id, name: r.device_name ?? r.device_id.slice(0, 8), last_push_at: '' });
+      for (const d of devRows ?? []) {
+        seenIds.add(d.id);
+        if (d.name) nameMap.set(d.id, d.name);
+      }
+
+      // 2) workspace_roots __device__ sentinel → 기기명 (가장 신뢰할 수 있는 소스)
+      const { data: rootRows } = await sb.from('workspace_roots').select('device_id, name, path').not('device_id', 'is', null);
+      for (const r of rootRows ?? []) {
+        if (!r.device_id || r.device_id === '__shared__') continue;
+        seenIds.add(r.device_id);
+        if (r.path?.startsWith('__device__') && r.name && !nameMap.has(r.device_id)) {
+          nameMap.set(r.device_id, r.name);
         }
       }
+
+      // 3) ports 테이블 device_name 컬럼
+      const { data: portRows } = await sb.from('ports').select('device_id, device_name').not('device_id', 'is', null);
+      for (const r of portRows ?? []) {
+        if (!r.device_id) continue;
+        seenIds.add(r.device_id);
+        if (r.device_name && !nameMap.has(r.device_id)) nameMap.set(r.device_id, r.device_name);
+      }
+
+      // 4) portal_items folder 타입 → 경로에서 사용자명 추출 (최후 fallback)
+      const { data: folderRows } = await sb.from('portal_items').select('device_id, path').eq('type', 'folder').not('device_id', 'is', null);
+      for (const r of folderRows ?? []) {
+        if (!r.device_id || r.device_id === '__shared__') continue;
+        seenIds.add(r.device_id);
+        if (!nameMap.has(r.device_id) && r.path) {
+          const m = r.path.match(/^\/(?:Users|home)\/([^/]+)\//);
+          if (m) nameMap.set(r.device_id, `${m[1]}의 기기`);
+        }
+      }
+
+      const list: DeviceRow[] = Array.from(seenIds).map(id => ({
+        id,
+        name: nameMap.get(id) ?? id.slice(0, 8),
+        last_push_at: (devRows ?? []).find(d => d.id === id)?.last_push_at ?? '',
+      })).sort((a, b) => (b.last_push_at ?? '').localeCompare(a.last_push_at ?? ''));
+
       setDevices(list);
       if (!selectedDeviceId && list.length > 0) {
         setShowDevicePicker(true);
