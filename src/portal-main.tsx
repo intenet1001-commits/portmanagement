@@ -425,8 +425,15 @@ function App() {
       })).sort((a, b) => (b.last_push_at ?? '').localeCompare(a.last_push_at ?? ''));
 
       setDevices(list);
-      if (!selectedDeviceId && list.length > 0) {
-        setShowDevicePicker(true);
+      // Auto-open picker if no device selected OR selected device not in list
+      const knownInList = list.some(d => d.id === selectedDeviceId);
+      if ((!selectedDeviceId || !knownInList) && list.length > 0) {
+        // Auto-select if only one candidate with ports (most recent push)
+        if (list.length === 1) {
+          selectDevice(list[0].id);
+        } else {
+          setShowDevicePicker(true);
+        }
       }
     } catch {}
   }
