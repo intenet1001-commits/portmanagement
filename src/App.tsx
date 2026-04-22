@@ -3066,8 +3066,14 @@ function App() {
                 const wtPort = detectedPort ?? (wtPortEntry?.port ?? worktreePortFromPath(wt.path, usedPorts));
                 const isWtRunning = detectedPort != null || (wtPortEntry?.isRunning ?? wtPortStatuses[wtPort] ?? false);
                 const wtClaudeBypass = () => {
-                  const sessionName = `${item.name.replace(/\s+/g,'-')}-${wt.path.replace(/\/$/, '').split('/').pop()}`;
-                  API.openTmuxClaudeBypass(sessionName, item.folderPath, wt.path)
+                  const branchName = wt.branch || wt.path.replace(/\/$/, '').split('/').pop()!;
+                  const sessionName = `${item.name.replace(/\s+/g,'-')}-${branchName}`;
+                  const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                  fetch(`${baseUrl}/api/open-tmux-claude-bypass`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionName, folderPath: item.folderPath, worktreePath: wt.path, branch: branchName }),
+                  })
                     .then(() => showToast(`Claude(bypass) 실행: ${displayName}`, 'success'))
                     .catch(err => showToast(`Claude 실행 실패: ${err}`, 'error'));
                 };

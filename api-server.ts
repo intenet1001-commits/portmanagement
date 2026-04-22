@@ -84,10 +84,14 @@ function findWslDistro(): string | null {
 }
 
 /** 터미널/탭 타이틀: ⚡️ tmux+bypass  🔷🆕 tmux+fresh  🔷 tmux  🛡️ bypass  🪟 normal */
-function buildWindowTitle(sessionName: string, worktreePath?: string | null, tags?: string | string[] | null): string {
+function buildWindowTitle(sessionName: string, worktreePath?: string | null, tags?: string | string[] | null, branchHint?: string | null): string {
   const wtRaw = worktreePath?.split(',')[0]?.trim();
-  const wtName = wtRaw ? wtRaw.split(/[\\/]/).filter(Boolean).pop() : undefined;
-  const base = wtName ? `${sessionName} \u203A ${wtName}` : sessionName;
+  const wtName = branchHint || (wtRaw ? wtRaw.split(/[\\/]/).filter(Boolean).pop() : undefined);
+  // Strip "-branchName" suffix from sessionName: "project-design" → "project \u203A design"
+  const displaySession = wtName && sessionName.endsWith(`-${wtName}`)
+    ? sessionName.slice(0, -(wtName.length + 1))
+    : sessionName;
+  const base = wtName ? `${displaySession} \u203A ${wtName}` : sessionName;
   const tagList = Array.isArray(tags) ? tags : tags ? [tags] : [];
   const isTmux = tagList.includes('tmux');
   const isBypass = tagList.includes('bypass');
@@ -1063,8 +1067,8 @@ return ""`;
 
     if (url.pathname === "/api/open-tmux-claude" && req.method === "POST") {
       try {
-        const { sessionName, folderPath, worktreePath } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath, 'tmux');
+        const { sessionName, folderPath, worktreePath, branch } = await req.json();
+        const title = buildWindowTitle(sessionName, worktreePath, 'tmux', branch ?? null);
         if (IS_WIN) {
           spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, false), title);
         } else {
@@ -1082,8 +1086,8 @@ return ""`;
 
     if (url.pathname === "/api/open-tmux-claude-fresh" && req.method === "POST") {
       try {
-        const { sessionName, folderPath, worktreePath } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'fresh']);
+        const { sessionName, folderPath, worktreePath, branch } = await req.json();
+        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'fresh'], branch ?? null);
         if (IS_WIN) {
           spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, true, false), title);
         } else {
@@ -1101,8 +1105,8 @@ return ""`;
 
     if (url.pathname === "/api/open-tmux-claude-bypass" && req.method === "POST") {
       try {
-        const { sessionName, folderPath, worktreePath } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'bypass']);
+        const { sessionName, folderPath, worktreePath, branch } = await req.json();
+        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'bypass'], branch ?? null);
         if (IS_WIN) {
           spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, true), title);
         } else {
