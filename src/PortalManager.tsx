@@ -402,9 +402,19 @@ function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices,
                   })}
                 </select>
                 {viewingDeviceId && viewingDeviceId !== deviceId && (
-                  <div className="mt-1.5 flex items-center justify-between">
+                  <div className="mt-1.5 space-y-1">
                     <p className="text-[10px] text-amber-400">⚠ Pull 시 선택한 기기 데이터 적용됨</p>
-                    <button onClick={onResetDevice} className="text-[10px] text-zinc-500 hover:text-[#ede7dd]/90 underline">내 기기로 복귀</button>
+                    <div className="flex items-center gap-2">
+                      <button onClick={onResetDevice} className="text-[10px] text-zinc-500 hover:text-[#ede7dd]/90 underline">내 기기로 복귀</button>
+                      <span className="text-[10px] text-zinc-700">|</span>
+                      <button
+                        onClick={() => { onChangeDeviceId(viewingDeviceId); onResetDevice(); }}
+                        className="text-[10px] text-blue-400 hover:text-blue-300 underline"
+                        title="이 브라우저의 기기 ID를 선택한 기기의 ID로 변경합니다"
+                      >
+                        이 기기로 전환 (ID 변경)
+                      </button>
+                    </div>
                   </div>
                 )}
               </>
