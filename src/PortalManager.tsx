@@ -1402,7 +1402,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0">
         {/* Search row */}
-        <div style={{padding:'14px 0 14px',display:'flex',gap:10,borderBottom:'1px solid rgba(255,240,220,0.07)',marginBottom:14}}>
+        <div style={{padding:'14px 0 14px',display:'flex',flexWrap:'wrap',gap:8,borderBottom:'1px solid rgba(255,240,220,0.07)',marginBottom:14}}>
           <div style={{flex:1,position:'relative'}}>
             <Search className="w-3.5 h-3.5" style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'#6b6459'}} />
             <input
@@ -1819,6 +1819,8 @@ interface CardProps {
   onTogglePin: (id: string) => void;
 }
 
+const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+
 function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePin }: CardProps) {
   const cat = getCat(item.category);
   const c = cat ? getColor(cat.color) : COLORS.teal;
@@ -1864,7 +1866,7 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
       </div>
 
       {/* Actions */}
-      <div style={{marginTop:'auto',display:'flex',gap:4,opacity:hovered?1:0.5,transition:'opacity .12s'}}>
+      <div style={{marginTop:'auto',display:'flex',gap:4,opacity:(isTouchDevice||hovered)?1:0.5,transition:'opacity .12s'}}>
         <button
           onClick={() => onOpen(item)}
           className={`${c.bg} ${c.text} ${c.border}`}
@@ -1908,16 +1910,16 @@ function Modal({ title, children, onClose, onConfirm, confirmLabel }: {
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(10,8,6,0.65)',backdropFilter:'blur(2px)'}}>
-      <div style={{width:440,background:'#1c1916',borderRadius:12,border:'1px solid rgba(255,240,220,0.12)',boxShadow:'0 24px 80px rgba(0,0,0,0.6)',overflow:'hidden'}}>
-        <div style={{padding:'14px 18px',display:'flex',alignItems:'center',borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
+      <div style={{width:'100%',maxWidth:440,background:'#1c1916',borderRadius:12,border:'1px solid rgba(255,240,220,0.12)',boxShadow:'0 24px 80px rgba(0,0,0,0.6)',overflow:'hidden',maxHeight:'90vh',display:'flex',flexDirection:'column'}}>
+        <div style={{padding:'14px 18px',display:'flex',alignItems:'center',borderBottom:'1px solid rgba(255,240,220,0.07)',flexShrink:0}}>
           <h3 style={{margin:0,fontSize:14,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>{title}</h3>
           <div style={{flex:1}}/>
           <button onClick={onClose} style={{background:'transparent',border:'none',color:'#a39a8c',cursor:'pointer',padding:4,display:'flex',alignItems:'center'}}>
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
-        <div style={{padding:18}}>{children}</div>
-        <div style={{padding:'12px 18px',borderTop:'1px solid rgba(255,240,220,0.07)',display:'flex',gap:8,justifyContent:'flex-end'}}>
+        <div style={{padding:18,flex:1,overflowY:'auto'}}>{children}</div>
+        <div style={{padding:'12px 18px',borderTop:'1px solid rgba(255,240,220,0.07)',display:'flex',gap:8,justifyContent:'flex-end',flexShrink:0}}>
           <button onClick={onClose} style={{padding:'7px 16px',background:'transparent',color:'#ede7dd',border:'1px solid rgba(255,240,220,0.12)',borderRadius:6,fontSize:12.5,cursor:'pointer',fontFamily:'inherit'}}>
             취소
           </button>

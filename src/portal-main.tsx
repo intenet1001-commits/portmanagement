@@ -6,7 +6,7 @@ import {
   BookMarked, Settings, CloudUpload, CloudDownload,
   ExternalLink, Github, RefreshCw, Clock, Monitor, Smartphone,
   Server, Pencil, Trash2,
-  ChevronDown, X,
+  ChevronDown, X, MoreHorizontal,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -136,9 +136,12 @@ function PasswordGate({ onVerified }: { onVerified: () => void }) {
 
 function Toast({ message, type }: { message: string; type: 'success' | 'error' }) {
   return (
-    <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium flex items-center gap-2 animate-slide-in ${
-      type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'
-    }`}>{message}</div>
+    <div
+      className={`fixed z-50 px-4 py-3 rounded-xl shadow-lg border text-sm font-medium flex items-center gap-2 animate-slide-in ${
+        type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'
+      }`}
+      style={{top:'calc(env(safe-area-inset-top) + 1rem)',right:'calc(env(safe-area-inset-right) + 1rem)'}}
+    >{message}</div>
   );
 }
 
@@ -358,6 +361,7 @@ function App() {
   const [showRegisterForm, setShowRegisterForm] = useState(false);
   const [registerName, setRegisterName] = useState('');
   const [registering, setRegistering] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const actionsRef = useRef<PortalActions | null>(null);
   const creds = getSupabaseCreds();
 
@@ -626,17 +630,40 @@ function App() {
             {/* Device picker — compact header */}
             {!isFullLayout && devicePickerEl}
 
-            {/* Bookmark actions */}
+            {/* Bookmark actions — desktop: inline buttons / mobile: ... dropdown */}
             {(activeTab === 'bookmarks' || isFullLayout) && <>
-              <button onClick={() => actionsRef.current?.push()} className={btnCls} title="Push">
-                <CloudUpload className="w-3.5 h-3.5" /><span className="hidden sm:inline">Push</span>
-              </button>
-              <button onClick={() => actionsRef.current?.pull()} className={btnCls} title="Pull">
-                <CloudDownload className="w-3.5 h-3.5" /><span className="hidden sm:inline">Pull</span>
-              </button>
-              <button onClick={() => actionsRef.current?.history()} className={btnCls} title="히스토리">
-                <Clock className="w-3.5 h-3.5" />
-              </button>
+              {/* Desktop buttons */}
+              <div className="hidden sm:flex items-center gap-1.5">
+                <button onClick={() => actionsRef.current?.push()} className={btnCls} title="Push">
+                  <CloudUpload className="w-3.5 h-3.5" /><span className="hidden sm:inline">Push</span>
+                </button>
+                <button onClick={() => actionsRef.current?.pull()} className={btnCls} title="Pull">
+                  <CloudDownload className="w-3.5 h-3.5" /><span className="hidden sm:inline">Pull</span>
+                </button>
+                <button onClick={() => actionsRef.current?.history()} className={btnCls} title="히스토리">
+                  <Clock className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              {/* Mobile more menu */}
+              <div className="relative sm:hidden">
+                <button onClick={() => setShowMoreMenu(s => !s)} className={btnCls} title="더보기">
+                  <MoreHorizontal className="w-3.5 h-3.5" />
+                </button>
+                {showMoreMenu && (
+                  <div className="absolute top-full right-0 mt-1 z-50 w-32 bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl py-1"
+                    onClick={() => setShowMoreMenu(false)}>
+                    <button onClick={() => actionsRef.current?.push()} className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2">
+                      <CloudUpload className="w-3.5 h-3.5" />Push
+                    </button>
+                    <button onClick={() => actionsRef.current?.pull()} className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2">
+                      <CloudDownload className="w-3.5 h-3.5" />Pull
+                    </button>
+                    <button onClick={() => actionsRef.current?.history()} className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5" />히스토리
+                    </button>
+                  </div>
+                )}
+              </div>
             </>}
 
             {/* Layout toggle — hidden on mobile */}
