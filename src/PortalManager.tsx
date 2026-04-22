@@ -1222,7 +1222,23 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         }
       }
 
-      const devices = Array.from(seen).map(id => ({
+      // devices 테이블이 있으면 그것을 기준으로 필터링 (삭제된 기기 제외)
+      const { data: deviceRows } = await supabase
+        .from('devices').select('id, name');
+      const registeredIds = deviceRows && deviceRows.length > 0
+        ? new Set(deviceRows.map((r: { id: string }) => r.id))
+        : null;
+      // devices 테이블 name이 최우선
+      if (deviceRows) {
+        for (const r of deviceRows) {
+          if (r.name) nameMap.set(r.id, r.name);
+        }
+      }
+
+      const allIds = registeredIds
+        ? Array.from(seen).filter(id => registeredIds.has(id))
+        : Array.from(seen);
+      const devices = allIds.map(id => ({
         device_id: id,
         device_name: nameMap.get(id),
       }));
