@@ -527,7 +527,7 @@ function App() {
         className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-300 border border-zinc-700/50 rounded-lg transition-all max-w-[180px]"
       >
         <Server className="w-3 h-3 shrink-0 text-zinc-500" />
-        <span className="truncate text-zinc-500 shrink-0">보기:</span>
+        <span className="truncate text-zinc-500 shrink-0 hidden sm:inline">보기:</span>
         <span className="truncate">{selectedDevice?.name ?? '기기 선택'}</span>
         <ChevronDown className="w-3 h-3 shrink-0 text-zinc-600" />
       </button>
@@ -609,7 +609,7 @@ function App() {
               <div className="flex items-center gap-1">
                 {(['bookmarks', 'ports'] as Tab[]).map(tab => (
                   <button key={tab} onClick={() => setActiveTab(tab)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-all ${
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-all whitespace-nowrap ${
                       activeTab === tab
                         ? 'bg-blue-500/15 border-blue-500/30 text-blue-300'
                         : 'bg-zinc-800/40 border-zinc-700/40 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/40'
@@ -639,8 +639,8 @@ function App() {
               </button>
             </>}
 
-            {/* Layout toggle */}
-            <button onClick={cycleViewMode} className={btnCls} title={`레이아웃: ${viewMode}`}>
+            {/* Layout toggle — hidden on mobile */}
+            <button onClick={cycleViewMode} className={`${btnCls} hidden sm:flex`} title={`레이아웃: ${viewMode}`}>
               {viewModeIcon}
             </button>
             <button onClick={() => setOpenSettings(true)} className={btnCls}>
