@@ -5,7 +5,7 @@ import PortalManager, { PortalActions } from './PortalManager';
 import {
   BookMarked, Settings, CloudUpload, CloudDownload,
   ExternalLink, Github, RefreshCw, Clock, Monitor, Smartphone,
-  Play, Square, RotateCw, Server,
+  Server,
   ChevronDown, X,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
@@ -151,8 +151,6 @@ function PortsView({ deviceId, creds, showToast }: {
 }) {
   const [ports, setPorts] = useState<PortRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [relayConnected, setRelayConnected] = useState(false);
-  const [running, setRunning] = useState<Record<string, boolean>>({});
 
   const sb = useCallback(() => createClient(creds.url, creds.key), [creds.url, creds.key]);
 
@@ -171,52 +169,9 @@ function PortsView({ deviceId, creds, showToast }: {
     }
   }
 
-  async function checkRelayConnected() {
-    if (!deviceId) return;
-    try {
-      const since = new Date(Date.now() - 35000).toISOString();
-      const { data } = await sb().from('relay_results')
-        .select('id').eq('device_id', deviceId).eq('message', 'heartbeat')
-        .gte('created_at', since).limit(1);
-      setRelayConnected((data ?? []).length > 0);
-    } catch {}
-  }
-
   useEffect(() => {
     loadPorts();
-    checkRelayConnected();
-    const iv = setInterval(checkRelayConnected, 15000);
-    return () => clearInterval(iv);
   }, [deviceId]);
-
-  async function relayCommand(port: PortRow, command: 'execute' | 'stop' | 'force_restart') {
-    if (!relayConnected) { showToast('릴레이 데몬이 연결되지 않았습니다 (bun relay.ts)', 'error'); return; }
-    const cmdId = crypto.randomUUID();
-    setRunning(r => ({ ...r, [port.id]: true }));
-    try {
-      const { error } = await sb().from('relay_commands').insert({
-        id: cmdId, device_id: deviceId, command,
-        port_id: port.id, command_path: port.command_path ?? null, port: port.port ?? null,
-      });
-      if (error) throw error;
-      let result: any = null;
-      for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 500));
-        const { data } = await sb().from('relay_results').select('*').eq('command_id', cmdId).limit(1);
-        if ((data ?? []).length > 0) { result = data![0]; break; }
-      }
-      if (result) {
-        const label = command === 'stop' ? '중지' : command === 'force_restart' ? '강제재실행' : '실행';
-        showToast(result.success ? `${label} 완료` : `실패: ${result.message}`, result.success ? 'success' : 'error');
-      } else {
-        showToast('응답 없음 — relay.ts가 실행 중인지 확인하세요', 'error');
-      }
-    } catch (e) {
-      showToast('명령 전송 실패: ' + String(e), 'error');
-    } finally {
-      setRunning(r => ({ ...r, [port.id]: false }));
-    }
-  }
 
   if (!deviceId) return (
     <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
@@ -228,16 +183,7 @@ function PortsView({ deviceId, creds, showToast }: {
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <p className="text-xs text-zinc-500">{ports.length}개 포트</p>
-          <span className={`px-2 py-0.5 rounded-full text-[10px] border ${
-            relayConnected
-              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-              : 'bg-zinc-800/60 border-zinc-700/40 text-zinc-500'
-          }`}>
-            {relayConnected ? '● 릴레이 연결' : '○ 릴레이 없음'}
-          </span>
-        </div>
+        <p className="text-xs text-zinc-500">{ports.length}개 포트</p>
         <button onClick={loadPorts} disabled={loading}
           className="p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-50">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -263,7 +209,7 @@ function PortsView({ deviceId, creds, showToast }: {
                 {p.port && <span className="text-[10px] text-zinc-600 font-mono">:{p.port}</span>}
               </div>
 
-              <div className="flex flex-wrap gap-1.5 mb-2">
+              <div className="flex flex-wrap gap-1.5">
                 {p.deploy_url && (
                   <a href={p.deploy_url} target="_blank" rel="noopener noreferrer"
                     className="flex items-center gap-1 px-2 py-1 text-[11px] bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-md transition-all">
@@ -276,30 +222,10 @@ function PortsView({ deviceId, creds, showToast }: {
                     <Github className="w-2.5 h-2.5" />GitHub
                   </a>
                 )}
+                {!p.deploy_url && !p.github_url && (
+                  <span className="text-[10px] text-zinc-700">링크 없음</span>
+                )}
               </div>
-
-              {(p.command_path || p.terminal_command) && (
-                <div className="flex gap-1.5 pt-2 border-t border-zinc-800/60">
-                  <button onClick={() => relayCommand(p, 'execute')}
-                    disabled={!relayConnected || running[p.id]}
-                    title={relayConnected ? '실행' : 'bun relay.ts 실행 필요'}
-                    className="flex items-center gap-1 px-2 py-1 text-[11px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 rounded-md transition-all disabled:opacity-30 disabled:cursor-not-allowed">
-                    {running[p.id] ? <RefreshCw className="w-2.5 h-2.5 animate-spin" /> : <Play className="w-2.5 h-2.5" />}
-                    실행
-                  </button>
-                  <button onClick={() => relayCommand(p, 'stop')}
-                    disabled={!relayConnected || running[p.id]}
-                    className="flex items-center gap-1 px-2 py-1 text-[11px] bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 border border-zinc-700/50 rounded-md transition-all disabled:opacity-30 disabled:cursor-not-allowed">
-                    <Square className="w-2.5 h-2.5" />중지
-                  </button>
-                  <button onClick={() => relayCommand(p, 'force_restart')}
-                    disabled={!relayConnected || running[p.id]}
-                    title="강제재실행"
-                    className="flex items-center gap-1 px-2 py-1 text-[11px] bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 border border-zinc-700/50 rounded-md transition-all disabled:opacity-30 disabled:cursor-not-allowed">
-                    <RotateCw className="w-2.5 h-2.5" />
-                  </button>
-                </div>
-              )}
             </div>
           ))}
         </div>
