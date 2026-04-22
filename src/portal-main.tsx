@@ -367,6 +367,19 @@ function App() {
     return () => window.removeEventListener('resize', handler);
   }, []);
 
+  // Startup sync: heal pre-existing mismatch between portalSelectedDevice and portalData_v1.deviceId
+  useEffect(() => {
+    const selectedId = localStorage.getItem(SELECTED_DEVICE_KEY);
+    if (!selectedId) return;
+    try {
+      const existing = JSON.parse(localStorage.getItem(PORTAL_WEB_KEY) ?? '{}');
+      if (existing.deviceId !== selectedId) {
+        existing.deviceId = selectedId;
+        localStorage.setItem(PORTAL_WEB_KEY, JSON.stringify(existing));
+      }
+    } catch {}
+  }, []);
+
   const isFullLayout = viewMode === 'full' || (viewMode === 'auto' && windowWidth >= 1024);
 
   const showToast = (message: string, type: 'success' | 'error') => {
