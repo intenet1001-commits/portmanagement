@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
 import PortalManager, { type PortalActions } from './PortalManager';
 import SetupWizard from './SetupWizard';
+import { savePushSnapshot, fetchPushHistory, fetchSnapshotRows, type PushSnapshot } from './pushHistory';
 
 // Tauri API 체크
 const isTauri = () => {
@@ -953,6 +954,10 @@ function App() {
   const [isAiEnriching, setIsAiEnriching] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isPushingPorts, setIsPushingPorts] = useState(false);
+  const [showPortsHistory, setShowPortsHistory] = useState(false);
+  const [portsHistoryList, setPortsHistoryList] = useState<PushSnapshot[]>([]);
+  const [portsHistoryLoading, setPortsHistoryLoading] = useState(false);
+  const [portsHistoryRestoring, setPortsHistoryRestoring] = useState<string | null>(null);
   const [remappingPorts, setRemappingPorts] = useState<PortInfo[]>([]);
   const [remappingPaths, setRemappingPaths] = useState<Record<string, string>>({});
   const [isBuilding, setIsBuilding] = useState(false);
@@ -2116,6 +2121,42 @@ function App() {
     }
   };
 
+  async function openPortsHistory() {
+    const cfg = portalConfigRef.current;
+    if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) { showToast('Supabase 설정이 없습니다', 'error'); return; }
+    setPortsHistoryLoading(true);
+    setShowPortsHistory(true);
+    const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+    const list = await fetchPushHistory(supabase, 'ports', cfg.deviceId ?? null);
+    setPortsHistoryList(list);
+    setPortsHistoryLoading(false);
+  }
+
+  async function restorePortsSnapshot(snapshotId: string) {
+    const cfg = portalConfigRef.current;
+    if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) return;
+    setPortsHistoryRestoring(snapshotId);
+    try {
+      const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+      const rows = await fetchSnapshotRows(supabase, snapshotId) as any[];
+      if (rows.length === 0) { showToast('스냅샷이 비어있습니다', 'error'); return; }
+      const { error: uErr } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+      if (uErr) throw new Error(uErr.message);
+      const snapshotIds = new Set(rows.map(r => r.id));
+      const deviceId = cfg.deviceId ?? null;
+      const { data: current } = await supabase.from('ports').select('id').eq('device_id', deviceId);
+      const toDelete = (current ?? []).filter((r: any) => !snapshotIds.has(r.id)).map((r: any) => r.id);
+      if (toDelete.length > 0) await supabase.from('ports').delete().in('id', toDelete);
+      await handleRestoreFromSupabase();
+      showToast('스냅샷으로 복원 완료 ✓', 'success');
+      setShowPortsHistory(false);
+    } catch (e) {
+      showToast('복원 실패: ' + e, 'error');
+    } finally {
+      setPortsHistoryRestoring(null);
+    }
+  }
+
   const handlePushToSupabase = async () => {
     if (isPushingPorts) return;
     setIsPushingPorts(true);
@@ -2160,6 +2201,7 @@ function App() {
         memo: memos[p.id]?.content ?? null,
         memo_updated_at: memos[p.id]?.updatedAt ?? null,
       }));
+      await savePushSnapshot(supabase, 'ports', deviceId, deviceNameVal, rows);
       let { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error?.message?.includes('device_id') || error?.message?.includes('device_name')) {
         // device_id/device_name column not yet migrated — retry without it
@@ -2169,6 +2211,13 @@ function App() {
         if (!e2) showToast('⚠ device_id 컬럼 없음 — 초기설정 가이드의 AI 프롬프트로 마이그레이션 후 재Push 권장', 'error');
       }
       if (error) throw new Error(error.message);
+      // Register this device in devices table (non-blocking)
+      if (deviceId) {
+        supabase.from('devices').upsert(
+          { id: deviceId, name: deviceNameVal, last_push_at: new Date().toISOString() },
+          { onConflict: 'id' }
+        ).then(() => {}).catch(() => {});
+      }
       // Fix P2: delete remote rows whose IDs are no longer in local list
       // Fix P2g: skip delete pass if auto-pull never succeeded — pull first before deleting
       // Step 4: scope stale-delete to this device only to avoid clobbering other devices
@@ -2972,7 +3021,7 @@ function App() {
             {item.isRunning ? <Square style={{width:9,height:9}}/> : <Play style={{width:9,height:9}}/>}
             {item.isRunning ? 'Stop' : 'Run'}
           </button>
-          <button onClick={e=>{e.stopPropagation(); openTmuxClaude(item);}} style={{...btnBase,gap:3,fontFamily:'inherit'}}>tmux</button>
+          <button onClick={e=>{e.stopPropagation(); setWorktreePickerState({item,mode:'claude'});}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}>Claude</button>
           <button onClick={e=>{e.stopPropagation(); toggleWorktreePanel(item.id, item.folderPath);}} style={{...btnBase, color:expandedWorktreeIds.has(item.id)?'#e8a557':'#ede7dd', borderColor:expandedWorktreeIds.has(item.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title="워크트리 관리">
             <GitBranch style={{width:11,height:11}}/>
           </button>
@@ -3091,7 +3140,7 @@ function App() {
               {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item)},
               {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath)},
               {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>API.openLog(item.id)},
-              {label:'Claude tmux', icon:<Terminal style={{width:11,height:11}}/>, action:()=>setWorktreePickerState({item,mode:'claude'})},
+              {label:'터미널', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item)},
               {label:'수정', icon:<Pencil style={{width:11,height:11}}/>, action:()=>startEdit(item)},
               {label:'삭제', icon:<Trash2 style={{width:11,height:11}}/>, action:()=>setDeleteConfirmId(item.id), danger:true},
             ].map(({label,icon,action,danger}:{label:string;icon:React.ReactNode;action:()=>void;danger?:boolean}) => (
@@ -3632,6 +3681,53 @@ function App() {
         </div>
       )}
 
+      {/* Push 히스토리 모달 — 포트 */}
+      {showPortsHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowPortsHistory(false)}>
+          <div className="bg-[#18181b] border border-zinc-800 rounded-xl w-full max-w-md mx-4 shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-indigo-400" />
+                <span className="text-sm font-semibold text-white">Push 히스토리 — 포트</span>
+              </div>
+              <button onClick={() => setShowPortsHistory(false)} className="text-zinc-500 hover:text-white transition-colors"><XIcon className="w-4 h-4" /></button>
+            </div>
+            <div className="overflow-y-auto max-h-96">
+              {portsHistoryLoading ? (
+                <div className="flex items-center justify-center py-10"><RefreshCw className="w-5 h-5 text-zinc-500 animate-spin" /></div>
+              ) : portsHistoryList.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 gap-2">
+                  <Clock className="w-8 h-8 text-zinc-700" />
+                  <p className="text-sm text-zinc-500">저장된 히스토리가 없습니다</p>
+                  <p className="text-xs text-zinc-600">Push 시 자동으로 스냅샷이 저장됩니다</p>
+                </div>
+              ) : portsHistoryList.map((snap, i) => (
+                <div key={snap.id} className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/60 hover:bg-zinc-800/30 transition-colors">
+                  <div className="min-w-0">
+                    <p className="text-sm text-white font-medium">{new Date(snap.created_at).toLocaleString('ko-KR')}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      {snap.row_count}개 포트{snap.device_name ? ` · ${snap.device_name}` : ''}
+                      {i === 0 && <span className="ml-1.5 text-emerald-500 font-medium">최신</span>}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => restorePortsSnapshot(snap.id)}
+                    disabled={portsHistoryRestoring !== null}
+                    className="ml-3 shrink-0 flex items-center gap-1 px-2.5 py-1.5 text-xs bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-lg transition-all disabled:opacity-50"
+                  >
+                    {portsHistoryRestoring === snap.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RotateCw className="w-3 h-3" />}
+                    복원
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="px-4 py-2.5 border-t border-zinc-800 bg-zinc-900/40">
+              <p className="text-xs text-zinc-600">복원 시 현재 Supabase 포트 데이터를 선택한 시점으로 되돌립니다</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 플로팅 배너 */}
       <div className="fixed top-4 right-4 z-50 space-y-2">
         {toasts.map((toast) => (
@@ -3763,6 +3859,13 @@ function App() {
                     <span className="text-xs font-medium">Pull</span>
                   </button>
                 </div>
+                <button
+                  onClick={openPortsHistory}
+                  title="Push 히스토리 / 복원"
+                  className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
+                >
+                  <Clock className="w-4 h-4" />
+                </button>
                 <button
                   onClick={() => setOpenPortalSettings(true)}
                   title="Supabase / 단말 설정"
@@ -4205,12 +4308,80 @@ function App() {
                 );
               })()}
 
-              {/* Bottom workspace info */}
-              <div style={{marginTop:'auto',padding:'12px 12px 16px'}}>
-                <div style={{fontSize:10,fontFamily:'JetBrains Mono, monospace',color:'#6b6459',textTransform:'uppercase' as const,letterSpacing:0.5,marginBottom:4}}>Workspace</div>
-                <div style={{fontSize:11,fontFamily:'JetBrains Mono, monospace',color:'#a39a8c'}}>
-                  {workspaceRoots.length} roots · {ports.length} projects
-                </div>
+              {/* Workspace Roots Panel */}
+              <div style={{marginTop:'auto',borderTop:'1px solid rgba(255,240,220,0.07)'}}>
+                <button
+                  onClick={() => setWorkspaceRootsOpen(v => !v)}
+                  style={{
+                    display:'flex',alignItems:'center',gap:6,width:'100%',
+                    padding:'8px 12px',background:'transparent',border:'none',cursor:'pointer',
+                    color:'#6b6459',
+                  }}
+                >
+                  {workspaceRootsOpen
+                    ? <ChevronDown style={{width:11,height:11}}/>
+                    : <ChevronDown style={{width:11,height:11,transform:'rotate(-90deg)'}}/>
+                  }
+                  <span style={{fontSize:10,fontFamily:'JetBrains Mono, monospace',textTransform:'uppercase' as const,letterSpacing:0.5,flex:1,textAlign:'left' as const}}>
+                    작업 루트
+                  </span>
+                  {workspaceRoots.length > 0 && (
+                    <span style={{fontSize:9,fontFamily:'JetBrains Mono, monospace',color:'#6b6459',background:'rgba(255,240,220,0.06)',padding:'1px 5px',borderRadius:3}}>
+                      {workspaceRoots.length}
+                    </span>
+                  )}
+                </button>
+
+                {workspaceRootsOpen && (
+                  <div style={{paddingBottom:8}}>
+                    {workspaceRoots.map((root: WorkspaceRoot) => {
+                      const projectCount = ports.filter((p: PortInfo) => p.folderPath?.startsWith(root.path)).length;
+                      return (
+                        <div key={root.id} style={{display:'flex',alignItems:'center',gap:4,padding:'3px 8px 3px 20px'}}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:11,fontFamily:'JetBrains Mono, monospace',color:'#c8bfb5',whiteSpace:'nowrap' as const,overflow:'hidden',textOverflow:'ellipsis'}}>
+                              {root.name}
+                            </div>
+                            <div style={{fontSize:9.5,fontFamily:'JetBrains Mono, monospace',color:'#6b6459',whiteSpace:'nowrap' as const,overflow:'hidden',textOverflow:'ellipsis'}}>
+                              {root.path}
+                            </div>
+                          </div>
+                          {projectCount > 0 && (
+                            <span style={{fontSize:9,fontFamily:'JetBrains Mono, monospace',color:'#6b6459',background:'rgba(255,240,220,0.06)',padding:'1px 4px',borderRadius:3,flexShrink:0}}>
+                              {projectCount}
+                            </span>
+                          )}
+                          <button
+                            onClick={() => { setActiveRootId(root.id); setShowNewProjectModal(true); }}
+                            title="새 프로젝트 폴더"
+                            style={{padding:'2px 6px',background:'rgba(232,165,87,0.1)',border:'1px solid rgba(232,165,87,0.2)',borderRadius:4,color:'#e8a557',cursor:'pointer',fontSize:10,fontFamily:'Inter Tight, system-ui, sans-serif',flexShrink:0}}
+                          >
+                            새 폴더
+                          </button>
+                          <button
+                            onClick={() => handleRemoveWorkspaceRoot(root.id)}
+                            title="루트 제거"
+                            style={{padding:'2px 4px',background:'transparent',border:'none',color:'#6b6459',cursor:'pointer',display:'flex',alignItems:'center',flexShrink:0}}
+                          >
+                            <XIcon style={{width:10,height:10}}/>
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <button
+                      onClick={handleAddWorkspaceRoot}
+                      style={{
+                        display:'flex',alignItems:'center',gap:5,
+                        margin:'4px 8px 0 20px',padding:'4px 8px',
+                        background:'transparent',border:'1px dashed rgba(255,240,220,0.12)',
+                        borderRadius:5,color:'#6b6459',cursor:'pointer',
+                        fontSize:10,fontFamily:'Inter Tight, system-ui, sans-serif',
+                      }}
+                    >
+                      <Plus style={{width:10,height:10}}/> 루트 추가
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -4327,6 +4498,79 @@ function App() {
             </div>
           </div>
         )}
+
+      {/* New project 모달 */}
+      {showNewProjectModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setShowNewProjectModal(false)}>
+          <div className="bg-[#1c1916] rounded-xl border border-stone-800/40 w-full max-w-sm p-6 space-y-4"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-white">새 프로젝트 폴더 만들기</h2>
+              <button onClick={() => setShowNewProjectModal(false)}
+                className="p-1.5 hover:bg-stone-800 rounded-lg transition-colors text-zinc-500 hover:text-zinc-300">
+                <XIcon className="w-4 h-4" />
+              </button>
+            </div>
+
+            {workspaceRoots.length === 0 ? (
+              <div className="text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                먼저 작업 루트 폴더를 추가해주세요.<br />
+                <span className="text-xs text-zinc-400">사이드바 → Workspace Roots → + 버튼</span>
+              </div>
+            ) : (
+              <>
+                {workspaceRoots.length > 1 && (
+                  <div>
+                    <label className="text-xs text-zinc-400 mb-1 block">위치</label>
+                    <select
+                      value={activeRootId ?? ''}
+                      onChange={e => setActiveRootId(e.target.value)}
+                      className="w-full px-3 py-2 bg-stone-900 border border-stone-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-amber-500/50">
+                      {workspaceRoots.map(r => (
+                        <option key={r.id} value={r.id}>{r.name || r.path}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div>
+                  <label className="text-xs text-zinc-400 mb-1 block">프로젝트 이름</label>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={newProjectName}
+                    onChange={e => setNewProjectName(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleCreateProjectFolder()}
+                    placeholder="my-project"
+                    className="w-full px-3 py-2 bg-stone-900 border border-stone-700 rounded-lg text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50"
+                  />
+                  {activeRootId && (
+                    <p className="text-[11px] text-zinc-600 mt-1 font-mono truncate">
+                      {workspaceRoots.find(r => r.id === activeRootId)?.path}/{newProjectName || '…'}
+                    </p>
+                  )}
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" checked={registerAsProject} onChange={e => setRegisterAsProject(e.target.checked)}
+                    className="accent-amber-500 w-3.5 h-3.5" />
+                  <span className="text-xs text-zinc-400">포트 목록에 프로젝트로 등록</span>
+                </label>
+                <div className="flex gap-2 pt-1">
+                  <button onClick={() => setShowNewProjectModal(false)}
+                    className="flex-1 py-2 text-sm text-zinc-400 border border-stone-700 rounded-lg hover:bg-stone-800 transition-colors">
+                    취소
+                  </button>
+                  <button onClick={handleCreateProjectFolder}
+                    disabled={!newProjectName.trim()}
+                    className="flex-1 py-2 text-sm font-semibold bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors">
+                    만들기
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       </div>
     </div>

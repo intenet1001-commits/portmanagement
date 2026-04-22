@@ -3,12 +3,13 @@ import {
   Globe, Folder, Plus, Trash2, Pencil, X, Check, Search,
   ExternalLink, FolderOpen, Star, Download, Upload,
   Cloud, CloudOff, CloudUpload, CloudDownload, Settings, Settings2, RefreshCw, Link2, Pin,
-  BookMarked, ChevronDown, Database, Terminal
+  BookMarked, ChevronDown, Database, Terminal, Clock, RotateCw
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { createClient } from '@supabase/supabase-js';
+import { savePushSnapshot, fetchPushHistory, fetchSnapshotRows, type PushSnapshot } from './pushHistory';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -87,6 +88,7 @@ const PortalAPI = {
         const raw = localStorage.getItem(PORTAL_WEB_KEY);
         if (raw) {
           const d: PortalData = JSON.parse(raw);
+          if (!d.items) d.items = [];
           if (!d.categories?.length) d.categories = DEFAULT_CATEGORIES;
           return d;
         }
@@ -216,6 +218,7 @@ const EMPTY_FORM = { name: '', type: 'web' as 'web' | 'folder', url: '', path: '
 export interface PortalActions {
   push: () => void;
   pull: () => void;
+  history: () => void;
   exportData: () => void;
   importData: () => void;
   openSettings: () => void;
@@ -319,7 +322,7 @@ function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices,
     <div className="mb-3">
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-3 py-2 bg-zinc-900/60 border border-zinc-700/50 rounded-lg text-xs text-zinc-400 hover:border-zinc-600 transition-all"
+        className="w-full flex items-center justify-between px-3 py-2 bg-[#221f1b]/60 border border-stone-700/50 rounded-lg text-xs text-zinc-400 hover:border-stone-700/60 transition-all"
       >
         <span className="flex items-center gap-1.5">
           <Settings2 className="w-3.5 h-3.5 text-zinc-500" />
@@ -331,15 +334,15 @@ function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices,
         <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div className="mt-2 bg-zinc-900/40 border border-zinc-700/40 rounded-lg p-3 space-y-3">
+        <div className="mt-2 bg-[#1c1916]/60 border border-stone-700/40 rounded-lg p-3 space-y-3">
           {/* Device ID */}
           <div>
             <label className="block text-[10px] text-zinc-500 mb-1">Device ID</label>
             <div className="flex items-center gap-1.5">
               <input readOnly value={deviceId ? `${deviceId.slice(0, 16)}…` : '—'}
-                className="flex-1 px-2.5 py-1.5 text-xs bg-black/30 border border-zinc-700 text-zinc-500 rounded-lg cursor-default" />
+                className="flex-1 px-2.5 py-1.5 text-xs bg-black/30 border border-stone-700/50 text-zinc-500 rounded-lg cursor-default" />
               <button onClick={onCopyDeviceId}
-                className="px-2.5 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border border-zinc-700 rounded-lg transition-all">복사</button>
+                className="px-2.5 py-1.5 text-xs bg-[#221f1b] hover:bg-[#2a2520] text-zinc-400 border border-stone-700/50 rounded-lg transition-all">복사</button>
             </div>
           </div>
           {/* Device switch */}
@@ -347,7 +350,7 @@ function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices,
             <div className="flex items-center justify-between mb-1.5">
               <label className="text-[10px] text-zinc-500">다른 기기 데이터 보기</label>
               <button onClick={onFetchDevices} disabled={isFetchingDevices}
-                className="px-2 py-0.5 text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border border-zinc-700 rounded transition-all disabled:opacity-50">
+                className="px-2 py-0.5 text-[10px] bg-[#221f1b] hover:bg-[#2a2520] text-zinc-400 border border-stone-700/50 rounded transition-all disabled:opacity-50">
                 {isFetchingDevices ? '조회 중…' : '단말 조회'}
               </button>
             </div>
@@ -356,7 +359,7 @@ function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices,
                 <select
                   value={viewingDeviceId || deviceId || ''}
                   onChange={e => onSelectDevice(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs bg-black/30 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                  className="w-full px-2.5 py-1.5 text-xs bg-black/30 border border-stone-700/50 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
                 >
                   {/* Always show current device first */}
                   {deviceId && !knownDevices.find(d => d.device_id === deviceId) && (
@@ -380,12 +383,12 @@ function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices,
                 {viewingDeviceId && viewingDeviceId !== deviceId && (
                   <div className="mt-1.5 flex items-center justify-between">
                     <p className="text-[10px] text-amber-400">⚠ Pull 시 선택한 기기 데이터 적용됨</p>
-                    <button onClick={onResetDevice} className="text-[10px] text-zinc-500 hover:text-zinc-300 underline">내 기기로 복귀</button>
+                    <button onClick={onResetDevice} className="text-[10px] text-zinc-500 hover:text-[#ede7dd]/90 underline">내 기기로 복귀</button>
                   </div>
                 )}
               </>
             ) : (
-              <p className="text-[10px] text-zinc-600 italic">단말 조회 버튼으로 다른 기기 목록을 불러오세요</p>
+              <p className="text-[10px] text-[#6b6459] italic">단말 조회 버튼으로 다른 기기 목록을 불러오세요</p>
             )}
           </div>
         </div>
@@ -521,12 +524,12 @@ vercel --prod
       title: '🆕 최초 세팅',
       content: (
         <div className="space-y-2">
-          <p className="text-zinc-300 text-[11px]">Supabase CLI + MCP 방식으로 처음 설정하는 경우</p>
+          <p className="text-[#ede7dd]/90 text-[11px]">Supabase CLI + MCP 방식으로 처음 설정하는 경우</p>
           <pre className="bg-black/40 rounded p-2 text-zinc-400 whitespace-pre-wrap text-[10px] max-h-52 overflow-y-auto leading-relaxed">{CLI_FIRST_SETUP}</pre>
           <div className="flex gap-2">
             <button
               onClick={() => { navigator.clipboard.writeText(CLI_FIRST_SETUP); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-              className="flex-1 py-1 rounded-lg border text-[10px] font-medium transition-all flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-zinc-600"
+              className="flex-1 py-1 rounded-lg border text-[10px] font-medium transition-all flex items-center justify-center gap-1.5 bg-[#221f1b] hover:bg-[#2a2520] text-zinc-400 border-stone-700/60"
             >
               <Database className="w-3 h-3" />
               가이드 복사
@@ -547,11 +550,11 @@ vercel --prod
       title: '💻 추가 단말 세팅',
       content: (
         <div className="space-y-2">
-          <p className="text-zinc-300 text-[11px]">기존 Supabase 프로젝트에 새 맥/PC를 추가하는 경우</p>
+          <p className="text-[#ede7dd]/90 text-[11px]">기존 Supabase 프로젝트에 새 맥/PC를 추가하는 경우</p>
           <pre className="bg-black/40 rounded p-2 text-zinc-400 whitespace-pre-wrap text-[10px] max-h-52 overflow-y-auto leading-relaxed">{CLI_ADDITIONAL_DEVICE}</pre>
           <button
             onClick={() => { navigator.clipboard.writeText(CLI_ADDITIONAL_DEVICE); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-            className="w-full py-1 rounded-lg border text-[10px] font-medium transition-all flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-zinc-600"
+            className="w-full py-1 rounded-lg border text-[10px] font-medium transition-all flex items-center justify-center gap-1.5 bg-[#221f1b] hover:bg-[#2a2520] text-zinc-400 border-stone-700/60"
           >
             <Database className="w-3 h-3" />
             가이드 복사
@@ -563,10 +566,10 @@ vercel --prod
       title: '🤖 AI 테이블 생성',
       content: (
         <div className="space-y-2">
-          <p className="text-zinc-300 text-[11px]">Claude Code + Supabase MCP로 테이블 자동 생성</p>
+          <p className="text-[#ede7dd]/90 text-[11px]">Claude Code + Supabase MCP로 테이블 자동 생성</p>
           <ol className="list-decimal list-inside space-y-1 text-zinc-400 text-[10px]">
             <li>Claude Code 터미널 열기</li>
-            <li>Supabase MCP 연결 확인 (<code className="text-zinc-300 bg-black/30 px-0.5 rounded">/mcp-setup</code>)</li>
+            <li>Supabase MCP 연결 확인 (<code className="text-[#ede7dd]/90 bg-black/30 px-0.5 rounded">/mcp-setup</code>)</li>
             <li>아래 프롬프트 복사 → Claude Code에 붙여넣기</li>
             <li>AI가 4개 테이블 + RLS 비활성화 자동 처리</li>
           </ol>
@@ -574,7 +577,7 @@ vercel --prod
           <button
             onClick={() => { navigator.clipboard.writeText(AI_TABLE_PROMPT).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }); }}
             className={`w-full py-1.5 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-              copied ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-600'
+              copied ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 border-stone-700/60'
             }`}
           >
             {copied ? <Check className="w-3.5 h-3.5" /> : <Database className="w-3.5 h-3.5" />}
@@ -587,12 +590,12 @@ vercel --prod
       title: '🚀 Vercel 배포',
       content: (
         <div className="space-y-2">
-          <p className="text-zinc-300 text-[11px]">포털 북마크를 웹에 배포 — 앱 없이 브라우저에서 접근 가능</p>
+          <p className="text-[#ede7dd]/90 text-[11px]">포털 북마크를 웹에 배포 — 앱 없이 브라우저에서 접근 가능</p>
           <pre className="bg-black/40 rounded p-2 text-zinc-400 whitespace-pre-wrap text-[10px] max-h-52 overflow-y-auto leading-relaxed">{VERCEL_GUIDE}</pre>
           <button
             onClick={() => { navigator.clipboard.writeText(VERCEL_GUIDE); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
             className={`w-full py-1.5 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-1.5 ${
-              copied ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-600'
+              copied ? 'bg-green-500/10 text-green-400 border-green-500/30' : 'bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 border-stone-700/60'
             }`}
           >
             {copied ? <Check className="w-3.5 h-3.5" /> : <Globe className="w-3.5 h-3.5" />}
@@ -607,19 +610,19 @@ vercel --prod
     <div className="mb-4">
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center justify-between px-3 py-2 bg-zinc-900/60 border border-zinc-700/50 rounded-lg text-xs text-zinc-400 hover:border-zinc-600 transition-all"
+        className="w-full flex items-center justify-between px-3 py-2 bg-[#221f1b]/60 border border-stone-700/50 rounded-lg text-xs text-zinc-400 hover:border-stone-700/60 transition-all"
       >
         <span className="flex items-center gap-1.5">
           <Database className="w-3.5 h-3.5 text-indigo-400" />
-          <span className="font-medium text-zinc-300">초기 설정 가이드</span>
-          <span className="text-zinc-600">— 처음 사용 시</span>
+          <span className="font-medium text-[#ede7dd]/90">초기 설정 가이드</span>
+          <span className="text-[#6b6459]">— 처음 사용 시</span>
         </span>
         <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div className="mt-2 bg-zinc-900/40 border border-zinc-700/40 rounded-lg overflow-hidden">
+        <div className="mt-2 bg-[#1c1916]/60 border border-stone-700/40 rounded-lg overflow-hidden">
           {/* Step tabs */}
-          <div className="flex border-b border-zinc-700/40 overflow-x-auto">
+          <div className="flex border-b border-stone-700/40 overflow-x-auto">
             {steps.map((s, i) => (
               <button
                 key={i}
@@ -627,7 +630,7 @@ vercel --prod
                 className={`flex-shrink-0 px-3 py-2 text-[10px] font-medium transition-all border-b-2 ${
                   step === i
                     ? 'border-indigo-500 text-indigo-300 bg-indigo-500/5'
-                    : 'border-transparent text-zinc-500 hover:text-zinc-300'
+                    : 'border-transparent text-zinc-500 hover:text-[#ede7dd]/90'
                 }`}
               >
                 {s.title}
@@ -639,7 +642,7 @@ vercel --prod
             {steps[step].content}
             <div className="flex gap-2 mt-3">
               {step > 0 && (
-                <button onClick={() => setStep(s => s - 1)} className="flex-1 py-1 text-[10px] bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded border border-zinc-700 transition-all">← 이전</button>
+                <button onClick={() => setStep(s => s - 1)} className="flex-1 py-1 text-[10px] bg-[#221f1b] hover:bg-[#2a2520] text-zinc-400 rounded border border-stone-700/50 transition-all">← 이전</button>
               )}
               {step < steps.length - 1 && (
                 <button onClick={() => setStep(s => s + 1)} className="flex-1 py-1 text-[10px] bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 rounded border border-indigo-500/30 transition-all">다음 →</button>
@@ -660,6 +663,10 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncOk, setSyncOk] = useState<boolean | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [showPortalHistory, setShowPortalHistory] = useState(false);
+  const [portalHistoryList, setPortalHistoryList] = useState<PushSnapshot[]>([]);
+  const [portalHistoryLoading, setPortalHistoryLoading] = useState(false);
+  const [portalHistoryRestoring, setPortalHistoryRestoring] = useState<string | null>(null);
 
   // Modals
   const [showItemModal, setShowItemModal] = useState(false);
@@ -709,10 +716,25 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         loaded.supabaseUrl = envUrl;
         loaded.supabaseAnonKey = envKey;
       }
-      setDeviceName(loaded.deviceName ?? '');
+      const resolvedUrl = loaded.supabaseUrl || envUrl;
+      const resolvedKey = loaded.supabaseAnonKey || envKey;
+
+      // Auto-recognize device name from Supabase devices table if not set locally
+      if (!loaded.deviceName && resolvedUrl && resolvedKey && loaded.deviceId) {
+        try {
+          const sb = createClient(resolvedUrl, resolvedKey);
+          const { data: dev } = await sb.from('devices').select('name').eq('id', loaded.deviceId).maybeSingle();
+          if (dev?.name) {
+            loaded.deviceName = dev.name;
+            needsPersist = true;
+          }
+        } catch { /* ignore — offline or table missing */ }
+      }
+
+      setDeviceName(loaded.deviceName ?? (loaded as any)._hostname ?? '');
       setViewingDeviceId(loaded.viewingDeviceId ?? '');
       setIsLoading(false);
-      // Persist migrated deviceId back to portal.json so it survives restarts
+      // Persist migrated deviceId / auto-fetched name back to portal.json
       if (needsPersist) {
         try { await PortalAPI.save(loaded); } catch { /* ignore */ }
       }
@@ -725,7 +747,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       PortalAPI.load().then(loaded => {
         if (loaded.supabaseUrl) setSbUrl(loaded.supabaseUrl);
         if (loaded.supabaseAnonKey) setSbKey(loaded.supabaseAnonKey);
-        if (loaded.deviceName) setDeviceName(loaded.deviceName);
+        setDeviceName(loaded.deviceName ?? (loaded as any)._hostname ?? '');
       }).catch(() => {});
       setShowSettings(true);
     }
@@ -742,13 +764,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       actionsRef.current = {
         push: syncSupabase,
         pull: pullFromSupabase,
+        history: openPortalHistory,
         exportData,
         importData,
         openSettings: () => {
           PortalAPI.load().then(loaded => {
             if (loaded.supabaseUrl) setSbUrl(loaded.supabaseUrl);
             if (loaded.supabaseAnonKey) setSbKey(loaded.supabaseAnonKey);
-            if (loaded.deviceName) setDeviceName(loaded.deviceName);
+            setDeviceName(loaded.deviceName ?? (loaded as any)._hostname ?? '');
           }).catch(() => {});
           setShowSettings(true);
         },
@@ -950,6 +973,43 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
   // ── Supabase Sync ─────────────────────────────────────────────────────────
 
+  async function openPortalHistory() {
+    if (!sbUrl || !sbKey) { showToast('Supabase 설정이 없습니다', 'error'); return; }
+    setPortalHistoryLoading(true);
+    setShowPortalHistory(true);
+    const supabase = createClient(sbUrl, sbKey);
+    const deviceId = data.deviceId ?? null;
+    const list = await fetchPushHistory(supabase, 'portal_items', deviceId);
+    setPortalHistoryList(list);
+    setPortalHistoryLoading(false);
+  }
+
+  async function restorePortalSnapshot(snapshotId: string) {
+    if (!sbUrl || !sbKey) return;
+    setPortalHistoryRestoring(snapshotId);
+    try {
+      const supabase = createClient(sbUrl, sbKey);
+      const rows = await fetchSnapshotRows(supabase, snapshotId) as any[];
+      if (rows.length === 0) { showToast('스냅샷이 비어있습니다', 'error'); return; }
+      const { error: uErr } = await supabase.from('portal_items').upsert(rows, { onConflict: 'id' });
+      if (uErr) throw new Error(uErr.message);
+      const snapshotIds = new Set(rows.map(r => r.id));
+      const deviceId = data.deviceId ?? null;
+      const { data: current } = await supabase
+        .from('portal_items').select('id')
+        .or(`device_id.eq.${deviceId},device_id.eq.__shared__`);
+      const toDelete = (current ?? []).filter((r: any) => !snapshotIds.has(r.id)).map((r: any) => r.id);
+      if (toDelete.length > 0) await supabase.from('portal_items').delete().in('id', toDelete);
+      await pullFromSupabase();
+      showToast('스냅샷으로 복원 완료 ✓', 'success');
+      setShowPortalHistory(false);
+    } catch (e) {
+      showToast('복원 실패: ' + e, 'error');
+    } finally {
+      setPortalHistoryRestoring(null);
+    }
+  }
+
   async function syncSupabase() {
     if (!sbUrl || !sbKey) {
       showToast('Supabase URL과 키를 먼저 설정하세요', 'error');
@@ -987,6 +1047,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         "order": cat.order,
       }));
 
+      await savePushSnapshot(supabase, 'portal_items', deviceId, data.deviceName ?? null, itemRows);
       const [itemsRes, catsRes] = await Promise.all([
         supabase.from('portal_items').upsert(itemRows, { onConflict: 'id' }),
         supabase.from('portal_categories').upsert(catRows, { onConflict: 'id' }),
@@ -994,6 +1055,12 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       if (itemsRes.error) throw new Error(itemsRes.error.message);
       if (catsRes.error) throw new Error(catsRes.error.message);
+
+      // Register this device in devices table (non-blocking)
+      supabase.from('devices').upsert(
+        { id: deviceId, name: data.deviceName ?? deviceName ?? null, last_push_at: new Date().toISOString() },
+        { onConflict: 'id' }
+      ).then(() => {}).catch(() => {});
 
       const nextData: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceId, deviceName: deviceName || data.deviceName, lastSynced: new Date().toISOString() };
       await persist(nextData);
@@ -1178,7 +1245,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       <div className="md:hidden flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none">
         <button
           onClick={() => setSelectedCat('all')}
-          className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedCat === 'all' ? 'bg-zinc-700 text-white' : 'bg-zinc-800/60 text-zinc-400 hover:text-zinc-200'}`}
+          className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedCat === 'all' ? 'bg-[#2a2520] text-white' : 'bg-[#221f1b]/60 text-zinc-400 hover:text-[#ede7dd]'}`}
         >
           <BookMarked className="w-3 h-3" />
           전체 <span className="text-zinc-500">{data.items.length}</span>
@@ -1190,7 +1257,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             <button
               key={cat.id}
               onClick={() => setSelectedCat(cat.id)}
-              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedCat === cat.id ? 'bg-zinc-700 text-white' : 'bg-zinc-800/60 text-zinc-400 hover:text-zinc-200'}`}
+              className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedCat === cat.id ? 'bg-[#2a2520] text-white' : 'bg-[#221f1b]/60 text-zinc-400 hover:text-[#ede7dd]'}`}
             >
               <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.dot}`} />
               {cat.name} <span className="text-zinc-500">{count}</span>
@@ -1199,7 +1266,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         })}
         <button
           onClick={() => setShowCatModal(true)}
-          className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-zinc-500 bg-zinc-800/60 hover:text-zinc-300 transition-colors"
+          className="flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-zinc-500 bg-[#221f1b]/60 hover:text-[#ede7dd]/90 transition-colors"
         >
           <Plus className="w-3 h-3" />
           추가
@@ -1207,106 +1274,99 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       </div>
 
       {/* ── Left Sidebar (desktop only) ──────────────────────────────────────── */}
-      <div className="hidden md:block w-48 flex-shrink-0">
-        <div className="bg-[#18181b] rounded-xl border border-zinc-800 overflow-hidden">
-          {/* All */}
-          <button
-            onClick={() => setSelectedCat('all')}
-            className={`w-full flex items-center justify-between px-3 py-2.5 text-sm transition-colors ${selectedCat === 'all' ? 'bg-zinc-700/50 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'}`}
-          >
-            <div className="flex items-center gap-2">
-              <BookMarked className="w-3.5 h-3.5" />
-              <span>전체</span>
+      <div className="hidden md:flex flex-col flex-shrink-0" style={{width:220,padding:'14px 10px',borderRight:'1px solid rgba(255,240,220,0.07)',background:'#1c1916',gap:2,overflow:'hidden'}}>
+        {/* All */}
+        <button
+          onClick={() => setSelectedCat('all')}
+          style={{
+            display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:6,cursor:'pointer',border:'none',
+            background:selectedCat==='all' ? '#221f1b' : 'transparent',
+            color:selectedCat==='all' ? '#ede7dd' : '#a39a8c',
+            fontSize:12.5,fontWeight:selectedCat==='all'?500:400,fontFamily:'inherit',
+          }}
+        >
+          <BookMarked className="w-3 h-3 flex-shrink-0" />
+          <span style={{flex:1,textAlign:'left'}}>전체</span>
+          <span style={{fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace"}}>{data.items.length}</span>
+        </button>
+
+        {data.categories.sort((a, b) => a.order - b.order).map(cat => {
+          const c = getColor(cat.color);
+          const count = data.items.filter(i => i.category === cat.id).length;
+          const active = selectedCat === cat.id;
+          return (
+            <div key={cat.id} className="group" style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:6,cursor:'pointer',background:active?'#221f1b':'transparent',color:active?'#ede7dd':'#a39a8c',fontSize:12.5}} onClick={() => setSelectedCat(cat.id)}>
+              <span className={`w-2 h-2 rounded-full flex-shrink-0 ${c.dot}`} />
+              <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cat.name}</span>
+              <span style={{fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace"}}>{count}</span>
+              <span
+                role="button"
+                onClick={e => { e.stopPropagation(); deleteCategory(cat.id); }}
+                className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity cursor-pointer"
+                style={{color:'#6b6459'}}
+              >
+                <X className="w-3 h-3" />
+              </span>
             </div>
-            <span className="text-xs text-zinc-500">{data.items.length}</span>
-          </button>
+          );
+        })}
 
-          <div className="border-t border-zinc-800/80">
-            {data.categories.sort((a, b) => a.order - b.order).map(cat => {
-              const c = getColor(cat.color);
-              const count = data.items.filter(i => i.category === cat.id).length;
-              return (
-                <div
-                  key={cat.id}
-                  onClick={() => setSelectedCat(cat.id)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={e => e.key === 'Enter' && setSelectedCat(cat.id)}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 text-sm transition-colors group cursor-pointer ${selectedCat === cat.id ? 'bg-zinc-700/50 text-white' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'}`}
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className={`w-2 h-2 rounded-full flex-shrink-0 ${c.dot}`} />
-                    <span className="truncate">{cat.name}</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-zinc-600 group-hover:text-zinc-500">{count}</span>
-                    <span
-                      role="button"
-                      tabIndex={0}
-                      onClick={e => { e.stopPropagation(); deleteCategory(cat.id); }}
-                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); deleteCategory(cat.id); } }}
-                      className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity ml-0.5 cursor-pointer"
-                    >
-                      <X className="w-3 h-3" />
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Add category */}
-          <div className="border-t border-zinc-800/80">
-            <button
-              onClick={() => setShowCatModal(true)}
-              className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60 transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>카테고리 추가</span>
-            </button>
-          </div>
-        </div>
+        {/* Add category */}
+        <button
+          onClick={() => setShowCatModal(true)}
+          style={{marginTop:6,padding:'7px 10px',borderRadius:6,color:'#6b6459',fontSize:12,display:'flex',alignItems:'center',gap:8,cursor:'pointer',border:'1px dashed rgba(255,240,220,0.07)',background:'transparent',fontFamily:'inherit'}}
+        >
+          <Plus className="w-3 h-3" />
+          카테고리 추가
+        </button>
 
         {/* Sync status */}
         {data.lastSynced && (
-          <p className="text-[10px] text-zinc-600 mt-2 px-1">
+          <p style={{marginTop:'auto',padding:'6px 8px',fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace"}}>
             동기화: {new Date(data.lastSynced).toLocaleDateString('ko-KR')}
           </p>
         )}
+        <button
+          onClick={openPortalHistory}
+          style={{marginTop:data.lastSynced?2:4,padding:'7px 10px',borderRadius:6,color:'#6b6459',fontSize:12,display:'flex',alignItems:'center',gap:6,cursor:'pointer',border:'1px solid rgba(255,240,220,0.07)',background:'transparent',fontFamily:'inherit',width:'100%'}}
+          title="Push 히스토리 / 복원"
+        >
+          <Clock className="w-3 h-3 flex-shrink-0" />
+          히스토리
+        </button>
       </div>
 
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0">
-        {/* Top bar */}
-        <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-3 mb-4 flex items-center gap-2">
-          <div className="flex-1 relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+        {/* Search row */}
+        <div style={{padding:'14px 0 14px',display:'flex',gap:10,borderBottom:'1px solid rgba(255,240,220,0.07)',marginBottom:14}}>
+          <div style={{flex:1,position:'relative'}}>
+            <Search className="w-3.5 h-3.5" style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'#6b6459'}} />
             <input
               type="text"
-              placeholder="검색..."
+              placeholder="검색…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
+              style={{width:'100%',padding:'8px 10px 8px 30px',background:'#1c1916',border:'1px solid rgba(255,240,220,0.07)',borderRadius:7,color:'#ede7dd',fontSize:12.5,outline:'none',fontFamily:'inherit',boxSizing:'border-box'}}
             />
           </div>
           {viewingDeviceId && viewingDeviceId !== data.deviceId && (
-            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-lg shrink-0">
-              <span className="text-amber-400 text-[10px] font-medium whitespace-nowrap">
-                📱 {knownDevices.find(d => d.device_id === viewingDeviceId)?.device_name ?? (viewingDeviceId === data.deviceId ? (data.deviceName ?? viewingDeviceId.slice(0, 6) + '…') : viewingDeviceId.slice(0, 6) + '…')}
+            <div style={{display:'flex',alignItems:'center',gap:6,padding:'6px 10px',background:'rgba(232,165,87,0.08)',border:'1px solid rgba(232,165,87,0.25)',borderRadius:7,flexShrink:0}}>
+              <span style={{color:'#e8a557',fontSize:10.5,fontWeight:500,whiteSpace:'nowrap'}}>
+                📱 {knownDevices.find(d => d.device_id === viewingDeviceId)?.device_name ?? viewingDeviceId.slice(0, 6) + '…'}
               </span>
               <button
                 onClick={() => { setViewingDeviceId(''); setData(d => ({ ...d, viewingDeviceId: undefined })); }}
-                className="text-amber-500 hover:text-amber-300 text-xs leading-none"
+                style={{color:'#e8a557',background:'transparent',border:'none',cursor:'pointer',fontSize:12,lineHeight:1}}
                 title="내 기기로 복귀"
               >✕</button>
             </div>
           )}
           <button
             onClick={() => openAddModal(selectedCat !== 'all' ? selectedCat : undefined)}
-            className="px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-sm rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all flex items-center gap-1.5"
+            style={{padding:'8px 14px',background:'#e8a557',color:'#15120f',border:'none',borderRadius:7,fontSize:12.5,fontWeight:600,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:5,fontFamily:'inherit',flexShrink:0}}
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>추가</span>
+            <Plus className="w-3 h-3" />추가
           </button>
         </div>
 
@@ -1333,19 +1393,17 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             if (catItems.length === 0) return null;
             const c = getColor(cat.color);
             return (
-              <div key={cat.id} className="mb-5">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className={`w-2 h-2 rounded-full ${c.dot}`} />
-                  <span className="text-xs font-semibold text-zinc-300">{cat.name}</span>
-                  <span className="text-xs text-zinc-600">{catItems.length}</span>
-                  <button
-                    onClick={() => openAddModal(cat.id)}
-                    className="ml-auto text-zinc-600 hover:text-zinc-400 transition-colors"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
+              <div key={cat.id} style={{marginBottom:20}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:11.5,color:'#a39a8c'}}>
+                  <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.dot}`} />
+                  <span style={{fontWeight:500,color:'#ede7dd'}}>{cat.name}</span>
+                  <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:'#6b6459'}}>{catItems.length}</span>
+                  <div style={{flex:1}}/>
+                  <button onClick={() => openAddModal(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#6b6459',padding:4,display:'flex',alignItems:'center'}}>
+                    <Plus className="w-3 h-3" />
                   </button>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                   {catItems.map(item => (
                     <ItemCard key={item.id} item={item} getCat={getCat} getColor={getColor} onOpen={openItem} onEdit={openEditModal} onDelete={deleteItem} onTogglePin={togglePin} />
                   ))}
@@ -1356,24 +1414,23 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         ) : (
           // Flat view (filtered)
           unpinnedItems.length > 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
               {unpinnedItems.map(item => (
                 <ItemCard key={item.id} item={item} getCat={getCat} getColor={getColor} onOpen={openItem} onEdit={openEditModal} onDelete={deleteItem} onTogglePin={togglePin} />
               ))}
             </div>
           ) : (
             filteredItems.length === 0 && (
-              <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-12 text-center">
-                <BookMarked className="w-8 h-8 text-zinc-600 mx-auto mb-3" />
-                <p className="text-sm text-zinc-400">
+              <div style={{background:'#1c1916',borderRadius:10,border:'1px solid rgba(255,240,220,0.07)',padding:'48px 24px',textAlign:'center'}}>
+                <BookMarked className="w-7 h-7 mx-auto mb-3" style={{color:'#6b6459'}} />
+                <p style={{fontSize:13,color:'#a39a8c',marginBottom:12}}>
                   {search ? '검색 결과가 없습니다' : '항목이 없습니다'}
                 </p>
                 <button
                   onClick={() => openAddModal()}
-                  className="mt-3 px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-sm rounded-lg border border-blue-500/30 transition-all inline-flex items-center gap-1.5"
+                  style={{padding:'7px 16px',background:'#e8a557',color:'#15120f',border:'none',borderRadius:7,fontSize:12.5,fontWeight:600,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:5,fontFamily:'inherit'}}
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  첫 항목 추가
+                  <Plus className="w-3 h-3" />첫 항목 추가
                 </button>
               </div>
             )
@@ -1385,12 +1442,12 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       {showItemModal && (
         <Modal title={editingItem ? '항목 수정' : '항목 추가'} onClose={() => setShowItemModal(false)} onConfirm={saveItem} confirmLabel={editingItem ? '저장' : '추가'}>
           {/* Type toggle — hide folder on deployed web (no local filesystem) */}
-          <div className="flex rounded-lg overflow-hidden border border-zinc-700 mb-3">
+          <div className="flex rounded-lg overflow-hidden border border-stone-700/50 mb-3">
             {(['web', 'folder'] as const).filter(t => t === 'web' || !isDeployedWeb()).map(t => (
               <button
                 key={t}
                 onClick={() => setForm(f => ({ ...f, type: t }))}
-                className={`flex-1 py-2 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${form.type === t ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/60'}`}
+                className={`flex-1 py-2 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${form.type === t ? 'bg-[#2a2520] text-white' : 'text-zinc-500 hover:text-[#ede7dd]/90 hover:bg-[#221f1b]/60'}`}
               >
                 {t === 'web' ? <Globe className="w-3.5 h-3.5" /> : <Folder className="w-3.5 h-3.5" />}
                 {t === 'web' ? '웹사이트' : '로컬 폴더'}
@@ -1403,7 +1460,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             type="text"
             value={form.name}
             onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-            className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+            className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
             placeholder="이름을 입력하세요"
             autoFocus
           />
@@ -1415,13 +1472,13 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
                 type="text"
                 value={form.url}
                 onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
-                className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
                 placeholder="https://..."
               />
             </>
           ) : (
             <>
-              <label className="block text-xs text-zinc-400 mb-1">폴더 경로 * <span className="text-zinc-600 font-normal">(숨김 폴더: ~/.claude 등 직접 입력)</span></label>
+              <label className="block text-xs text-zinc-400 mb-1">폴더 경로 * <span className="text-[#6b6459] font-normal">(숨김 폴더: ~/.claude 등 직접 입력)</span></label>
               <div className="flex gap-2 mb-3">
                 <input
                   type="text"
@@ -1435,7 +1492,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
                         .then(r => r.json()).then(d => { if (d.path) setForm(f => ({ ...f, path: d.path })); }).catch(() => {});
                     }
                   }}
-                  className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                  className="flex-1 px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
                   placeholder="/Users/... 또는 ~/.config"
                 />
                 <button
@@ -1453,7 +1510,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
                         } catch {}
                       }
                     }}
-                    className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg border border-zinc-700 transition-all"
+                    className="px-3 py-2 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-sm rounded-lg border border-stone-700/50 transition-all"
                   >
                     <FolderOpen className="w-4 h-4" />
                   </button>
@@ -1465,7 +1522,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
           <select
             value={form.category}
             onChange={e => setForm(f => ({ ...f, category: e.target.value }))}
-            className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+            className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
           >
             {data.categories.map(cat => (
               <option key={cat.id} value={cat.id}>{cat.name}</option>
@@ -1477,13 +1534,13 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             type="text"
             value={form.description}
             onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
-            className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+            className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
             placeholder="간단한 설명..."
           />
 
           <label className="flex items-center gap-2 cursor-pointer select-none">
             <input type="checkbox" checked={form.pinned} onChange={e => setForm(f => ({ ...f, pinned: e.target.checked }))} className="rounded" />
-            <span className="text-sm text-zinc-300">고정 (즐겨찾기)</span>
+            <span className="text-sm text-[#ede7dd]/90">고정 (즐겨찾기)</span>
           </label>
         </Modal>
       )}
@@ -1496,7 +1553,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             type="text"
             value={catForm.name}
             onChange={e => setCatForm(f => ({ ...f, name: e.target.value }))}
-            className="w-full mb-4 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+            className="w-full mb-4 px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
             placeholder="카테고리 이름"
             autoFocus
           />
@@ -1525,15 +1582,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         <Modal title="설정" onClose={() => setShowSettings(false)} onConfirm={async () => { await saveSettings(); if (viewingDeviceId && viewingDeviceId !== data.deviceId) { await pullFromSupabase(); } else { await syncSupabase(); } }} confirmLabel="저장 후 동기화">
 
           {/* ── 1. 단말 이름 ─────────────────────────────────────────────────── */}
-          <div className="mb-3">
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-xs text-zinc-400">
-                이 기기 이름{!deviceName && !data.deviceId && <span className="text-amber-400 font-medium ml-1">* 필수</span>}
-              </label>
+          <div style={{marginBottom:16}}>
+            <div style={{display:'flex',alignItems:'center',marginBottom:6,fontSize:11.5,color:'#a39a8c'}}>
+              <span>이 기기 이름{!deviceName && !data.deviceId && <span style={{color:'#e8a557',fontWeight:500,marginLeft:4}}>* 필수</span>}</span>
+              <div style={{flex:1}}/>
               {deviceName
-                ? <span className="text-[10px] text-green-400 flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-green-400 inline-block" />등록됨</span>
+                ? <span style={{fontSize:11,color:'#8fb96e',display:'inline-flex',alignItems:'center',gap:4}}><span style={{width:6,height:6,borderRadius:3,background:'#8fb96e',display:'inline-block'}}/>등록됨</span>
                 : data.deviceId
-                  ? <span className="text-[10px] text-amber-400">이름 미설정 — 입력 권장</span>
+                  ? <span style={{fontSize:11,color:'#e8a557'}}>이름 미설정 — 입력 권장</span>
                   : null
               }
             </div>
@@ -1541,16 +1597,16 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
               type="text"
               value={deviceName}
               onChange={e => setDeviceName(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              style={{width:'100%',padding:'8px 10px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:6,color:'#ede7dd',fontSize:12.5,outline:'none',fontFamily:'inherit',boxSizing:'border-box'}}
               placeholder="예: MyMacPro, 회사맥북, WindowsPC"
               autoFocus={!deviceName && !data.deviceId}
             />
-            <div className="flex items-center justify-between mt-1">
-              <p className="text-[10px] text-zinc-600">Device ID: {data.deviceId ? data.deviceId.slice(0, 16) + '…' : '자동생성'}</p>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginTop:5}}>
+              <p style={{fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace",margin:0}}>Device ID: {data.deviceId ? data.deviceId.slice(0, 16) + '…' : '자동생성'}</p>
               {onChangeDevice && (
                 <button
                   onClick={() => { setShowSettings(false); onChangeDevice(); }}
-                  className="text-[10px] text-blue-400 hover:text-blue-300 transition-colors"
+                  style={{fontSize:10.5,color:'#e8a557',background:'transparent',border:'none',cursor:'pointer',padding:0}}
                 >
                   단말 변경
                 </button>
@@ -1559,23 +1615,36 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
           </div>
 
           {/* ── 2. Supabase 연결 ─────────────────────────────────────────────── */}
-          <div className="mb-4">
-            <label className="block text-xs text-zinc-400 mb-1">Project URL</label>
+          <div style={{marginBottom:16}}>
+            <label style={{display:'block',fontSize:11.5,color:'#a39a8c',marginBottom:6}}>Project URL</label>
             <input
               type="text"
               value={sbUrl}
               onChange={e => setSbUrl(e.target.value)}
-              className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              style={{width:'100%',padding:'8px 10px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:6,color:'#ede7dd',fontSize:12.5,outline:'none',fontFamily:'inherit',boxSizing:'border-box',marginBottom:12}}
               placeholder="https://xxx.supabase.co"
             />
-            <label className="block text-xs text-zinc-400 mb-1">Anon Key</label>
+            <label style={{display:'block',fontSize:11.5,color:'#a39a8c',marginBottom:6}}>Anon Key</label>
             <input
               type="password"
               value={sbKey}
               onChange={e => setSbKey(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+              style={{width:'100%',padding:'8px 10px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:6,color:'#ede7dd',fontSize:12.5,outline:'none',fontFamily:"'JetBrains Mono',monospace",boxSizing:'border-box'}}
               placeholder="eyJ..."
             />
+            {sbUrl && sbKey && (
+              <button
+                onClick={() => {
+                  const p = new URLSearchParams({ url: sbUrl, key: sbKey });
+                  if (data.deviceId) p.set('device', data.deviceId);
+                  if (deviceName) p.set('name', deviceName);
+                  window.open(`https://portmanager-portal.vercel.app?${p}`, '_blank');
+                }}
+                style={{marginTop:10,width:'100%',padding:'8px 10px',background:'rgba(139,185,110,0.1)',border:'1px solid rgba(139,185,110,0.25)',borderRadius:6,color:'#8fb96e',fontSize:12,cursor:'pointer',fontFamily:'inherit',textAlign:'center'}}
+              >
+                🔗 Vercel 포털 열기 (자동 인증)
+              </button>
+            )}
           </div>
 
           {/* ── 고급 설정 (접이식) ───────────────────────────────────────────── */}
@@ -1591,6 +1660,57 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             onCopyDeviceId={() => { if (data.deviceId) { navigator.clipboard.writeText(data.deviceId); showToast('Device ID 복사됨', 'success'); } }}
           />
         </Modal>
+      )}
+
+      {/* ── Push 히스토리 모달 — 포털 아이템 ─────────────────────────────────── */}
+      {showPortalHistory && (
+        <div style={{position:'fixed',inset:0,zIndex:60,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.6)',backdropFilter:'blur(4px)'}} onClick={() => setShowPortalHistory(false)}>
+          <div style={{background:'#18181b',border:'1px solid rgba(255,240,220,0.1)',borderRadius:12,width:'100%',maxWidth:460,margin:'0 16px',boxShadow:'0 24px 48px rgba(0,0,0,0.6)',overflow:'hidden'}} onClick={e => e.stopPropagation()}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
+              <div style={{display:'flex',alignItems:'center',gap:8}}>
+                <Clock className="w-4 h-4" style={{color:'#e8a557'}} />
+                <span style={{fontSize:13,fontWeight:600,color:'#ede7dd'}}>Push 히스토리 — 포털 북마크</span>
+              </div>
+              <button onClick={() => setShowPortalHistory(false)} style={{background:'transparent',border:'none',color:'#a39a8c',cursor:'pointer',padding:4,display:'flex',alignItems:'center'}}><X className="w-4 h-4" /></button>
+            </div>
+            <div style={{overflowY:'auto',maxHeight:360}}>
+              {portalHistoryLoading ? (
+                <div style={{display:'flex',alignItems:'center',justifyContent:'center',padding:'40px 0'}}>
+                  <RefreshCw className="w-5 h-5" style={{color:'#6b6459',animation:'spin 1s linear infinite'}} />
+                </div>
+              ) : portalHistoryList.length === 0 ? (
+                <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'40px 0',gap:8}}>
+                  <Clock className="w-8 h-8" style={{color:'#3f3a34'}} />
+                  <p style={{fontSize:13,color:'#6b6459',margin:0}}>저장된 히스토리가 없습니다</p>
+                  <p style={{fontSize:11,color:'#4a4540',margin:0}}>Push 시 자동으로 스냅샷이 저장됩니다</p>
+                </div>
+              ) : portalHistoryList.map((snap, i) => (
+                <div key={snap.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',borderBottom:'1px solid rgba(255,240,220,0.05)'}}>
+                  <div style={{minWidth:0}}>
+                    <p style={{fontSize:13,color:'#ede7dd',fontWeight:500,margin:0}}>{new Date(snap.created_at).toLocaleString('ko-KR')}</p>
+                    <p style={{fontSize:11,color:'#6b6459',margin:'3px 0 0',fontFamily:"'JetBrains Mono',monospace"}}>
+                      {snap.row_count}개 항목{snap.device_name ? ` · ${snap.device_name}` : ''}
+                      {i === 0 && <span style={{marginLeft:6,color:'#8fb96e',fontWeight:500}}>최신</span>}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => restorePortalSnapshot(snap.id)}
+                    disabled={portalHistoryRestoring !== null}
+                    style={{marginLeft:12,flexShrink:0,display:'flex',alignItems:'center',gap:4,padding:'6px 10px',fontSize:11.5,background:'rgba(232,165,87,0.08)',color:'#e8a557',border:'1px solid rgba(232,165,87,0.2)',borderRadius:6,cursor:'pointer',fontFamily:'inherit',opacity:portalHistoryRestoring?0.5:1}}
+                  >
+                    {portalHistoryRestoring === snap.id
+                      ? <RefreshCw className="w-3 h-3" style={{animation:'spin 1s linear infinite'}} />
+                      : <RotateCw className="w-3 h-3" />}
+                    복원
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div style={{padding:'8px 16px',borderTop:'1px solid rgba(255,240,220,0.07)',background:'rgba(255,255,255,0.02)'}}>
+              <p style={{fontSize:10.5,color:'#4a4540',margin:0}}>복원 시 현재 Supabase 북마크 데이터를 선택한 시점으로 되돌립니다</p>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );
@@ -1615,66 +1735,73 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
 
   return (
     <div
-      className="bg-[#18181b] border border-zinc-800 rounded-xl p-3 flex flex-col gap-2 hover:border-zinc-600 transition-all duration-200 group relative"
+      style={{
+        padding:14, background:'#1c1916',
+        border:`1px solid ${hovered ? 'rgba(255,240,220,0.12)' : 'rgba(255,240,220,0.07)'}`,
+        borderRadius:10, display:'flex', flexDirection:'column', gap:6,
+        minHeight:100, position:'relative', cursor:'pointer', transition:'border-color .1s',
+      }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
+      {/* Visit count badge */}
+      {item.visitCount > 0 && (
+        <span style={{position:'absolute',top:10,right:10,fontSize:10,fontFamily:"'JetBrains Mono',monospace",color:'#6b6459'}}>{item.visitCount}</span>
+      )}
+      {item.pinned && <Star className="w-3 h-3" style={{position:'absolute',top:10,right:item.visitCount>0?28:10,color:'#e8a557'}} />}
+
       {/* Header row */}
-      <div className="flex items-start gap-2">
-        <div className={`p-1.5 rounded-lg ${c.bg} ${c.border} border flex-shrink-0`}>
+      <div style={{display:'flex',alignItems:'center',gap:10}}>
+        <div className={`${c.bg} ${c.border}`} style={{width:28,height:28,borderRadius:7,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,border:'1px solid'}}>
           {item.type === 'web'
             ? <Globe className={`w-3.5 h-3.5 ${c.text}`} />
             : <Folder className={`w-3.5 h-3.5 ${c.text}`} />
           }
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-zinc-200 truncate leading-tight">{item.name}</p>
-          {item.description && (
-            <p className="text-xs text-zinc-500 truncate mt-0.5">{item.description}</p>
-          )}
+        <div style={{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:13,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>
+          {item.name}
         </div>
-        {item.pinned && <Star className="w-3 h-3 text-amber-400 flex-shrink-0 mt-0.5" />}
       </div>
 
+      {item.description && (
+        <div style={{fontSize:11,color:'#a39a8c',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.description}</div>
+      )}
+
       {/* URL/path preview */}
-      <p className="text-[10px] text-zinc-600 truncate">
+      <div style={{fontSize:11,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
         {item.type === 'web' ? item.url : item.path}
-      </p>
+      </div>
 
       {/* Actions */}
-      <div className={`flex items-center gap-1 transition-opacity duration-150 ${hovered ? 'opacity-100' : 'opacity-0'}`}>
+      <div style={{marginTop:'auto',display:'flex',gap:4,opacity:hovered?1:0.5,transition:'opacity .12s'}}>
         <button
           onClick={() => onOpen(item)}
-          className={`flex-1 py-1 text-xs font-medium rounded-lg border transition-all flex items-center justify-center gap-1 ${c.bg} ${c.text} ${c.border}`}
+          className={`${c.bg} ${c.text} ${c.border}`}
+          style={{flex:1,padding:'5px 8px',borderRadius:5,border:'1px solid',fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:4,fontFamily:'inherit'}}
         >
           {item.type === 'web' ? <ExternalLink className="w-3 h-3" /> : <FolderOpen className="w-3 h-3" />}
           <span>{item.type === 'web' ? '열기' : '폴더'}</span>
         </button>
         <button
           onClick={() => onTogglePin(item.id)}
-          className={`p-1 rounded-lg border transition-all ${item.pinned ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-zinc-800/60 border-zinc-700 text-zinc-500 hover:text-zinc-300'}`}
+          style={{padding:'5px 8px',borderRadius:5,background:item.pinned?'rgba(232,165,87,0.12)':'transparent',border:'1px solid rgba(255,240,220,0.07)',color:item.pinned?'#e8a557':'#6b6459',cursor:'pointer'}}
           title={item.pinned ? '고정 해제' : '고정'}
         >
           <Pin className="w-3 h-3" />
         </button>
         <button
           onClick={() => onEdit(item)}
-          className="p-1 rounded-lg border border-zinc-700 bg-zinc-800/60 text-zinc-500 hover:text-zinc-300 transition-all"
+          style={{padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#6b6459',cursor:'pointer'}}
         >
           <Pencil className="w-3 h-3" />
         </button>
         <button
           onClick={() => onDelete(item.id)}
-          className="p-1 rounded-lg border border-zinc-700 bg-zinc-800/60 text-zinc-500 hover:text-red-400 transition-all"
+          style={{padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#6b6459',cursor:'pointer'}}
         >
           <Trash2 className="w-3 h-3" />
         </button>
       </div>
-
-      {/* Visit count badge */}
-      {item.visitCount > 0 && (
-        <span className="absolute top-2 right-2 text-[9px] text-zinc-600">{item.visitCount}</span>
-      )}
     </div>
   );
 }
@@ -1689,20 +1816,21 @@ function Modal({ title, children, onClose, onConfirm, confirmLabel }: {
   confirmLabel: string;
 }) {
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm shadow-2xl">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
-          <h3 className="text-sm font-semibold text-zinc-200">{title}</h3>
-          <button onClick={onClose} className="p-1 hover:bg-zinc-800 rounded-lg transition-colors text-zinc-500 hover:text-zinc-300">
-            <X className="w-4 h-4" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(10,8,6,0.65)',backdropFilter:'blur(2px)'}}>
+      <div style={{width:440,background:'#1c1916',borderRadius:12,border:'1px solid rgba(255,240,220,0.12)',boxShadow:'0 24px 80px rgba(0,0,0,0.6)',overflow:'hidden'}}>
+        <div style={{padding:'14px 18px',display:'flex',alignItems:'center',borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
+          <h3 style={{margin:0,fontSize:14,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>{title}</h3>
+          <div style={{flex:1}}/>
+          <button onClick={onClose} style={{background:'transparent',border:'none',color:'#a39a8c',cursor:'pointer',padding:4,display:'flex',alignItems:'center'}}>
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
-        <div className="flex gap-2 px-5 pb-4">
-          <button onClick={onClose} className="flex-1 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-900 hover:bg-zinc-800 rounded-lg border border-zinc-700 transition-all">
+        <div style={{padding:18}}>{children}</div>
+        <div style={{padding:'12px 18px',borderTop:'1px solid rgba(255,240,220,0.07)',display:'flex',gap:8,justifyContent:'flex-end'}}>
+          <button onClick={onClose} style={{padding:'7px 16px',background:'transparent',color:'#ede7dd',border:'1px solid rgba(255,240,220,0.12)',borderRadius:6,fontSize:12.5,cursor:'pointer',fontFamily:'inherit'}}>
             취소
           </button>
-          <button onClick={onConfirm} className="flex-1 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-all">
+          <button onClick={onConfirm} style={{padding:'7px 16px',background:'#e8a557',color:'#15120f',border:'none',borderRadius:6,fontSize:12.5,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>
             {confirmLabel}
           </button>
         </div>

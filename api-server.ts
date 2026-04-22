@@ -2219,12 +2219,14 @@ return ""`;
     // Portal 데이터 로드
     if (url.pathname === "/api/portal" && req.method === "GET") {
       try {
+        const { hostname } = await import("node:os");
         const file = Bun.file(PORTAL_DATA_FILE);
+        const base = { _hostname: hostname() };
         if (await file.exists()) {
           const data = await file.json();
-          return new Response(JSON.stringify(data), { headers });
+          return new Response(JSON.stringify({ ...base, ...data }), { headers });
         }
-        return new Response(JSON.stringify({ items: [], categories: [] }), { headers });
+        return new Response(JSON.stringify({ ...base, items: [], categories: [] }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
       }
