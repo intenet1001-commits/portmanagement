@@ -1805,7 +1805,7 @@ return ""`;
         await branchProc.exited;
         const branch = (await new Response(branchProc.stdout).text()).trim() || "main";
 
-        const proc = Bun.spawn([GIT_PATH, "push", "origin", branch], {
+        const proc = Bun.spawn([GIT_PATH, "push", "--set-upstream", "origin", branch], {
           cwd: folderPath,
           stdout: "pipe",
           stderr: "pipe",
