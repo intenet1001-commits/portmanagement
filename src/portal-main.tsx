@@ -431,7 +431,15 @@ function App() {
         }
       }
 
-      const list: DeviceRow[] = Array.from(seenIds).map(id => ({
+      // devices 테이블에 행이 있으면 그것을 기준으로 필터링 (삭제된 기기 제외)
+      const registeredIds = devRows && devRows.length > 0
+        ? new Set(devRows.map(d => d.id))
+        : null;
+      const filteredIds = registeredIds
+        ? Array.from(seenIds).filter(id => registeredIds.has(id))
+        : Array.from(seenIds);
+
+      const list: DeviceRow[] = filteredIds.map(id => ({
         id,
         name: nameMap.get(id) ?? id.slice(0, 8),
         last_push_at: (devRows ?? []).find(d => d.id === id)?.last_push_at ?? '',
