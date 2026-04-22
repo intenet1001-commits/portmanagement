@@ -314,10 +314,13 @@ interface AdvancedSettingsProps {
   onSelectDevice: (id: string) => void;
   onResetDevice: () => void;
   onCopyDeviceId: () => void;
+  onChangeDeviceId: (id: string) => void;
 }
 
-function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices, isFetchingDevices, onFetchDevices, onSelectDevice, onResetDevice, onCopyDeviceId }: AdvancedSettingsProps) {
+function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices, isFetchingDevices, onFetchDevices, onSelectDevice, onResetDevice, onCopyDeviceId, onChangeDeviceId }: AdvancedSettingsProps) {
   const [open, setOpen] = React.useState(false);
+  const [editingId, setEditingId] = React.useState(false);
+  const [editIdVal, setEditIdVal] = React.useState('');
   return (
     <div className="mb-3">
       <button
@@ -338,12 +341,30 @@ function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices,
           {/* Device ID */}
           <div>
             <label className="block text-[10px] text-zinc-500 mb-1">Device ID</label>
-            <div className="flex items-center gap-1.5">
-              <input readOnly value={deviceId ? `${deviceId.slice(0, 16)}…` : '—'}
-                className="flex-1 px-2.5 py-1.5 text-xs bg-black/30 border border-stone-700/50 text-zinc-500 rounded-lg cursor-default" />
-              <button onClick={onCopyDeviceId}
-                className="px-2.5 py-1.5 text-xs bg-[#221f1b] hover:bg-[#2a2520] text-zinc-400 border border-stone-700/50 rounded-lg transition-all">복사</button>
-            </div>
+            {editingId ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={editIdVal}
+                  onChange={e => setEditIdVal(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && editIdVal.trim()) { onChangeDeviceId(editIdVal.trim()); setEditingId(false); } if (e.key === 'Escape') setEditingId(false); }}
+                  placeholder="UUID를 붙여넣으세요"
+                  autoFocus
+                  className="flex-1 px-2.5 py-1.5 text-xs bg-black/30 border border-blue-500/50 text-zinc-200 rounded-lg focus:outline-none" />
+                <button onClick={() => { if (editIdVal.trim()) { onChangeDeviceId(editIdVal.trim()); setEditingId(false); } }}
+                  className="px-2.5 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-all">저장</button>
+                <button onClick={() => setEditingId(false)}
+                  className="px-2.5 py-1.5 text-xs bg-[#221f1b] text-zinc-400 border border-stone-700/50 rounded-lg transition-all">취소</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <input readOnly value={deviceId ? `${deviceId.slice(0, 16)}…` : '—'}
+                  className="flex-1 px-2.5 py-1.5 text-xs bg-black/30 border border-stone-700/50 text-zinc-500 rounded-lg cursor-default" />
+                <button onClick={onCopyDeviceId}
+                  className="px-2.5 py-1.5 text-xs bg-[#221f1b] hover:bg-[#2a2520] text-zinc-400 border border-stone-700/50 rounded-lg transition-all">복사</button>
+                <button onClick={() => { setEditIdVal(deviceId ?? ''); setEditingId(true); }}
+                  className="px-2.5 py-1.5 text-xs bg-[#221f1b] hover:bg-[#2a2520] text-zinc-400 border border-stone-700/50 rounded-lg transition-all">변경</button>
+              </div>
+            )}
           </div>
           {/* Device switch */}
           <div>
@@ -1662,6 +1683,12 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             onSelectDevice={id => setViewingDeviceId(id === data.deviceId ? '' : id)}
             onResetDevice={() => setViewingDeviceId('')}
             onCopyDeviceId={() => { if (data.deviceId) { navigator.clipboard.writeText(data.deviceId); showToast('Device ID 복사됨', 'success'); } }}
+            onChangeDeviceId={async (newId) => {
+              const next = { ...data, deviceId: newId };
+              await persist(next);
+              setData(next);
+              showToast('Device ID 변경됨', 'success');
+            }}
           />
         </Modal>
       )}
