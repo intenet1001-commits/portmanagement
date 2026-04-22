@@ -5,7 +5,7 @@ import PortalManager, { PortalActions } from './PortalManager';
 import {
   BookMarked, Settings, CloudUpload, CloudDownload,
   ExternalLink, Github, RefreshCw, Clock, Monitor, Smartphone,
-  Server,
+  Server, Pencil, Trash2,
   ChevronDown, X,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
@@ -235,6 +235,102 @@ function PortsView({ deviceId, creds, showToast }: {
   );
 }
 
+// ─── Device Manager Modal ─────────────────────────────────────────────────────
+
+function DeviceManagerModal({ devices, creds, onClose, onUpdate }: {
+  devices: DeviceRow[];
+  creds: { url: string; key: string };
+  onClose: () => void;
+  onUpdate: (devices: DeviceRow[]) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function saveEdit(id: string) {
+    if (!editName.trim()) return;
+    setSaving(true);
+    try {
+      const sb = createClient(creds.url, creds.key);
+      const { error } = await sb.from('devices').update({ name: editName.trim() }).eq('id', id);
+      if (error) throw error;
+      onUpdate(devices.map(d => d.id === id ? { ...d, name: editName.trim() } : d));
+      setEditingId(null);
+    } catch (e) {
+      alert('저장 실패: ' + String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteDevice(id: string) {
+    if (!confirm('이 기기를 삭제하시겠습니까?')) return;
+    setDeletingId(id);
+    try {
+      const sb = createClient(creds.url, creds.key);
+      const { error } = await sb.from('devices').delete().eq('id', id);
+      if (error) throw error;
+      onUpdate(devices.filter(d => d.id !== id));
+    } catch (e) {
+      alert('삭제 실패: ' + String(e));
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
+      <div className="w-full max-w-sm bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+          <span className="text-sm font-semibold text-white">기기 관리</span>
+          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 transition-colors"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="max-h-80 overflow-y-auto divide-y divide-zinc-800">
+          {devices.length === 0 ? (
+            <div className="px-4 py-6 text-xs text-zinc-500 text-center">등록된 기기가 없습니다</div>
+          ) : devices.map(d => (
+            <div key={d.id} className="px-4 py-3 flex items-center gap-2">
+              {editingId === d.id ? (
+                <>
+                  <input
+                    className="flex-1 min-w-0 px-2 py-1 bg-zinc-800 border border-zinc-600 rounded text-xs text-zinc-100 focus:outline-none focus:border-blue-500"
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') saveEdit(d.id); if (e.key === 'Escape') setEditingId(null); }}
+                    autoFocus
+                  />
+                  <button onClick={() => saveEdit(d.id)} disabled={saving}
+                    className="shrink-0 px-2 py-1 text-[11px] bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded transition-colors">저장</button>
+                  <button onClick={() => setEditingId(null)}
+                    className="shrink-0 px-2 py-1 text-[11px] text-zinc-500 border border-zinc-700 rounded hover:bg-zinc-800 transition-colors">취소</button>
+                </>
+              ) : (
+                <>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-zinc-200 truncate">{d.name ?? d.id.slice(0, 8)}</p>
+                    <p className="text-[10px] text-zinc-600 mt-0.5">
+                      {new Date(d.last_push_at).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  <button onClick={() => { setEditingId(d.id); setEditName(d.name ?? ''); }}
+                    className="shrink-0 p-1.5 text-zinc-600 hover:text-zinc-300 transition-colors" title="이름 편집">
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button onClick={() => deleteDevice(d.id)} disabled={deletingId === d.id}
+                    className="shrink-0 p-1.5 text-zinc-600 hover:text-red-400 transition-colors disabled:opacity-50" title="삭제">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 function App() {
@@ -251,6 +347,7 @@ function App() {
     () => localStorage.getItem(SELECTED_DEVICE_KEY) ?? ''
   );
   const [showDevicePicker, setShowDevicePicker] = useState(false);
+  const [showDeviceManager, setShowDeviceManager] = useState(false);
   const [showRegisterForm, setShowRegisterForm] = useState(false);
   const [registerName, setRegisterName] = useState('');
   const [registering, setRegistering] = useState(false);
@@ -342,26 +439,32 @@ function App() {
         <ChevronDown className="w-3 h-3 shrink-0 text-zinc-600" />
       </button>
       {showDevicePicker && (
-        <div className="absolute top-full mt-1 left-0 z-50 w-60 bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl overflow-hidden">
+        <div className="absolute top-full mt-1 left-0 z-50 w-60 bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl">
           <div className="px-3 py-2 text-[10px] text-zinc-500 border-b border-zinc-800 flex items-center justify-between">
             <span>어떤 기기를 볼까요?</span>
-            <button onClick={loadDevices} className="text-zinc-600 hover:text-zinc-400">
-              <RefreshCw className="w-3 h-3" />
-            </button>
+            <div className="flex items-center gap-2">
+              <button onClick={() => { setShowDevicePicker(false); setShowDeviceManager(true); }}
+                className="text-zinc-600 hover:text-zinc-300 text-[10px] transition-colors">기기 관리</button>
+              <button onClick={loadDevices} className="text-zinc-600 hover:text-zinc-400 transition-colors">
+                <RefreshCw className="w-3 h-3" />
+              </button>
+            </div>
           </div>
-          {devices.length === 0 ? (
-            <div className="px-3 py-3 text-xs text-zinc-500">기기가 없습니다.<br />앱에서 Push하면 등록됩니다.</div>
-          ) : devices.map(d => (
-            <button key={d.id} onClick={() => selectDevice(d.id)}
-              className={`w-full text-left px-3 py-2.5 text-xs hover:bg-zinc-800 transition-colors border-b border-zinc-800/50 last:border-0 ${
-                d.id === selectedDeviceId ? 'text-blue-300 bg-blue-500/5' : 'text-zinc-300'
-              }`}>
-              <div className="font-medium truncate">{d.name ?? d.id.slice(0, 8)}</div>
-              <div className="text-[10px] text-zinc-600 mt-0.5">
-                {new Date(d.last_push_at).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-              </div>
-            </button>
-          ))}
+          <div className="max-h-52 overflow-y-auto">
+            {devices.length === 0 ? (
+              <div className="px-3 py-3 text-xs text-zinc-500">기기가 없습니다.<br />앱에서 Push하면 등록됩니다.</div>
+            ) : devices.map(d => (
+              <button key={d.id} onClick={() => selectDevice(d.id)}
+                className={`w-full text-left px-3 py-2.5 text-xs hover:bg-zinc-800 transition-colors border-b border-zinc-800/50 last:border-0 ${
+                  d.id === selectedDeviceId ? 'text-blue-300 bg-blue-500/5' : 'text-zinc-300'
+                }`}>
+                <div className="font-medium truncate">{d.name ?? d.id.slice(0, 8)}</div>
+                <div className="text-[10px] text-zinc-600 mt-0.5">
+                  {new Date(d.last_push_at).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                </div>
+              </button>
+            ))}
+          </div>
           {/* Register this device */}
           {showRegisterForm ? (
             <div className="px-3 py-2.5 border-t border-zinc-800 space-y-2">
@@ -524,6 +627,15 @@ function App() {
       </div>
 
       {toasts.map(t => <Toast key={t.id} message={t.message} type={t.type} />)}
+
+      {showDeviceManager && creds && (
+        <DeviceManagerModal
+          devices={devices}
+          creds={creds}
+          onClose={() => setShowDeviceManager(false)}
+          onUpdate={setDevices}
+        />
+      )}
     </div>
   );
 }
