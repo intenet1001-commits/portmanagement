@@ -385,7 +385,7 @@ function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices,
                   {/* Always show current device first */}
                   {deviceId && !knownDevices.find(d => d.device_id === deviceId) && (
                     <option value={deviceId}>
-                      {deviceName || deviceId.slice(0, 10) + '…'} (이 기기)
+                      {deviceName || '이름 미설정'} (이 기기)
                     </option>
                   )}
                   {knownDevices.map(d => {
@@ -1228,6 +1228,11 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       }));
 
       setKnownDevices(devices);
+      // Auto-fill name input if current device found in results and name not set
+      const ownDevice = devices.find(d => d.device_id === data.deviceId);
+      if (ownDevice?.device_name && !deviceName) {
+        setDeviceName(ownDevice.device_name);
+      }
       if (devices.length === 0) {
         showToast('단말 없음 — 이 기기에서 먼저 Push를 실행하세요', 'error');
       } else {
