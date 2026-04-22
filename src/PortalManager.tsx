@@ -1654,21 +1654,39 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
               placeholder="eyJ..."
             />
             {sbUrl && sbKey && (
-              <button
-                onClick={async () => {
-                  // Always load fresh data so device ID isn't stale from localStorage fallback
-                  const fresh = await PortalAPI.load();
-                  const p = new URLSearchParams({ url: sbUrl, key: sbKey });
-                  const did = fresh.deviceId || data.deviceId;
-                  if (did) p.set('device', did);
-                  const dname = fresh.deviceName || deviceName;
-                  if (dname) p.set('name', dname);
-                  window.open(`https://portmanager-portal.vercel.app?${p}`, '_blank');
-                }}
-                style={{marginTop:10,width:'100%',padding:'8px 10px',background:'rgba(139,185,110,0.1)',border:'1px solid rgba(139,185,110,0.25)',borderRadius:6,color:'#8fb96e',fontSize:12,cursor:'pointer',fontFamily:'inherit',textAlign:'center'}}
-              >
-                🔗 Vercel 포털 열기 (자동 인증)
-              </button>
+              <div style={{display:'flex',flexDirection:'column',gap:6,marginTop:10}}>
+                <button
+                  onClick={async () => {
+                    // Always load fresh data so device ID isn't stale from localStorage fallback
+                    const fresh = await PortalAPI.load();
+                    const p = new URLSearchParams({ url: sbUrl, key: sbKey });
+                    const did = fresh.deviceId || data.deviceId;
+                    if (did) p.set('device', did);
+                    const dname = fresh.deviceName || deviceName;
+                    if (dname) p.set('name', dname);
+                    window.open(`https://portmanager-portal.vercel.app?${p}`, '_blank');
+                  }}
+                  style={{width:'100%',padding:'8px 10px',background:'rgba(139,185,110,0.1)',border:'1px solid rgba(139,185,110,0.25)',borderRadius:6,color:'#8fb96e',fontSize:12,cursor:'pointer',fontFamily:'inherit',textAlign:'center'}}
+                >
+                  🔗 Vercel 포털 열기 (자동 인증)
+                </button>
+                <button
+                  onClick={async () => {
+                    // Registration link: credentials only, no device param → new device opens and registers itself
+                    const p = new URLSearchParams({ url: sbUrl, key: sbKey });
+                    const regUrl = `https://portmanager-portal.vercel.app?${p}`;
+                    try {
+                      await navigator.clipboard.writeText(regUrl);
+                      showToast('기기 등록 링크 복사됨 — 새 단말에서 열어 등록하세요', 'success');
+                    } catch {
+                      showToast(regUrl, 'error');
+                    }
+                  }}
+                  style={{width:'100%',padding:'8px 10px',background:'rgba(100,140,220,0.1)',border:'1px solid rgba(100,140,220,0.25)',borderRadius:6,color:'#7eb3f0',fontSize:12,cursor:'pointer',fontFamily:'inherit',textAlign:'center'}}
+                >
+                  📋 새 단말 등록 링크 복사
+                </button>
+              </div>
             )}
           </div>
 
