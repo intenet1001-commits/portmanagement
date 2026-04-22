@@ -1634,10 +1634,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             />
             {sbUrl && sbKey && (
               <button
-                onClick={() => {
+                onClick={async () => {
+                  // Always load fresh data so device ID isn't stale from localStorage fallback
+                  const fresh = await PortalAPI.load();
                   const p = new URLSearchParams({ url: sbUrl, key: sbKey });
-                  if (data.deviceId) p.set('device', data.deviceId);
-                  if (deviceName) p.set('name', deviceName);
+                  const did = fresh.deviceId || data.deviceId;
+                  if (did) p.set('device', did);
+                  const dname = fresh.deviceName || deviceName;
+                  if (dname) p.set('name', dname);
                   window.open(`https://portmanager-portal.vercel.app?${p}`, '_blank');
                 }}
                 style={{marginTop:10,width:'100%',padding:'8px 10px',background:'rgba(139,185,110,0.1)',border:'1px solid rgba(139,185,110,0.25)',borderRadius:6,color:'#8fb96e',fontSize:12,cursor:'pointer',fontFamily:'inherit',textAlign:'center'}}

@@ -144,10 +144,11 @@ function Toast({ message, type }: { message: string; type: 'success' | 'error' }
 
 // ─── Ports View ───────────────────────────────────────────────────────────────
 
-function PortsView({ deviceId, creds, showToast }: {
+function PortsView({ deviceId, creds, showToast, onSwitchDevice }: {
   deviceId: string;
   creds: { url: string; key: string };
   showToast: (msg: string, type: 'success' | 'error') => void;
+  onSwitchDevice?: () => void;
 }) {
   const [ports, setPorts] = useState<PortRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -195,6 +196,12 @@ function PortsView({ deviceId, creds, showToast }: {
           <Server className="w-10 h-10 text-zinc-700" />
           <p className="text-sm text-zinc-500">등록된 포트가 없습니다</p>
           <p className="text-xs text-zinc-600">로컬 앱에서 Push하면 여기에 나타납니다</p>
+          {onSwitchDevice && (
+            <button onClick={onSwitchDevice}
+              className="mt-2 px-3 py-1.5 text-xs text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-500/10 transition-colors">
+              다른 기기 선택
+            </button>
+          )}
         </div>
       ) : loading ? (
         <div className="flex items-center justify-center py-20">
@@ -372,10 +379,20 @@ function App() {
     if (!creds) return;
     try {
       const sb = createClient(creds.url, creds.key);
-      const { data } = await sb.from('devices').select('*').order('last_push_at', { ascending: false });
-      const list: DeviceRow[] = data ?? [];
+      // 1) devices 테이블
+      const { data: devRows } = await sb.from('devices').select('*').order('last_push_at', { ascending: false });
+      const list: DeviceRow[] = devRows ?? [];
+      const knownIds = new Set(list.map(d => d.id));
+      // 2) ports 테이블에서 device_id/device_name 보강 (devices 테이블에 없는 기기 추가)
+      const { data: portRows } = await sb.from('ports').select('device_id, device_name').not('device_id', 'is', null);
+      if (portRows) {
+        for (const r of portRows) {
+          if (!r.device_id || knownIds.has(r.device_id)) continue;
+          knownIds.add(r.device_id);
+          list.push({ id: r.device_id, name: r.device_name ?? r.device_id.slice(0, 8), last_push_at: '' });
+        }
+      }
       setDevices(list);
-      // Don't auto-select — open picker so user explicitly chooses
       if (!selectedDeviceId && list.length > 0) {
         setShowDevicePicker(true);
       }
@@ -599,7 +616,7 @@ function App() {
                 isVisible={activeTab === 'bookmarks'} />
               {activeTab === 'ports' && (
                 creds && selectedDeviceId ? (
-                  <PortsView deviceId={selectedDeviceId} creds={creds} showToast={showToast} />
+                  <PortsView deviceId={selectedDeviceId} creds={creds} showToast={showToast} onSwitchDevice={() => setShowDevicePicker(true)} />
                 ) : (
                   <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
                     <p className="text-sm text-zinc-500">
@@ -618,7 +635,7 @@ function App() {
               isVisible={activeTab === 'bookmarks'} />
             {activeTab === 'ports' && (
               creds && selectedDeviceId ? (
-                <PortsView deviceId={selectedDeviceId} creds={creds} showToast={showToast} />
+                <PortsView deviceId={selectedDeviceId} creds={creds} showToast={showToast} onSwitchDevice={() => setShowDevicePicker(true)} />
               ) : (
                 <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
                   <p className="text-sm text-zinc-500">
