@@ -466,6 +466,11 @@ function App() {
 
   useEffect(() => { if (pwOk) loadDevices(); }, [pwOk, creds?.url]);
 
+  // Auto-open settings when no Supabase credentials (fresh/incognito browser)
+  useEffect(() => {
+    if (pwOk && !creds) setOpenSettings(true);
+  }, [pwOk]);
+
   function selectDevice(id: string) {
     setSelectedDeviceId(id);
     localStorage.setItem(SELECTED_DEVICE_KEY, id);
