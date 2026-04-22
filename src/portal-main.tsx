@@ -430,7 +430,7 @@ function App() {
       if ((!selectedDeviceId || !knownInList) && list.length > 0) {
         // Auto-select if only one candidate with ports (most recent push)
         if (list.length === 1) {
-          selectDevice(list[0].id);
+          selectDevice(list[0].id, list[0].name ?? undefined);
         } else {
           setShowDevicePicker(true);
         }
@@ -471,9 +471,15 @@ function App() {
     if (pwOk && !creds) setOpenSettings(true);
   }, [pwOk]);
 
-  function selectDevice(id: string) {
+  function selectDevice(id: string, name?: string) {
     setSelectedDeviceId(id);
     localStorage.setItem(SELECTED_DEVICE_KEY, id);
+    try {
+      const existing = JSON.parse(localStorage.getItem(PORTAL_WEB_KEY) ?? '{}');
+      existing.deviceId = id;
+      if (name) existing.deviceName = name;
+      localStorage.setItem(PORTAL_WEB_KEY, JSON.stringify(existing));
+    } catch {}
     setShowDevicePicker(false);
   }
 
@@ -520,7 +526,7 @@ function App() {
             {devices.length === 0 ? (
               <div className="px-3 py-3 text-xs text-zinc-500">기기가 없습니다.<br />앱에서 Push하면 등록됩니다.</div>
             ) : devices.map(d => (
-              <button key={d.id} onClick={() => selectDevice(d.id)}
+              <button key={d.id} onClick={() => selectDevice(d.id, d.name ?? undefined)}
                 className={`w-full text-left px-3 py-2.5 text-xs hover:bg-zinc-800 transition-colors border-b border-zinc-800/50 last:border-0 ${
                   d.id === selectedDeviceId ? 'text-blue-300 bg-blue-500/5' : 'text-zinc-300'
                 }`}>

@@ -779,6 +779,9 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         if (loaded.supabaseUrl) setSbUrl(loaded.supabaseUrl);
         if (loaded.supabaseAnonKey) setSbKey(loaded.supabaseAnonKey);
         setDeviceName(loaded.deviceName ?? (loaded as any)._hostname ?? '');
+        if (loaded.deviceId && UUID_RE.test(loaded.deviceId)) {
+          setData(d => ({ ...d, deviceId: loaded.deviceId, deviceName: loaded.deviceName ?? d.deviceName }));
+        }
       }).catch(() => {});
       setShowSettings(true);
     }
