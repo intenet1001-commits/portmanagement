@@ -173,6 +173,10 @@ const PortalAPI = {
   async openFolder(path: string): Promise<void> {
     if (isTauri()) {
       await invoke('open_folder', { folderPath: path });
+    } else if (isDeployedWeb()) {
+      // Vercel context: can't open local folder — copy path to clipboard
+      await navigator.clipboard.writeText(path);
+      throw Object.assign(new Error('__clipboard__'), { path });
     } else {
       const res = await fetch('/api/open-folder', {
         method: 'POST',
@@ -913,8 +917,12 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
           : i),
       };
       await persist(next);
-    } catch (e) {
-      showToast('열기 실패: ' + e, 'error');
+    } catch (e: any) {
+      if (e?.message === '__clipboard__') {
+        showToast(`경로 복사됨 — Finder에서 ⇧⌘G 후 붙여넣기: ${e.path}`, 'success');
+      } else {
+        showToast('열기 실패: ' + e, 'error');
+      }
     }
   }
 
