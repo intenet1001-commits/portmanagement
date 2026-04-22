@@ -5,7 +5,7 @@ import PortalManager, { PortalActions } from './PortalManager';
 import {
   BookMarked, Settings, CloudUpload, CloudDownload,
   ExternalLink, Github, RefreshCw, Clock, Monitor, Smartphone,
-  Plus, Pencil, Trash2, Play, Square, RotateCw, Server,
+  Play, Square, RotateCw, Server,
   ChevronDown, X,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
@@ -142,68 +142,6 @@ function Toast({ message, type }: { message: string; type: 'success' | 'error' }
   );
 }
 
-// ─── Port Edit Modal ───────────────────────────────────────────────────────────
-
-function PortModal({ port, onSave, onClose }: {
-  port: Partial<PortRow> | null;
-  onSave: (data: Partial<PortRow>) => void;
-  onClose: () => void;
-}) {
-  const [form, setForm] = useState<Partial<PortRow>>(port ?? {});
-  const inp = 'w-full px-3 py-2 bg-zinc-800 border border-zinc-700 rounded text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-blue-500';
-  const lbl = 'text-xs text-zinc-400 mb-1 block';
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold text-white">{form.id ? '포트 편집' : '포트 추가'}</span>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="col-span-2">
-            <label className={lbl}>이름 *</label>
-            <input className={inp} placeholder="프로젝트 이름" value={form.name ?? ''}
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
-          </div>
-          <div>
-            <label className={lbl}>포트 번호</label>
-            <input className={inp} type="number" placeholder="3000" value={form.port ?? ''}
-              onChange={e => setForm(f => ({ ...f, port: e.target.value ? parseInt(e.target.value) : undefined }))} />
-          </div>
-          <div>
-            <label className={lbl}>실행 명령어</label>
-            <input className={inp} placeholder="bun run dev" value={form.terminal_command ?? ''}
-              onChange={e => setForm(f => ({ ...f, terminal_command: e.target.value || null }))} />
-          </div>
-          <div className="col-span-2">
-            <label className={lbl}>.command 파일 경로</label>
-            <input className={inp} placeholder="/path/to/run.command" value={form.command_path ?? ''}
-              onChange={e => setForm(f => ({ ...f, command_path: e.target.value || null }))} />
-          </div>
-          <div className="col-span-2">
-            <label className={lbl}>배포 URL</label>
-            <input className={inp} placeholder="https://myapp.vercel.app" value={form.deploy_url ?? ''}
-              onChange={e => setForm(f => ({ ...f, deploy_url: e.target.value || null }))} />
-          </div>
-          <div className="col-span-2">
-            <label className={lbl}>GitHub URL</label>
-            <input className={inp} placeholder="https://github.com/..." value={form.github_url ?? ''}
-              onChange={e => setForm(f => ({ ...f, github_url: e.target.value || null }))} />
-          </div>
-        </div>
-        <div className="flex gap-2 pt-1">
-          <button onClick={onClose} className="flex-1 py-2 text-sm text-zinc-400 border border-zinc-700 rounded hover:bg-zinc-800 transition-colors">취소</button>
-          <button onClick={() => { if (form.name?.trim()) onSave(form); }} disabled={!form.name?.trim()}
-            className="flex-1 py-2 text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded font-medium transition-colors">
-            저장
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Ports View ───────────────────────────────────────────────────────────────
 
 function PortsView({ deviceId, creds, showToast }: {
@@ -213,7 +151,6 @@ function PortsView({ deviceId, creds, showToast }: {
 }) {
   const [ports, setPorts] = useState<PortRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [editPort, setEditPort] = useState<Partial<PortRow> | null | false>(false);
   const [relayConnected, setRelayConnected] = useState(false);
   const [running, setRunning] = useState<Record<string, boolean>>({});
 
@@ -251,54 +188,6 @@ function PortsView({ deviceId, creds, showToast }: {
     const iv = setInterval(checkRelayConnected, 15000);
     return () => clearInterval(iv);
   }, [deviceId]);
-
-  async function savePort(form: Partial<PortRow>) {
-    try {
-      if (form.id) {
-        const { error } = await sb().from('ports').update({
-          name: form.name,
-          port: form.port ?? null,
-          command_path: form.command_path ?? null,
-          terminal_command: form.terminal_command ?? null,
-          deploy_url: form.deploy_url ?? null,
-          github_url: form.github_url ?? null,
-        }).eq('id', form.id);
-        if (error) throw error;
-        setPorts(ps => ps.map(p => p.id === form.id ? { ...p, ...form } : p));
-        showToast('저장됨', 'success');
-      } else {
-        const newRow: PortRow = {
-          id: crypto.randomUUID(),
-          name: form.name!,
-          port: form.port ?? null,
-          command_path: form.command_path ?? null,
-          terminal_command: form.terminal_command ?? null,
-          deploy_url: form.deploy_url ?? null,
-          github_url: form.github_url ?? null,
-          device_id: deviceId,
-        };
-        const { error } = await sb().from('ports').insert(newRow);
-        if (error) throw error;
-        setPorts(ps => [...ps, newRow].sort((a, b) => a.name.localeCompare(b.name)));
-        showToast('추가됨', 'success');
-      }
-      setEditPort(false);
-    } catch (e) {
-      showToast('저장 실패: ' + String(e), 'error');
-    }
-  }
-
-  async function deletePort(id: string) {
-    if (!confirm('이 포트를 삭제하시겠습니까?')) return;
-    try {
-      const { error } = await sb().from('ports').delete().eq('id', id);
-      if (error) throw error;
-      setPorts(ps => ps.filter(p => p.id !== id));
-      showToast('삭제됨', 'success');
-    } catch (e) {
-      showToast('삭제 실패: ' + String(e), 'error');
-    }
-  }
 
   async function relayCommand(port: PortRow, command: 'execute' | 'stop' | 'force_restart') {
     if (!relayConnected) { showToast('릴레이 데몬이 연결되지 않았습니다 (bun relay.ts)', 'error'); return; }
@@ -349,25 +238,17 @@ function PortsView({ deviceId, creds, showToast }: {
             {relayConnected ? '● 릴레이 연결' : '○ 릴레이 없음'}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={loadPorts} disabled={loading}
-            className="p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-50">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          <button onClick={() => setEditPort(null)}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded-lg transition-all">
-            <Plus className="w-3 h-3" /> 추가
-          </button>
-        </div>
+        <button onClick={loadPorts} disabled={loading}
+          className="p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-50">
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+        </button>
       </div>
 
       {!loading && ports.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
           <Server className="w-10 h-10 text-zinc-700" />
           <p className="text-sm text-zinc-500">등록된 포트가 없습니다</p>
-          <button onClick={() => setEditPort(null)} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">
-            + 첫 포트 추가
-          </button>
+          <p className="text-xs text-zinc-600">로컬 앱에서 Push하면 여기에 나타납니다</p>
         </div>
       ) : loading ? (
         <div className="flex items-center justify-center py-20">
@@ -377,21 +258,9 @@ function PortsView({ deviceId, creds, showToast }: {
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {ports.map(p => (
             <div key={p.id} className="bg-zinc-900/60 border border-zinc-800/60 rounded-xl p-4 hover:border-zinc-700/60 transition-all">
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-white leading-snug truncate">{p.name}</p>
-                  {p.port && <span className="text-[10px] text-zinc-600 font-mono">:{p.port}</span>}
-                </div>
-                <div className="flex items-center gap-0.5 shrink-0">
-                  <button onClick={() => setEditPort(p)}
-                    className="p-1.5 text-zinc-600 hover:text-zinc-300 rounded transition-colors">
-                    <Pencil className="w-3 h-3" />
-                  </button>
-                  <button onClick={() => deletePort(p.id)}
-                    className="p-1.5 text-zinc-600 hover:text-red-400 rounded transition-colors">
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
+              <div className="mb-2">
+                <p className="text-sm font-medium text-white leading-snug truncate">{p.name}</p>
+                {p.port && <span className="text-[10px] text-zinc-600 font-mono">:{p.port}</span>}
               </div>
 
               <div className="flex flex-wrap gap-1.5 mb-2">
@@ -436,9 +305,6 @@ function PortsView({ deviceId, creds, showToast }: {
         </div>
       )}
 
-      {editPort !== false && (
-        <PortModal port={editPort} onSave={savePort} onClose={() => setEditPort(false)} />
-      )}
     </div>
   );
 }
@@ -459,6 +325,9 @@ function App() {
     () => localStorage.getItem(SELECTED_DEVICE_KEY) ?? ''
   );
   const [showDevicePicker, setShowDevicePicker] = useState(false);
+  const [showRegisterForm, setShowRegisterForm] = useState(false);
+  const [registerName, setRegisterName] = useState('');
+  const [registering, setRegistering] = useState(false);
   const actionsRef = useRef<PortalActions | null>(null);
   const creds = getSupabaseCreds();
 
@@ -483,12 +352,32 @@ function App() {
       const { data } = await sb.from('devices').select('*').order('last_push_at', { ascending: false });
       const list: DeviceRow[] = data ?? [];
       setDevices(list);
+      // Don't auto-select — open picker so user explicitly chooses
       if (!selectedDeviceId && list.length > 0) {
-        const first = list[0].id;
-        setSelectedDeviceId(first);
-        localStorage.setItem(SELECTED_DEVICE_KEY, first);
+        setShowDevicePicker(true);
       }
     } catch {}
+  }
+
+  async function registerThisDevice() {
+    if (!creds || !registerName.trim()) return;
+    setRegistering(true);
+    try {
+      const newId = crypto.randomUUID();
+      const sb = createClient(creds.url, creds.key);
+      const { error } = await sb.from('devices').insert({ id: newId, name: registerName.trim() });
+      if (error) throw error;
+      const newDev: DeviceRow = { id: newId, name: registerName.trim(), last_push_at: new Date().toISOString() };
+      setDevices(prev => [newDev, ...prev]);
+      selectDevice(newId);
+      setShowRegisterForm(false);
+      setRegisterName('');
+      showToast('이 기기가 등록되었습니다', 'success');
+    } catch (e) {
+      showToast('등록 실패: ' + String(e), 'error');
+    } finally {
+      setRegistering(false);
+    }
   }
 
   useEffect(() => { if (pwOk) loadDevices(); }, [pwOk, creds?.url]);
@@ -518,17 +407,18 @@ function App() {
   const devicePickerEl = (
     <div className="relative" onClick={e => e.stopPropagation()}>
       <button
-        onClick={() => setShowDevicePicker(s => !s)}
-        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-300 border border-zinc-700/50 rounded-lg transition-all max-w-[160px]"
+        onClick={() => { setShowDevicePicker(s => !s); setShowRegisterForm(false); }}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-300 border border-zinc-700/50 rounded-lg transition-all max-w-[180px]"
       >
         <Server className="w-3 h-3 shrink-0 text-zinc-500" />
+        <span className="truncate text-zinc-500 shrink-0">보기:</span>
         <span className="truncate">{selectedDevice?.name ?? '기기 선택'}</span>
         <ChevronDown className="w-3 h-3 shrink-0 text-zinc-600" />
       </button>
       {showDevicePicker && (
-        <div className="absolute top-full mt-1 left-0 z-50 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl overflow-hidden">
+        <div className="absolute top-full mt-1 left-0 z-50 w-60 bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl overflow-hidden">
           <div className="px-3 py-2 text-[10px] text-zinc-500 border-b border-zinc-800 flex items-center justify-between">
-            <span>기기 선택</span>
+            <span>어떤 기기를 볼까요?</span>
             <button onClick={loadDevices} className="text-zinc-600 hover:text-zinc-400">
               <RefreshCw className="w-3 h-3" />
             </button>
@@ -546,6 +436,33 @@ function App() {
               </div>
             </button>
           ))}
+          {/* Register this device */}
+          {showRegisterForm ? (
+            <div className="px-3 py-2.5 border-t border-zinc-800 space-y-2">
+              <p className="text-[10px] text-zinc-500">이 브라우저를 새 단말로 등록</p>
+              <input
+                className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-blue-500"
+                placeholder="기기 이름 (예: 내 아이폰)"
+                value={registerName}
+                onChange={e => setRegisterName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && registerThisDevice()}
+                autoFocus
+              />
+              <div className="flex gap-1.5">
+                <button onClick={() => setShowRegisterForm(false)}
+                  className="flex-1 py-1 text-[10px] text-zinc-500 border border-zinc-700 rounded hover:bg-zinc-800 transition-colors">취소</button>
+                <button onClick={registerThisDevice} disabled={registering || !registerName.trim()}
+                  className="flex-1 py-1 text-[10px] bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded transition-colors">
+                  {registering ? '등록 중…' : '등록'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setShowRegisterForm(true)}
+              className="w-full text-left px-3 py-2 text-[11px] text-blue-400 hover:bg-zinc-800 border-t border-zinc-800 transition-colors">
+              + 이 기기를 새 단말로 등록
+            </button>
+          )}
         </div>
       )}
     </div>
