@@ -1541,6 +1541,58 @@ function App() {
     });
   }, []);
 
+  // 레거시 북마크 폴더 아이템을 '프로젝트·폴더' 탭으로 1회 자동 이전 (멱등)
+  useEffect(() => {
+    if (isLoading) return;
+    if (localStorage.getItem('folder-portal-migrated-v1')) return;
+    (async () => {
+      try {
+        let portalData: any;
+        if (isTauri()) {
+          portalData = await invoke('load_portal');
+        } else {
+          const res = await fetch('/api/portal');
+          if (res.ok) portalData = await res.json();
+        }
+        const items: any[] = Array.isArray(portalData?.items) ? portalData.items : [];
+        const folderItems = items.filter(it => it.type === 'folder' && it.path);
+        if (folderItems.length === 0) {
+          localStorage.setItem('folder-portal-migrated-v1', '1');
+          return;
+        }
+        const existingPaths = new Set(ports.map(p => p.folderPath).filter(Boolean) as string[]);
+        const newPorts: PortInfo[] = folderItems
+          .filter(it => !existingPaths.has(it.path))
+          .map(it => ({
+            id: `migrated-${it.id ?? crypto.randomUUID()}`,
+            name: it.name,
+            folderPath: it.path,
+            category: it.category || undefined,
+            description: it.description || undefined,
+            isRunning: false,
+          }));
+        if (newPorts.length > 0) {
+          const merged = [...newPorts, ...ports];
+          setPorts(merged);
+          await API.savePorts(merged);
+        }
+        // 포털에서 folder 제거
+        const cleaned = { ...portalData, items: items.filter(it => it.type !== 'folder') };
+        if (isTauri()) {
+          await invoke('save_portal', { data: cleaned });
+        } else {
+          await fetch('/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cleaned) });
+        }
+        localStorage.setItem('folder-portal-migrated-v1', '1');
+        if (newPorts.length > 0) {
+          showToast(`폴더 북마크 ${newPorts.length}개를 '프로젝트·폴더' 탭으로 옮겼습니다`, 'success');
+        }
+      } catch (e) {
+        console.warn('[migration] folder-portal migration failed:', e);
+      }
+    })();
+  }, [isLoading]);
+
   // 방문 기록 초기 로드 + window 변경 시 재조회
   useEffect(() => {
     const timer = setTimeout(() => fetchVisitCounts(visitWindow), 2000);
@@ -3040,7 +3092,9 @@ function App() {
           <span style={{width:7,height:7,borderRadius:4,flexShrink:0,background:item.isRunning?'#8fb96e':'#6b6459'}} />
           <span style={{fontSize:13,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.name}</span>
           {item.favorite && <Star style={{width:10,height:10,flexShrink:0,fill:'#e8a557',color:'#e8a557'}} />}
-          {item.port && <span style={{fontSize:11,fontFamily:'JetBrains Mono, monospace',color:'#e8a557',flexShrink:0}}>:{item.port}</span>}
+          {item.port
+            ? <span style={{fontSize:11,fontFamily:'JetBrains Mono, monospace',color:'#e8a557',flexShrink:0}}>:{item.port}</span>
+            : item.folderPath && <span style={{fontSize:10,padding:'1px 6px',borderRadius:4,background:'rgba(232,165,87,0.12)',color:'#e8a557',flexShrink:0,border:'1px solid rgba(232,165,87,0.25)'}}>폴더</span>}
         </div>
 
         {item.aiName && (
@@ -3056,23 +3110,37 @@ function App() {
 
         {/* Primary action strip — visible on hover */}
         <div className="opacity-0 group-hover:opacity-100 transition-opacity" style={{marginTop:'auto',display:'flex',gap:4}}>
-          <button onClick={e=>{e.stopPropagation(); item.isRunning ? stopCommand(item) : executeCommand(item);}} style={{
-            flex:1,padding:'5px 0',borderRadius:5,
-            background:item.isRunning?'rgba(201,106,90,0.14)':'rgba(143,185,110,0.14)',
-            color:item.isRunning?'#c96a5a':'#8fb96e',
-            border:'none',fontSize:11,fontWeight:600,cursor:'pointer',
-            display:'flex',alignItems:'center',justifyContent:'center',gap:4,fontFamily:'inherit',
-          }}>
-            {item.isRunning ? <Square style={{width:9,height:9}}/> : <Play style={{width:9,height:9}}/>}
-            {item.isRunning ? 'Stop' : 'Run'}
-          </button>
+          {item.port ? (
+            <button onClick={e=>{e.stopPropagation(); item.isRunning ? stopCommand(item) : executeCommand(item);}} style={{
+              flex:1,padding:'5px 0',borderRadius:5,
+              background:item.isRunning?'rgba(201,106,90,0.14)':'rgba(143,185,110,0.14)',
+              color:item.isRunning?'#c96a5a':'#8fb96e',
+              border:'none',fontSize:11,fontWeight:600,cursor:'pointer',
+              display:'flex',alignItems:'center',justifyContent:'center',gap:4,fontFamily:'inherit',
+            }}>
+              {item.isRunning ? <Square style={{width:9,height:9}}/> : <Play style={{width:9,height:9}}/>}
+              {item.isRunning ? 'Stop' : 'Run'}
+            </button>
+          ) : (
+            <button onClick={e=>{e.stopPropagation(); item.folderPath && API.openFolder(item.folderPath).catch(()=>{});}} style={{
+              flex:1,padding:'5px 0',borderRadius:5,
+              background:'rgba(232,165,87,0.14)', color:'#e8a557',
+              border:'none',fontSize:11,fontWeight:600,cursor:'pointer',
+              display:'flex',alignItems:'center',justifyContent:'center',gap:4,fontFamily:'inherit',
+            }} title="폴더 열기">
+              <FolderOpen style={{width:9,height:9}}/>
+              폴더 열기
+            </button>
+          )}
           <button onClick={e=>{e.stopPropagation(); setWorktreePickerState({item,mode:'claude'});}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}>Claude</button>
           <button onClick={e=>{e.stopPropagation(); toggleWorktreePanel(item.id, item.folderPath);}} style={{...btnBase, color:expandedWorktreeIds.has(item.id)?'#e8a557':'#ede7dd', borderColor:expandedWorktreeIds.has(item.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title="워크트리 관리">
             <GitBranch style={{width:11,height:11}}/>
           </button>
-          <button onClick={e=>{e.stopPropagation(); item.port && API.openInChrome(`http://localhost:${item.port}`).catch(()=>{});}} style={btnBase} title="Chrome에서 열기">
-            <Globe style={{width:11,height:11}}/>
-          </button>
+          {item.port && (
+            <button onClick={e=>{e.stopPropagation(); API.openInChrome(`http://localhost:${item.port}`).catch(()=>{});}} style={btnBase} title="Chrome에서 열기">
+              <Globe style={{width:11,height:11}}/>
+            </button>
+          )}
           <button onClick={e=>{e.stopPropagation(); if(menuOpen){setV3MenuOpenId(null);setV3MenuRect(null);}else{const r=e.currentTarget.getBoundingClientRect();setV3MenuOpenId(item.id);setV3MenuRect({top:r.bottom+4,right:window.innerWidth-r.right});}}} style={{...btnBase, color: menuOpen?'#e8a557':'#ede7dd', borderColor: menuOpen?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}}>
             <ChevronDown style={{width:11,height:11}}/>
           </button>
@@ -3841,7 +3909,7 @@ function App() {
                   }}
                 >
                   <Server className="w-3.5 h-3.5" />
-                  프로젝트 관리
+                  프로젝트·폴더
                 </button>
               )}
               <button
@@ -4082,7 +4150,7 @@ function App() {
                 {/* GuideCards 2-col */}
                 <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:18}}>
                   {[
-                    {icon:<Server className="w-3 h-3"/>, tone:{bg:'rgba(232,165,87,0.12)',fg:'#e8a557'}, title:'프로젝트 관리', desc:'.command 파일로 개발 서버를 한 클릭으로 실행/중지/재시작'},
+                    {icon:<Server className="w-3 h-3"/>, tone:{bg:'rgba(232,165,87,0.12)',fg:'#e8a557'}, title:'프로젝트·폴더', desc:'.command 파일로 개발 서버 실행, 폴더 즐겨찾기 관리'},
                     {icon:<BookMarked className="w-3 h-3"/>, tone:{bg:'rgba(123,167,201,0.14)',fg:'#7ba7c9'}, title:'포털', desc:'자주 쓰는 사이트·폴더를 카테고리별 북마크로 관리'},
                   ].map(c => (
                     <div key={c.title} style={{padding:'14px 16px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:9}}>

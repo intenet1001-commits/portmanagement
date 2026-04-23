@@ -165,13 +165,14 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 
 | 테이블 / 조건 | 격리 단위 | device_id 값 |
 |---|---|---|
-| `ports` | 기기별 | 해당 기기 UUID |
-| `portal_items` where `type = 'folder'` | 기기별 | 해당 기기 UUID |
-| `portal_items` where `type != 'folder'` | 공유 (전 기기) | `'__shared__'` |
+| `ports` (폴더 전용 항목 포함 — port 필드 없음) | 기기별 | 해당 기기 UUID |
+| `portal_items` where `type = 'web'` (URL 북마크) | 공유 (전 기기) | `'__shared__'` |
+| `portal_items` where `type = 'folder'` | **Deprecated** — 앱 부팅 시 1회 자동 `ports` 테이블로 이전 (기기별 localStorage 마커 `folder-portal-migrated-v1`). 신규 push 차단됨. | — |
 | `portal_categories` | 공유 (전 기기) | `'__shared__'` |
 
 - Pull 시 `device_id = <내 UUID>` AND `device_id = '__shared__'` 두 결과를 합산
 - Push 시 공유 항목은 `device_id = '__shared__'`로 upsert
+- 북마크 탭은 URL 전용 UI. 폴더 즐겨찾기는 "프로젝트·폴더" 탭에서 `port` 없는 `PortInfo` 로 관리.
 
 #### 기존 Supabase 데이터 마이그레이션 SQL
 

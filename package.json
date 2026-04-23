@@ -25,7 +25,8 @@
     "tauri:build:dmg": "bun update-version.ts && bun run build && tauri build --bundles dmg; bun fix-dmg.ts",
     "tauri:build:win": "bun build-win.ts",
     "test:smoke": "node tests/smoke.mjs",
-    "test:smoke:vercel": "TARGET=vercel node tests/smoke.mjs"
+    "test:smoke:vercel": "TARGET=vercel node tests/smoke.mjs",
+    "test:smoke:mobile": "VIEWPORT=mobile TARGET=vercel node tests/smoke.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.5",

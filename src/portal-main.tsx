@@ -580,7 +580,7 @@ function App() {
         <ChevronDown className="w-3 h-3 shrink-0 text-zinc-600" />
       </button>
       {showDevicePicker && (
-        <div className="absolute top-full mt-1 left-0 z-50 w-60 bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl">
+        <div className="absolute top-full mt-1 left-0 z-50 w-60 max-w-[calc(100vw-32px)] bg-zinc-900 border border-zinc-700 rounded-xl shadow-xl">
           <div className="px-3 py-2 text-[10px] text-zinc-500 border-b border-zinc-800 flex items-center justify-between">
             <span>어떤 기기를 볼까요?</span>
             <div className="flex items-center gap-2">
@@ -644,8 +644,8 @@ function App() {
     <div className="min-h-screen bg-[#0a0a0b] text-white flex flex-col" onClick={() => showDevicePicker && setShowDevicePicker(false)}>
       {/* ── Header ── */}
       <header className="sticky top-0 z-40 bg-[#0a0a0b]/95 backdrop-blur border-b border-zinc-800/60 px-4 py-3">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 min-w-0">
+          <div className="flex items-center gap-3 min-w-0 flex-shrink">
             <div className="flex items-center gap-2">
               <div className="p-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
                 <BookMarked className="w-4 h-4 text-blue-400" />
@@ -663,7 +663,7 @@ function App() {
                         : 'bg-zinc-800/40 border-zinc-700/40 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/40'
                     }`}>
                     {tab === 'bookmarks' ? <BookMarked className="w-3 h-3" /> : <Server className="w-3 h-3" />}
-                    {tab === 'bookmarks' ? '북마크' : '포트'}
+                    {tab === 'bookmarks' ? '북마크' : '프로젝트·폴더'}
                   </button>
                 ))}
               </div>
@@ -756,7 +756,7 @@ function App() {
                 <nav className="space-y-0.5">
                   {([
                     ['bookmarks', '북마크', <BookMarked className="w-3.5 h-3.5" />],
-                    ['ports', '포트 관리', <Server className="w-3.5 h-3.5" />],
+                    ['ports', '프로젝트·폴더', <Server className="w-3.5 h-3.5" />],
                   ] as [Tab, string, React.ReactNode][]).map(([tab, label, icon]) => (
                     <button key={tab} onClick={() => setActiveTab(tab)}
                       className={`w-full flex items-center gap-2 px-2.5 py-2 text-xs rounded-lg transition-all ${

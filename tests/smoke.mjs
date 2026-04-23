@@ -6,6 +6,7 @@
  *   TARGET=local   → http://localhost:9001 (기본)  — 로컬 App.tsx 전체 (ports + portal)
  *   TARGET=vercel  → https://portmanager-portal.vercel.app — 포털 전용
  *   TARGET=<url>   → 임의 URL (자동 감지)
+ *   VIEWPORT=mobile → 375x812 (iPhone SE 세로)
  */
 import { chromium } from 'playwright';
 
@@ -17,6 +18,8 @@ const TARGET = process.env.TARGET === 'vercel'
 
 const isVercelPortal = TARGET.includes('portmanager-portal.vercel.app');
 const isLocalFullApp = TARGET.startsWith('http://localhost');
+const isMobileViewport = process.env.VIEWPORT === 'mobile';
+const viewport = isMobileViewport ? { width: 375, height: 812 } : { width: 1280, height: 800 };
 
 const results = [];
 function check(name, ok, detail = '') {
@@ -25,9 +28,9 @@ function check(name, ok, detail = '') {
 }
 
 (async () => {
-  console.log(`\n▶ Smoke test against ${TARGET}\n`);
+  console.log(`\n▶ Smoke test against ${TARGET} (${viewport.width}x${viewport.height})\n`);
   const browser = await chromium.launch({ headless: true });
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext({ viewport, isMobile: isMobileViewport });
   const page = await ctx.newPage();
 
   try {
@@ -35,6 +38,18 @@ function check(name, ok, detail = '') {
     check('page loads 2xx/3xx', !!res && res.status() < 400, `status ${res?.status()}`);
 
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+
+    // 가로 오버플로우 체크 — scrollWidth > clientWidth 면 UI 잘림
+    if (isMobileViewport) {
+      const overflow = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+      }));
+      check(
+        `Mobile: 가로 오버플로우 없음 (scrollWidth ${overflow.scrollWidth} ≤ clientWidth ${overflow.clientWidth})`,
+        overflow.scrollWidth <= overflow.clientWidth + 1, // 1px 여유
+      );
+    }
     const bodyText = await page.locator('body').innerText().catch(() => '');
 
     if (isVercelPortal) {

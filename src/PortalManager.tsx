@@ -508,7 +508,7 @@ bun run start
 
 ## 5. 데이터 Pull
 - 설정 저장 후 포털 탭 → Pull 버튼
-- 프로젝트 관리 탭 → Pull 버튼
+- 프로젝트·폴더 탭 → Pull 버튼
 `;
 
   const VERCEL_GUIDE = `# 포털 북마크 — Vercel 배포 가이드
@@ -862,23 +862,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       showToast('이름을 입력하세요', 'error');
       return;
     }
+    // 북마크 탭은 URL 전용. 폴더는 '프로젝트·폴더' 탭에서 관리.
     let finalUrl = form.url.trim();
-    if (form.type === 'web') {
-      if (!finalUrl) {
-        showToast('URL을 입력하세요', 'error');
-        return;
-      }
-      if (!/^https?:\/\//i.test(finalUrl)) {
-        finalUrl = 'https://' + finalUrl;
-      }
-    }
-    if (form.type === 'folder' && !form.path.trim()) {
-      showToast('폴더 경로를 입력하세요', 'error');
+    if (!finalUrl) {
+      showToast('URL을 입력하세요', 'error');
       return;
     }
-    if (form.type === 'folder' && !form.path.startsWith('/')) {
-      showToast('절대 경로가 필요합니다 (예: /Users/<name>/... 또는 C:\\\\Users\\\\<name>\\\\...)', 'error');
-      return;
+    if (!/^https?:\/\//i.test(finalUrl)) {
+      finalUrl = 'https://' + finalUrl;
     }
     const resolvedCategory = form.category || data.categories[0]?.id || '';
 
@@ -886,7 +877,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       const next: PortalData = {
         ...data,
         items: data.items.map(i => i.id === editingItem.id
-          ? { ...i, name: form.name, type: form.type, url: finalUrl || undefined, path: form.path || undefined, category: resolvedCategory, description: form.description || undefined, pinned: form.pinned }
+          ? { ...i, name: form.name, type: 'web', url: finalUrl, path: undefined, category: resolvedCategory, description: form.description || undefined, pinned: form.pinned }
           : i),
       };
       await persist(next);
@@ -895,9 +886,9 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       const newItem: PortalItem = {
         id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         name: form.name,
-        type: form.type,
-        url: form.type === 'web' ? finalUrl : undefined,
-        path: form.type === 'folder' ? form.path : undefined,
+        type: 'web',
+        url: finalUrl,
+        path: undefined,
         category: resolvedCategory,
         description: form.description || undefined,
         pinned: form.pinned,
@@ -1081,21 +1072,23 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       const supabase = createClient(sbUrl, sbKey);
       const deviceId = data.deviceId ?? getOrCreateDeviceId();
 
-      // Upsert items — folders are per-device, all others are shared
-      const itemRows = data.items.map(item => ({
-        id: item.id,
-        device_id: item.type === 'folder' ? deviceId : '__shared__',
-        name: item.name,
-        type: item.type,
-        url: item.url ?? null,
-        path: item.path ?? null,
-        category: item.category,
-        description: item.description ?? null,
-        pinned: item.pinned,
-        visit_count: item.visitCount,
-        last_visited: item.lastVisited ?? null,
-        created_at: item.createdAt ?? null,
-      }));
+      // Upsert items — URL 북마크는 전 기기 공유. folder 타입은 '프로젝트·폴더' 탭으로 이전됨 → push 제외.
+      const itemRows = data.items
+        .filter(item => item.type === 'web')
+        .map(item => ({
+          id: item.id,
+          device_id: '__shared__',
+          name: item.name,
+          type: item.type,
+          url: item.url ?? null,
+          path: null,
+          category: item.category,
+          description: item.description ?? null,
+          pinned: item.pinned,
+          visit_count: item.visitCount,
+          last_visited: item.lastVisited ?? null,
+          created_at: item.createdAt ?? null,
+        }));
 
       // Upsert categories — always shared across devices
       const catRows = data.categories.map(cat => ({
@@ -1320,8 +1313,10 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   // ── Filtered items ────────────────────────────────────────────────────────
 
   const filteredItems = data.items.filter(item => {
+    // 북마크 탭은 URL 전용 (type='web'). 레거시 folder 항목은 '프로젝트·폴더' 탭으로 이전됨.
+    if (item.type !== 'web') return false;
     const matchesCat = selectedCat === 'all' || item.category === selectedCat;
-    const matchesSearch = !search || item.name.toLowerCase().includes(search.toLowerCase()) || item.description?.toLowerCase().includes(search.toLowerCase()) || item.url?.toLowerCase().includes(search.toLowerCase()) || item.path?.toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = !search || item.name.toLowerCase().includes(search.toLowerCase()) || item.description?.toLowerCase().includes(search.toLowerCase()) || item.url?.toLowerCase().includes(search.toLowerCase());
     return matchesCat && matchesSearch;
   });
 
@@ -1346,7 +1341,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   const portalUI = isVisible ? (
     <div className="flex flex-col md:flex-row gap-4 h-full">
       {/* ── Mobile category tabs ──────────────────────────────────────────────── */}
-      <div className="md:hidden flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 scrollbar-none">
+      <div className="md:hidden flex flex-wrap gap-1.5 pb-1">
         <button
           onClick={() => setSelectedCat('all')}
           className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${selectedCat === 'all' ? 'bg-[#2a2520] text-white' : 'bg-[#221f1b]/60 text-zinc-400 hover:text-[#ede7dd]'}`}
@@ -1444,7 +1439,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       <div className="flex-1 min-w-0">
         {/* Search row */}
         <div style={{padding:'14px 0 14px',display:'flex',flexWrap:'wrap',gap:8,borderBottom:'1px solid rgba(255,240,220,0.07)',marginBottom:14}}>
-          <div style={{flex:1,position:'relative'}}>
+          <div style={{flex:'1 1 200px',position:'relative',minWidth:0}}>
             <Search className="w-3.5 h-3.5" style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'#6b6459'}} />
             <input
               type="text"
@@ -1455,8 +1450,8 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             />
           </div>
           {viewingDeviceId && viewingDeviceId !== data.deviceId && (
-            <div style={{display:'flex',alignItems:'center',gap:6,padding:'6px 10px',background:'rgba(232,165,87,0.08)',border:'1px solid rgba(232,165,87,0.25)',borderRadius:7,flexShrink:0}}>
-              <span style={{color:'#e8a557',fontSize:10.5,fontWeight:500,whiteSpace:'nowrap'}}>
+            <div style={{display:'flex',alignItems:'center',gap:6,padding:'6px 10px',background:'rgba(232,165,87,0.08)',border:'1px solid rgba(232,165,87,0.25)',borderRadius:7,flexShrink:0,maxWidth:140,minWidth:0}}>
+              <span style={{color:'#e8a557',fontSize:10.5,fontWeight:500,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
                 📱 {knownDevices.find(d => d.device_id === viewingDeviceId)?.device_name ?? viewingDeviceId.slice(0, 6) + '…'}
               </span>
               <button
@@ -1544,20 +1539,8 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       {/* ── Add/Edit Item Modal ───────────────────────────────────────────────── */}
       {showItemModal && (
-        <Modal title={editingItem ? '항목 수정' : '항목 추가'} onClose={() => setShowItemModal(false)} onConfirm={saveItem} confirmLabel={editingItem ? '저장' : '추가'}>
-          {/* Type toggle — hide folder on deployed web (no local filesystem) */}
-          <div className="flex rounded-lg overflow-hidden border border-stone-700/50 mb-3">
-            {(['web', 'folder'] as const).filter(t => t === 'web' || !isDeployedWeb()).map(t => (
-              <button
-                key={t}
-                onClick={() => setForm(f => ({ ...f, type: t }))}
-                className={`flex-1 py-2 text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${form.type === t ? 'bg-[#2a2520] text-white' : 'text-zinc-500 hover:text-[#ede7dd]/90 hover:bg-[#221f1b]/60'}`}
-              >
-                {t === 'web' ? <Globe className="w-3.5 h-3.5" /> : <Folder className="w-3.5 h-3.5" />}
-                {t === 'web' ? '웹사이트' : '로컬 폴더'}
-              </button>
-            ))}
-          </div>
+        <Modal title={editingItem ? '북마크 수정' : '북마크 추가'} onClose={() => setShowItemModal(false)} onConfirm={saveItem} confirmLabel={editingItem ? '저장' : '추가'}>
+          {/* 북마크 탭은 URL 전용. 폴더는 '프로젝트·폴더' 탭에서 관리. */}
 
           <label className="block text-xs text-zinc-400 mb-1">이름 *</label>
           <input
@@ -1569,58 +1552,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             autoFocus
           />
 
-          {form.type === 'web' ? (
-            <>
-              <label className="block text-xs text-zinc-400 mb-1">URL *</label>
-              <input
-                type="text"
-                value={form.url}
-                onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
-                className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                placeholder="https://..."
-              />
-            </>
-          ) : (
-            <>
-              <label className="block text-xs text-zinc-400 mb-1">폴더 경로 * <span className="text-[#6b6459] font-normal">(숨김 폴더: ~/.claude 등 직접 입력)</span></label>
-              <div className="flex gap-2 mb-3">
-                <input
-                  type="text"
-                  value={form.path}
-                  onChange={e => setForm(f => ({ ...f, path: e.target.value }))}
-                  onBlur={e => {
-                    const v = e.target.value.trim();
-                    if (v.startsWith('~/') || v === '~') {
-                      setForm(f => ({ ...f, path: v.replace(/^~/, (window as any).__homeDir__ || v) }));
-                      fetch('/api/expand-path', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: v }) })
-                        .then(r => r.json()).then(d => { if (d.path) setForm(f => ({ ...f, path: d.path })); }).catch(() => {});
-                    }
-                  }}
-                  className="flex-1 px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                  placeholder="/Users/... 또는 ~/.config"
-                />
-                <button
-                    onClick={async () => {
-                      if (isTauri()) {
-                        const picked = await PortalAPI.pickFolder();
-                        if (picked) setForm(f => ({ ...f, path: picked, name: f.name || picked.split('/').pop() || '' }));
-                      } else {
-                        try {
-                          const res = await fetch('/api/pick-folder');
-                          if (res.ok) {
-                            const { path } = await res.json();
-                            if (path) setForm(f => ({ ...f, path, name: f.name || path.split('/').pop() || '' }));
-                          }
-                        } catch {}
-                      }
-                    }}
-                    className="px-3 py-2 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-sm rounded-lg border border-stone-700/50 transition-all"
-                  >
-                    <FolderOpen className="w-4 h-4" />
-                  </button>
-              </div>
-            </>
-          )}
+          <label className="block text-xs text-zinc-400 mb-1">URL *</label>
+          <input
+            type="text"
+            value={form.url}
+            onChange={e => setForm(f => ({ ...f, url: e.target.value }))}
+            className="w-full mb-3 px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+            placeholder="https://..."
+          />
 
           <label className="block text-xs text-zinc-400 mb-1">카테고리</label>
           <select
@@ -1799,7 +1738,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       {/* ── Push 히스토리 모달 — 포털 아이템 ─────────────────────────────────── */}
       {showPortalHistory && (
         <div style={{position:'fixed',inset:0,zIndex:60,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.6)',backdropFilter:'blur(4px)'}} onClick={() => setShowPortalHistory(false)}>
-          <div style={{background:'#18181b',border:'1px solid rgba(255,240,220,0.1)',borderRadius:12,width:'100%',maxWidth:460,margin:'0 16px',boxShadow:'0 24px 48px rgba(0,0,0,0.6)',overflow:'hidden'}} onClick={e => e.stopPropagation()}>
+          <div style={{background:'#18181b',border:'1px solid rgba(255,240,220,0.1)',borderRadius:12,width:'calc(100vw - 24px)',maxWidth:460,margin:'0 12px',boxShadow:'0 24px 48px rgba(0,0,0,0.6)',overflow:'hidden'}} onClick={e => e.stopPropagation()}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
                 <Clock className="w-4 h-4" style={{color:'#e8a557'}} />
@@ -1953,7 +1892,7 @@ function Modal({ title, children, onClose, onConfirm, confirmLabel }: {
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(10,8,6,0.65)',backdropFilter:'blur(2px)'}}>
-      <div style={{width:'100%',maxWidth:440,background:'#1c1916',borderRadius:12,border:'1px solid rgba(255,240,220,0.12)',boxShadow:'0 24px 80px rgba(0,0,0,0.6)',overflow:'hidden',maxHeight:'90vh',display:'flex',flexDirection:'column'}}>
+      <div style={{width:'100%',maxWidth:440,background:'#1c1916',borderRadius:12,border:'1px solid rgba(255,240,220,0.12)',boxShadow:'0 24px 80px rgba(0,0,0,0.6)',overflow:'hidden',maxHeight:'90vh',display:'flex',flexDirection:'column',minWidth:0}}>
         <div style={{padding:'14px 18px',display:'flex',alignItems:'center',borderBottom:'1px solid rgba(255,240,220,0.07)',flexShrink:0}}>
           <h3 style={{margin:0,fontSize:14,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>{title}</h3>
           <div style={{flex:1}}/>
