@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
 import PortalManager, { type PortalActions } from './PortalManager';
 import SetupWizard from './SetupWizard';
+import { savePushSnapshot, fetchPushHistory, fetchSnapshotRows, type PushSnapshot } from './pushHistory';
 import { isTauri, isDeployedWeb } from './lib/env';
 
 // OS 감지
@@ -185,7 +186,7 @@ const API = {
     if (isTauri()) {
       return invoke('open_in_chrome', { url });
     }
-    // 웹 환경에서는 아무것도 하지 않음 (a 태그로 처리)
+    window.open(url, '_blank');
   },
 
   async exportDmg(): Promise<string> {
@@ -600,13 +601,8 @@ const idbDeleteHandle = async (id: string) => {
 };
 
 const getSessionName = (item: PortInfo): string => {
-  if (item.folderPath) {
-    // Windows(\) POSIX(/) 둘 다 지원 — 마지막 구분자 이후 basename 추출
-    const parts = item.folderPath.replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean);
-    const base = parts[parts.length - 1];
-    if (base) return base.replace(/\s+/g, '-');
-  }
-  return item.name.replace(/\s+/g, '-');
+  const label = item.aiName || item.name;
+  return label.replace(/[\s/\\:*?"<>|]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'unnamed';
 };
 
 /** POSIX `/...` 과 Windows `C:\...` 둘 다 절대경로로 인정 */
@@ -766,14 +762,14 @@ function MemoAccordionItem({ portId, memo, onSave }: {
   const [draft, setDraft] = React.useState(memo?.content ?? '');
   React.useEffect(() => { setDraft(memo?.content ?? ''); }, [memo?.content]);
   return (
-    <div className="border-t border-zinc-800/60 mt-2" onClick={e => e.stopPropagation()}>
+    <div className="border-t border-stone-800/60 mt-2" onClick={e => e.stopPropagation()}>
       <button
         onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
-        className="flex items-center gap-1.5 w-full px-1 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+        className="flex items-center gap-1.5 w-full px-1 py-1.5 text-xs text-zinc-500 hover:text-[#ede7dd]/90 transition-colors"
       >
         <StickyNote className="w-3 h-3" />
         <span>메모</span>
-        {memo?.updatedAt && <span className="text-zinc-600 text-[10px] ml-1">{memo.updatedAt}</span>}
+        {memo?.updatedAt && <span className="text-[#6b6459] text-[10px] ml-1">{memo.updatedAt}</span>}
         {open ? <ChevronUp className="w-3 h-3 ml-auto" /> : <ChevronDown className="w-3 h-3 ml-auto" />}
       </button>
       {open && (
@@ -785,10 +781,10 @@ function MemoAccordionItem({ portId, memo, onSave }: {
             onMouseDown={e => e.stopPropagation()}
             rows={3}
             placeholder="이 포트에 대한 메모를 입력하세요..."
-            className="w-full px-2 py-1.5 bg-zinc-900 border border-zinc-700/60 rounded-lg text-xs text-zinc-300 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-500 resize-y"
+            className="w-full px-2 py-1.5 bg-[#221f1b] border border-stone-700/50 rounded-lg text-xs text-[#ede7dd]/90 placeholder:text-[#6b6459] focus:outline-none focus:border-zinc-500 resize-y"
           />
           <div className="flex items-center justify-between mt-1">
-            <span className="text-[10px] text-zinc-600">{memo?.updatedAt ? `수정: ${memo.updatedAt}` : '저장된 메모 없음'}</span>
+            <span className="text-[10px] text-[#6b6459]">{memo?.updatedAt ? `수정: ${memo.updatedAt}` : '저장된 메모 없음'}</span>
             <button
               onClick={e => { e.stopPropagation(); onSave(portId, draft); }}
               className="px-2.5 py-1 bg-blue-600/80 hover:bg-blue-600 text-white text-[10px] rounded-lg transition-colors"
@@ -815,7 +811,7 @@ function WslSetupModal({ status, onClose, onInstallTmux }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-      <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 w-[460px] shadow-2xl">
+      <div className="bg-[#221f1b] border border-stone-700/50 rounded-xl p-6 w-[460px] shadow-2xl">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-white">
             {status === 'not_installed' ? '⚙️ WSL2 설치 필요' :
@@ -827,16 +823,16 @@ function WslSetupModal({ status, onClose, onInstallTmux }: {
 
         {status === 'not_installed' && (
           <div className="space-y-3">
-            <p className="text-xs text-zinc-400">Windows에서 tmux를 쓰려면 <strong className="text-zinc-200">WSL2 + Ubuntu</strong>가 필요합니다.</p>
+            <p className="text-xs text-zinc-400">Windows에서 tmux를 쓰려면 <strong className="text-[#ede7dd]">WSL2 + Ubuntu</strong>가 필요합니다.</p>
             <ol className="text-xs space-y-2 list-none">
-              <Step n={1} text={<>아래 버튼 클릭 → UAC 허용 → <code className="text-zinc-300 bg-zinc-800 px-1 rounded">wsl --install</code> 자동 실행</>} />
+              <Step n={1} text={<>아래 버튼 클릭 → UAC 허용 → <code className="text-[#ede7dd]/90 bg-[#221f1b] px-1 rounded">wsl --install</code> 자동 실행</>} />
               <Step n={2} text="설치 완료 후 PC 재시작" />
               <Step n={3} text="Ubuntu 첫 실행 시 사용자명/비밀번호 설정" />
-              <Step n={4} text={<>Ubuntu 터미널에서: <code className="text-zinc-300 bg-zinc-800 px-1 rounded">sudo apt install tmux</code></>} />
-              <Step n={5} text={<>Claude Code 설치: <code className="text-zinc-300 bg-zinc-800 px-1 rounded">npm i -g @anthropic-ai/claude-code</code></>} />
+              <Step n={4} text={<>Ubuntu 터미널에서: <code className="text-[#ede7dd]/90 bg-[#221f1b] px-1 rounded">sudo apt install tmux</code></>} />
+              <Step n={5} text={<>Claude Code 설치: <code className="text-[#ede7dd]/90 bg-[#221f1b] px-1 rounded">npm i -g @anthropic-ai/claude-code</code></>} />
             </ol>
             <button
-              onClick={async () => { await API.installWsl().catch(() => {}); onClose(); }}
+              onClick={async () => { await API.installWsl().catch(e => showToast(`WSL 설치 실패: ${String(e)}`, 'error')); onClose(); }}
               className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors font-medium"
             >🚀 WSL2 + Ubuntu 설치 시작 (관리자 권한 필요)</button>
           </div>
@@ -844,31 +840,31 @@ function WslSetupModal({ status, onClose, onInstallTmux }: {
 
         {status === 'no_distro' && (
           <div className="space-y-3">
-            <p className="text-xs text-zinc-400">WSL2 커널은 있지만 <strong className="text-zinc-200">Ubuntu가 없습니다</strong>. (Docker Desktop 전용 WSL만 감지됨)</p>
+            <p className="text-xs text-zinc-400">WSL2 커널은 있지만 <strong className="text-[#ede7dd]">Ubuntu가 없습니다</strong>. (Docker Desktop 전용 WSL만 감지됨)</p>
             <ol className="text-xs space-y-2 list-none">
-              <Step n={1} text={<>아래 버튼 클릭 → UAC 허용 → <code className="text-zinc-300 bg-zinc-800 px-1 rounded">wsl --install -d Ubuntu</code> 실행</>} />
+              <Step n={1} text={<>아래 버튼 클릭 → UAC 허용 → <code className="text-[#ede7dd]/90 bg-[#221f1b] px-1 rounded">wsl --install -d Ubuntu</code> 실행</>} />
               <Step n={2} text="Ubuntu 첫 실행 시 사용자명/비밀번호 설정 완료" />
-              <Step n={3} text={<>Ubuntu 터미널에서: <code className="text-zinc-300 bg-zinc-800 px-1 rounded">sudo apt install tmux</code></>} />
-              <Step n={4} text={<>Claude Code 설치: <code className="text-zinc-300 bg-zinc-800 px-1 rounded">npm i -g @anthropic-ai/claude-code</code></>} />
+              <Step n={3} text={<>Ubuntu 터미널에서: <code className="text-[#ede7dd]/90 bg-[#221f1b] px-1 rounded">sudo apt install tmux</code></>} />
+              <Step n={4} text={<>Claude Code 설치: <code className="text-[#ede7dd]/90 bg-[#221f1b] px-1 rounded">npm i -g @anthropic-ai/claude-code</code></>} />
             </ol>
             <button
-              onClick={async () => { await API.installWsl().catch(() => {}); onClose(); }}
+              onClick={async () => { await API.installWsl().catch(e => showToast(`WSL 설치 실패: ${String(e)}`, 'error')); onClose(); }}
               className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors font-medium"
             >🐧 Ubuntu 설치 시작 (관리자 권한 필요)</button>
-            <p className="text-[10px] text-zinc-600">또는 PowerShell에서 직접: <code className="text-zinc-500">wsl --install -d Ubuntu</code></p>
+            <p className="text-[10px] text-[#6b6459]">또는 PowerShell에서 직접: <code className="text-zinc-500">wsl --install -d Ubuntu</code></p>
           </div>
         )}
 
         {status === 'no_tmux' && (
           <div className="space-y-3">
-            <p className="text-xs text-zinc-400">WSL2 Ubuntu는 준비됐지만 <strong className="text-zinc-200">tmux가 없습니다</strong>. 자동 설치가 가능합니다.</p>
-            <div className="bg-zinc-800 rounded-lg p-3 text-xs text-zinc-300 font-mono">sudo apt-get install -y tmux</div>
+            <p className="text-xs text-zinc-400">WSL2 Ubuntu는 준비됐지만 <strong className="text-[#ede7dd]">tmux가 없습니다</strong>. 자동 설치가 가능합니다.</p>
+            <div className="bg-[#221f1b] rounded-lg p-3 text-xs text-[#ede7dd]/90 font-mono">sudo apt-get install -y tmux</div>
             <button
               onClick={() => { onInstallTmux(); onClose(); }}
               className="w-full px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs rounded-lg transition-colors font-medium"
             >📦 tmux 자동 설치</button>
             <p className="text-[10px] text-zinc-500">설치 후 다시 tmux 버튼을 누르면 됩니다. Claude Code도 WSL 안에 설치되어야 합니다: <code>npm i -g @anthropic-ai/claude-code</code></p>
-            <button onClick={onClose} className="w-full px-3 py-2 bg-zinc-700 hover:bg-zinc-600 text-white text-xs rounded-lg transition-colors">취소</button>
+            <button onClick={onClose} className="w-full px-3 py-2 bg-[#2a2520] hover:bg-zinc-600 text-white text-xs rounded-lg transition-colors">취소</button>
           </div>
         )}
       </div>
@@ -910,7 +906,9 @@ function App() {
   const [filterType, setFilterType] = useState<'all' | 'with-port' | 'without-port'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [bypassPermissions, setBypassPermissions] = useState(false);
+  const [bypassPermissions, setBypassPermissions] = useState(
+    () => localStorage.getItem('portmanager-bypassPermissions') !== 'false'
+  );
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editPort, setEditPort] = useState('');
@@ -925,6 +923,9 @@ function App() {
   const [category, setCategory] = useState('');
   const [description, setDescription] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
+  const [sidebarSection, setSidebarSection] = useState<string>('all');
+  const [v3MenuOpenId, setV3MenuOpenId] = useState<string|null>(null);
+  const [v3MenuRect, setV3MenuRect] = useState<{top:number;right:number}|null>(null);
   const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
   const [worktreePickerValue, setWorktreePickerValue] = useState('');
   // 머지 확인 모달
@@ -940,27 +941,42 @@ function App() {
   const [worktreeLists, setWorktreeLists] = useState<Record<string, WorktreeInfo[]>>({});
   const [worktreeNewBranch, setWorktreeNewBranch] = useState<Record<string, string>>({});
   const [worktreeLoading, setWorktreeLoading] = useState<Record<string, boolean>>({});
+  const [wtPortStatuses, setWtPortStatuses] = useState<Record<number, boolean>>({});
+  // wt.path → 실제 감지된 리스닝 포트 (find-worktree-port API 결과)
+  const [wtActualPorts, setWtActualPorts] = useState<Record<string, number>>({});
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isAiEnriching, setIsAiEnriching] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [isPushingPorts, setIsPushingPorts] = useState(false);
+  const [showPortsHistory, setShowPortsHistory] = useState(false);
+  const [portsHistoryList, setPortsHistoryList] = useState<PushSnapshot[]>([]);
+  const [portsHistoryLoading, setPortsHistoryLoading] = useState(false);
+  const [portsHistoryRestoring, setPortsHistoryRestoring] = useState<string | null>(null);
   const [remappingPorts, setRemappingPorts] = useState<PortInfo[]>([]);
   const [remappingPaths, setRemappingPaths] = useState<Record<string, string>>({});
   const [isBuilding, setIsBuilding] = useState(false);
   const [showBuildLog, setShowBuildLog] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<{ version: string; body?: string | null } | null>(null);
   const [canAutoInstall, setCanAutoInstall] = useState(false);
   const [buildLogs, setBuildLogs] = useState<string[]>([]);
   const [buildType, setBuildType] = useState<'app' | 'dmg' | 'windows'>('app');
   const lastLogIndexRef = useRef<number>(0);
+  const isBuildingRef = useRef(false);
+  const buildLogContainerRef = useRef<HTMLDivElement>(null);
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>([]);
+  const [workspaceRootsOpen, setWorkspaceRootsOpen] = useState(false);
+  const [visitCounts, setVisitCounts] = useState<{ portId: string; count: number }[]>([]);
+  const [visitWindow, setVisitWindow] = useState<'alltime' | 'weekly' | 'daily'>('alltime');
+  const [highlightedPortId, setHighlightedPortId] = useState<string | null>(null);
   const dirHandlesRef = useRef<Map<string, FileSystemDirectoryHandle>>(new Map());
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showOptionalFields, setShowOptionalFields] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [activeRootId, setActiveRootId] = useState<string | null>(null);
-  // 통합 "+ 프로젝트 추가" 모달
-  const [showAddProjectModal, setShowAddProjectModal] = useState(false);
-  const [addProjectMode, setAddProjectMode] = useState<'connect' | 'create'>('connect');
+  const [registerAsProject, setRegisterAsProject] = useState(true);
+  const [projectModalTab, setProjectModalTab] = useState<'new' | 'existing'>('new');
+  const [existingFolderPath, setExistingFolderPath] = useState('');
   const portalConfigRef = useRef<any>(null);
   const portalActionsRef = useRef<PortalActions | null>(null);
   const autoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -969,6 +985,20 @@ function App() {
   const autopullSucceeded = useRef(false);
   const appLogRef = useRef<string[]>([]);
   const [logCopied, setLogCopied] = useState(false);
+
+  // 자동 업데이트 체크 (Tauri 전용)
+  useEffect(() => {
+    if (!isTauri()) return;
+    (async () => {
+      try {
+        const { check } = await import('@tauri-apps/plugin-updater');
+        const update = await check();
+        if (update) setUpdateInfo({ version: update.version, body: update.body });
+      } catch {
+        // 업데이트 서버 미설정 또는 네트워크 오류 — 무시
+      }
+    })();
+  }, []);
 
   // API 서버 헬스 체크 (웹 모드 전용)
   useEffect(() => {
@@ -1044,6 +1074,46 @@ function App() {
     try {
       const list = await API.listGitWorktrees(folderPath);
       setWorktreeLists(prev => ({ ...prev, [portId]: list }));
+      // Check actual port status for each non-main worktree
+      const usedPortsSnap = new Set(
+        (JSON.parse(localStorage.getItem('ports_cache') || '[]') as {port?:number}[])
+          .map(p => p.port).filter((p): p is number => p != null)
+      );
+      const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+      const checks = list
+        .filter(wt => !wt.is_main)
+        .map(async wt => {
+          // 먼저 프로세스 CWD 기반으로 실제 리스닝 포트 탐색
+          let actualPort: number | null = null;
+          try {
+            const r = await fetch(`${baseUrl}/api/find-worktree-port`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ folderPath: wt.path }),
+            });
+            const d = await r.json();
+            if (d.success && d.port) actualPort = d.port;
+          } catch { /* ignore */ }
+          const hashPort = worktreePortFromPath(wt.path, usedPortsSnap);
+          const isRunning = actualPort != null
+            ? true
+            : await API.checkPortStatus(hashPort).catch(() => false);
+          return { wtPath: wt.path, wtPort: actualPort ?? hashPort, isRunning };
+        });
+      const results = await Promise.all(checks);
+      setWtPortStatuses(prev => {
+        const next = { ...prev };
+        results.forEach(({ wtPort, isRunning }) => { next[wtPort] = isRunning; });
+        return next;
+      });
+      setWtActualPorts(prev => {
+        const next = { ...prev };
+        results.forEach(({ wtPath, wtPort, isRunning }) => {
+          if (isRunning) next[wtPath] = wtPort;
+          else delete next[wtPath];
+        });
+        return next;
+      });
     } catch {
       setWorktreeLists(prev => ({ ...prev, [portId]: [] }));
     } finally {
@@ -1117,7 +1187,7 @@ function App() {
           fetch(`${baseUrl}/api/git-conflicts`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ folderPath: item.folderPath }),
-          }).then(r => r.json()).then(d => setMergeConflictFiles(d.files ?? [])).catch(() => {});
+          }).then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); }).then(d => setMergeConflictFiles(d.files ?? [])).catch(e => showToast(`충돌 파일 로드 실패: ${String(e)}`, 'error'));
         } else {
           throw new Error(data.error ?? '프리뷰 실패');
         }
@@ -1137,13 +1207,11 @@ function App() {
     setMergeLoading(true);
     try {
       const output = await API.gitMergeBranch(item.folderPath!, wt.branch!);
+      if (import.meta.env.DEV && output) console.log('[Merge output]', output);
       showToast(`머지 완료: ${wt.branch} → ${mergeConfirm.mainBranch}`, 'success');
-      if (output) console.log('[Merge output]', output);
-      await API.gitWorktreeRemove(wt.path);
-      showToast(`워크트리 제거됨: ${wt.path.split('/').pop()}`, 'success');
-      await loadWorktrees(item.id, item.folderPath!);
       setMergeConfirm(null);
       setMergePushConfirm({ item, mainBranch: mergeConfirm.mainBranch });
+      setDeleteWorktreeConfirm({ item, wt });
     } catch (e) {
       const msg = (e as Error).message ?? String(e);
       setMergeConfirm(null);
@@ -1154,7 +1222,7 @@ function App() {
         fetch(`${baseUrl2}/api/git-conflicts`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ folderPath: item.folderPath }),
-        }).then(r => r.json()).then(d => setMergeConflictFiles(d.files ?? [])).catch(() => {});
+        }).then(r => { if (!r.ok) throw new Error(r.statusText); return r.json(); }).then(d => setMergeConflictFiles(d.files ?? [])).catch(e => showToast(`충돌 파일 로드 실패: ${String(e)}`, 'error'));
       }
     } finally {
       setMergeLoading(false);
@@ -1162,6 +1230,7 @@ function App() {
   }, [mergeConfirm, loadWorktrees]);
 
   const openTmuxClaude = (item: PortInfo) => {
+    recordVisit(item.id);
     setWorktreePickerState({ item, mode: 'tmux' });
     // Only pre-fill if saved path is absolute — relative names (e.g. '합산') are invalid for -w
     // Windows: C:\... / POSIX: /... 둘 다 인정
@@ -1169,8 +1238,14 @@ function App() {
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
-        .then(list => setDetectedWorktrees(list))
-        .catch(() => {});
+        .then(list => {
+          setDetectedWorktrees(list);
+          const savedPath = item.worktreePath?.startsWith('/') ? item.worktreePath : '';
+          if (savedPath && !list.some(wt => wt.path === savedPath)) {
+            setWorktreePickerValue('');
+          }
+        })
+        .catch(e => { if (import.meta.env.DEV) console.warn('[worktreePicker] listGitWorktrees failed:', e); });
     }
   };
 
@@ -1198,7 +1273,9 @@ function App() {
 
   const openTmuxClaudeFresh = async (item: PortInfo) => {
     if (!await checkWslReady()) return;
-    const sessionName = getSessionName(item);
+    const baseName = getSessionName(item);
+    const wtSuffix = item.worktreePath ? `-${item.worktreePath.replace(/\/$/, '').split('/').pop()}` : '';
+    const sessionName = baseName + wtSuffix;
     try {
       if (bypassPermissions) {
         await API.openTmuxClaudeBypass(sessionName, item.folderPath, item.worktreePath);
@@ -1214,7 +1291,9 @@ function App() {
 
   const _executeTmuxClaude = async (item: PortInfo, worktreePath: string | undefined) => {
     if (!await checkWslReady()) return;
-    const sessionName = getSessionName(item);
+    const baseName = getSessionName(item);
+    const wtSuffix = worktreePath ? `-${worktreePath.replace(/\/$/, '').split('/').pop()}` : '';
+    const sessionName = baseName + wtSuffix;
     try {
       if (bypassPermissions) {
         await API.openTmuxClaudeBypass(sessionName, item.folderPath, worktreePath);
@@ -1229,23 +1308,31 @@ function App() {
   };
 
   const openTerminalClaude = (item: PortInfo) => {
+    recordVisit(item.id);
     setWorktreePickerState({ item, mode: 'claude' });
     setWorktreePickerValue((item.worktreePath && isAbsolutePath(item.worktreePath)) ? item.worktreePath : '');
     setDetectedWorktrees([]);
     if (item.folderPath) {
       API.listGitWorktrees(item.folderPath)
-        .then(list => setDetectedWorktrees(list))
-        .catch(() => {});
+        .then(list => {
+          setDetectedWorktrees(list);
+          const savedPath = item.worktreePath?.startsWith('/') ? item.worktreePath : '';
+          if (savedPath && !list.some(wt => wt.path === savedPath)) {
+            setWorktreePickerValue('');
+          }
+        })
+        .catch(e => { if (import.meta.env.DEV) console.warn('[worktreePicker] listGitWorktrees failed:', e); });
     }
   };
 
   const _executeTerminalClaude = async (item: PortInfo, worktreePath: string | undefined) => {
     try {
+      const displayName = item.aiName || item.name;
       if (bypassPermissions) {
-        await API.openTerminalClaudeBypass(item.folderPath, item.name, worktreePath);
+        await API.openTerminalClaudeBypass(item.folderPath, displayName, worktreePath);
         showToast(`Terminal에서 Claude (bypass) 실행 중`, 'success');
       } else {
-        await API.openTerminalClaude(item.folderPath, item.name, worktreePath);
+        await API.openTerminalClaude(item.folderPath, displayName, worktreePath);
         showToast(`Terminal에서 Claude 실행 중`, 'success');
       }
     } catch (e) {
@@ -1301,7 +1388,7 @@ function App() {
           try {
             if (attempt > 0) {
               await new Promise(r => setTimeout(r, 800 * attempt));
-              console.log(`[App] Retrying port load (${attempt}/2)...`);
+              if (import.meta.env.DEV) console.log(`[App] Retrying port load (${attempt}/2)...`);
             }
             data = await API.loadPorts();
             break;
@@ -1352,7 +1439,7 @@ function App() {
           // Supabase 자동 Pull (10s timeout, Model B merge)
           if (portalData?.supabaseUrl && portalData?.supabaseAnonKey) {
             try {
-              const supabase = getSupabaseClient(portalData.supabaseUrl.trim(), portalData.supabaseAnonKey.trim());
+              const supabase = getSupabaseClient(portalData.supabaseUrl, portalData.supabaseAnonKey);
               let portsQuery = supabase.from('ports').select('*');
               if (portalData.deviceId) portsQuery = portsQuery.eq('device_id', portalData.deviceId);
               let { data: remoteData, error } = await withTimeout(portsQuery, 10_000);
@@ -1454,6 +1541,12 @@ function App() {
     });
   }, []);
 
+  // 방문 기록 초기 로드 + window 변경 시 재조회
+  useEffect(() => {
+    const timer = setTimeout(() => fetchVisitCounts(visitWindow), 2000);
+    return () => clearTimeout(timer);
+  }, [visitWindow]);
+
   // 작업 루트 변경 시 저장 (초기 로드 완료 후에만)
   useEffect(() => {
     if (!hasWorkspaceRootsLoaded.current) return;
@@ -1465,6 +1558,13 @@ function App() {
   // 정렬 설정 localStorage 저장
   useEffect(() => { localStorage.setItem('portmanager-sortBy', sortBy); }, [sortBy]);
   useEffect(() => { localStorage.setItem('portmanager-sortOrder', sortOrder); }, [sortOrder]);
+  useEffect(() => { localStorage.setItem('portmanager-bypassPermissions', String(bypassPermissions)); }, [bypassPermissions]);
+  useEffect(() => { isBuildingRef.current = isBuilding; }, [isBuilding]);
+  useEffect(() => {
+    if (buildLogContainerRef.current) {
+      buildLogContainerRef.current.scrollTop = buildLogContainerRef.current.scrollHeight;
+    }
+  }, [buildLogs]);
 
   useEffect(() => {
     const handler = () => {
@@ -1503,7 +1603,7 @@ function App() {
       if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) return;
       if (ports.length === 0) return; // 빈 배열로 stale-delete 방지
       try {
-        const supabase = getSupabaseClient(cfg.supabaseUrl.trim(), cfg.supabaseAnonKey.trim());
+        const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
         const deviceId = cfg.deviceId ?? null;
         const deviceNameVal = cfg.deviceName ?? null;
         // 다른 기기 소유 포트는 push 제외 (sourceDeviceId가 내 deviceId와 다른 경우)
@@ -1560,11 +1660,11 @@ function App() {
         skipNextSave.current = false;
         return;
       }
-      console.log('[App] Saving ports, count:', ports.length);
+      if (import.meta.env.DEV) console.log('[App] Saving ports, count:', ports.length);
       const savePortsData = async () => {
         try {
           await API.savePorts(ports);
-          console.log('[App] Ports saved successfully');
+          if (import.meta.env.DEV) console.log('[App] Ports saved successfully');
         } catch (error) {
           console.error('[App] Failed to save ports:', error);
         }
@@ -1578,7 +1678,7 @@ function App() {
     if (isTauri()) return; // Tauri 앱은 메모리 상태를 직접 관리
 
     const handleFocus = async () => {
-      console.log('[App] Window focused, reloading ports data...');
+      if (import.meta.env.DEV) console.log('[App] Window focused, reloading ports data...');
       try {
         const data = await API.loadPorts();
         skipNextSave.current = true; // 서버에서 읽어온 데이터는 다시 저장하지 않음
@@ -1598,6 +1698,10 @@ function App() {
 
   const addPort = () => {
     if (name) {
+      if (port && !/^\d+$/.test(port)) {
+        showToast('포트 번호는 정수만 입력 가능합니다', 'error');
+        return;
+      }
       const portNum = port ? parseInt(port) : undefined;
       if (portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
         showToast('포트 번호는 1~65535 사이여야 합니다', 'error');
@@ -1735,6 +1839,7 @@ function App() {
           p.id === item.id ? { ...p, isRunning: true } : p
         ));
         showToast(`${item.name} 서버가 시작되었습니다!`, 'success');
+        recordVisit(item.id);
         if (item.port) {
           window.open(`http://localhost:${item.port}`, '_blank');
         }
@@ -1851,9 +1956,9 @@ function App() {
               setPorts(updatedPorts);
 
               // 명시적으로 저장
-              console.log('[Import] Explicitly saving ports after import');
+              if (import.meta.env.DEV) console.log('[Import] Explicitly saving ports after import');
               await API.savePorts(updatedPorts);
-              console.log('[Import] Ports saved successfully');
+              if (import.meta.env.DEV) console.log('[Import] Ports saved successfully');
 
               showToast(`${newPorts.length}개의 포트 정보를 불러왔습니다.`, 'success');
             } else {
@@ -1885,9 +1990,9 @@ function App() {
                     const updatedPorts = [...ports, ...newPorts];
                     setPorts(updatedPorts);
 
-                    console.log('[Import] Explicitly saving ports after import');
+                    if (import.meta.env.DEV) console.log('[Import] Explicitly saving ports after import');
                     await API.savePorts(updatedPorts);
-                    console.log('[Import] Ports saved successfully');
+                    if (import.meta.env.DEV) console.log('[Import] Ports saved successfully');
 
                     showToast(`${newPorts.length}개의 포트 정보를 불러왔습니다.`, 'success');
                   } else {
@@ -1928,7 +2033,7 @@ function App() {
         return;
       }
 
-      const supabase = getSupabaseClient(supabaseUrl.trim(), supabaseAnonKey.trim());
+      const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
       // 설정의 "다른 기기 보기"가 선택돼 있으면 그 기기 기준으로 Pull
       const pullDeviceId = portalData?.viewingDeviceId || portalData?.deviceId || null;
       const isOtherDevice = portalData?.viewingDeviceId && portalData.viewingDeviceId !== portalData?.deviceId;
@@ -2013,6 +2118,42 @@ function App() {
     }
   };
 
+  async function openPortsHistory() {
+    const cfg = portalConfigRef.current;
+    if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) { showToast('Supabase 설정이 없습니다', 'error'); return; }
+    setPortsHistoryLoading(true);
+    setShowPortsHistory(true);
+    const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+    const list = await fetchPushHistory(supabase, 'ports', cfg.deviceId ?? null);
+    setPortsHistoryList(list);
+    setPortsHistoryLoading(false);
+  }
+
+  async function restorePortsSnapshot(snapshotId: string) {
+    const cfg = portalConfigRef.current;
+    if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) return;
+    setPortsHistoryRestoring(snapshotId);
+    try {
+      const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+      const rows = await fetchSnapshotRows(supabase, snapshotId) as any[];
+      if (rows.length === 0) { showToast('스냅샷이 비어있습니다', 'error'); return; }
+      const { error: uErr } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+      if (uErr) throw new Error(uErr.message);
+      const snapshotIds = new Set(rows.map(r => r.id));
+      const deviceId = cfg.deviceId ?? null;
+      const { data: current } = await supabase.from('ports').select('id').eq('device_id', deviceId);
+      const toDelete = (current ?? []).filter((r: any) => !snapshotIds.has(r.id)).map((r: any) => r.id);
+      if (toDelete.length > 0) await supabase.from('ports').delete().in('id', toDelete);
+      await handleRestoreFromSupabase();
+      showToast('스냅샷으로 복원 완료 ✓', 'success');
+      setShowPortsHistory(false);
+    } catch (e) {
+      showToast('복원 실패: ' + e, 'error');
+    } finally {
+      setPortsHistoryRestoring(null);
+    }
+  }
+
   const handlePushToSupabase = async () => {
     if (isPushingPorts) return;
     setIsPushingPorts(true);
@@ -2032,7 +2173,7 @@ function App() {
       }
       const deviceId = portalData.deviceId ?? null;
       const deviceNameVal = portalData.deviceName ?? null;
-      const supabase = getSupabaseClient(supabaseUrl.trim(), supabaseAnonKey.trim());
+      const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
 
       // 새 기기에서 포트 목록이 비어있으면 Pull 먼저 하도록 안내
       if (ports.length === 0) {
@@ -2057,6 +2198,7 @@ function App() {
         memo: memos[p.id]?.content ?? null,
         memo_updated_at: memos[p.id]?.updatedAt ?? null,
       }));
+      await savePushSnapshot(supabase, 'ports', deviceId, deviceNameVal, rows);
       let { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
       if (error?.message?.includes('device_id') || error?.message?.includes('device_name')) {
         // device_id/device_name column not yet migrated — retry without it
@@ -2066,6 +2208,13 @@ function App() {
         if (!e2) showToast('⚠ device_id 컬럼 없음 — 초기설정 가이드의 AI 프롬프트로 마이그레이션 후 재Push 권장', 'error');
       }
       if (error) throw new Error(error.message);
+      // Register this device in devices table (non-blocking)
+      if (deviceId) {
+        supabase.from('devices').upsert(
+          { id: deviceId, name: deviceNameVal, last_push_at: new Date().toISOString() },
+          { onConflict: 'id' }
+        ).then(() => {}).catch(() => {});
+      }
       // Fix P2: delete remote rows whose IDs are no longer in local list
       // Fix P2g: skip delete pass if auto-pull never succeeded — pull first before deleting
       // Step 4: scope stale-delete to this device only to avoid clobbering other devices
@@ -2078,6 +2227,35 @@ function App() {
         if (staleIds.length > 0) {
           await supabase.from('ports').delete().in('id', staleIds);
         }
+      }
+
+      // deployUrl/githubUrl → portal_items 자동 공유 (__shared__)
+      const now = new Date().toISOString();
+      const autoItems = ownedPorts.flatMap(p => {
+        const items: object[] = [];
+        if (p.deployUrl) items.push({
+          id: `auto:deploy:${p.id}`, name: p.name, type: 'web',
+          url: p.deployUrl, category: p.category || '프로젝트',
+          description: `배포 주소 — ${p.name}`, device_id: '__shared__',
+          pinned: false, visit_count: 0, created_at: now,
+        });
+        if (p.githubUrl) items.push({
+          id: `auto:github:${p.id}`, name: `${p.name} GitHub`, type: 'web',
+          url: p.githubUrl, category: 'GitHub',
+          description: `GitHub 저장소 — ${p.name}`, device_id: '__shared__',
+          pinned: false, visit_count: 0, created_at: now,
+        });
+        return items;
+      });
+      if (autoItems.length > 0) {
+        await supabase.from('portal_items').upsert(autoItems, { onConflict: 'id' });
+      }
+      // URL이 없어진 포트의 stale auto portal_items 삭제
+      const activeAutoIds = new Set(autoItems.map((x: any) => x.id));
+      const allAutoIds = ownedPorts.flatMap(p => [`auto:deploy:${p.id}`, `auto:github:${p.id}`]);
+      const staleAutoIds = allAutoIds.filter(id => !activeAutoIds.has(id));
+      if (staleAutoIds.length > 0) {
+        await supabase.from('portal_items').delete().in('id', staleAutoIds);
       }
 
       // workspace_roots 업로드
@@ -2133,7 +2311,7 @@ function App() {
           try {
             const exists = await invoke<boolean>('check_file_exists', { path: updated.commandPath });
             if (!exists) {
-              console.log(`[Refresh] commandPath not found, will re-scan: ${updated.commandPath}`);
+              if (import.meta.env.DEV) console.log(`[Refresh] commandPath not found, will re-scan: ${updated.commandPath}`);
               updated.commandPath = undefined;
             }
           } catch {}
@@ -2281,7 +2459,7 @@ function App() {
       // 10분 후 타임아웃
       setTimeout(() => {
         clearInterval(pollInterval);
-        if (isBuilding) {
+        if (isBuildingRef.current) {
           setIsBuilding(false);
           setBuildLogs(prev => [...prev, '⚠️ 빌드 타임아웃 (10분 초과)']);
         }
@@ -2337,7 +2515,7 @@ function App() {
       // 10분 후 타임아웃
       setTimeout(() => {
         clearInterval(pollInterval);
-        if (isBuilding) {
+        if (isBuildingRef.current) {
           setIsBuilding(false);
           setBuildLogs(prev => [...prev, '⚠️ 빌드 타임아웃 (10분 초과)']);
         }
@@ -2348,124 +2526,70 @@ function App() {
     }
   };
 
-  /** 네이티브 폴더 선택 (Tauri / 로컬 웹). 취소/실패 시 null */
-  const pickFolder = async (): Promise<string | null> => {
-    if (isTauri()) {
-      const { open } = await import('@tauri-apps/plugin-dialog');
-      const selected = await open({ directory: true, multiple: false });
-      return (selected && typeof selected === 'string') ? selected : null;
-    }
-    const res = await fetch('/api/pick-folder');
-    const data = await res.json();
-    return data?.path ?? null;
-  };
-
-  /** 폴더 경로에서 실행 파일 탐지 후 폼 상태에 port/commandPath/folderPath 채움 */
-  const autofillFromFolder = async (folder: string) => {
-    setFolderPath(folder);
-    if (!name) {
-      const base = folder.split(/[\\/]/).filter(Boolean).pop() || '';
-      if (base) setName(base);
-    }
+  const fetchVisitCounts = async (w: 'alltime' | 'weekly' | 'daily' = visitWindow) => {
+    const cfg = portalConfigRef.current;
+    if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey || !cfg?.deviceId) return;
     try {
-      const files = await API.scanCommandFiles(folder);
-      if (files.length === 0) return;
-      const execFile = files[0];
-      setCommandPath(execFile);
-      const d = await API.detectPort(execFile);
-      if (d?.port && !port) setPort(String(d.port));
-    } catch { /* silent */ }
+      const params = new URLSearchParams({
+        supabaseUrl: cfg.supabaseUrl,
+        supabaseKey: cfg.supabaseAnonKey,
+        deviceId: cfg.deviceId,
+        window: w,
+      });
+      const base = isTauri() ? 'http://localhost:3001' : '';
+      const res = await fetch(`${base}/api/port-visits?${params}`);
+      if (res.ok) setVisitCounts(await res.json());
+    } catch {}
   };
 
-  /** 통합 모달 열기: 상태 초기화 */
-  const openAddProjectModal = (mode: 'connect' | 'create' = 'connect') => {
-    setAddProjectMode(mode);
-    setShowAddProjectModal(true);
-    setShowOptionalFields(false);
-    setName(''); setPort(''); setCommandPath(''); setTerminalCommand('');
-    setFolderPath(''); setDeployUrl(''); setGithubUrl('');
-    setWorktreePath(''); setCategory(''); setDescription('');
-    setNewProjectName('');
-    if (mode === 'create' && !activeRootId && workspaceRoots.length > 0) {
-      setActiveRootId(workspaceRoots[0].id);
-    }
-  };
-
-  /** 통합 모달의 "등록" — 기존 폴더 연결. addPort 래퍼 + 모달 닫기 */
-  const handleSubmitConnectProject = () => {
-    if (!name.trim()) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
-    addPort();
-    setShowAddProjectModal(false);
-  };
-
-  /** 통합 모달의 "생성" — 작업루트 하위 폴더 생성 + 포트 등록 */
-  const handleSubmitCreateProject = async () => {
-    const root = workspaceRoots.find(r => r.id === activeRootId);
-    if (!root) { showToast('작업루트를 선택하세요', 'error'); return; }
-    if (!isAbsolutePath(root.path)) { showToast('루트 경로가 절대경로가 아닙니다', 'error'); return; }
-    const trimmed = newProjectName.trim();
-    if (!trimmed) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
-    const sep = root.path.includes('\\') && !root.path.includes('/') ? '\\' : '/';
-    const fullPath = `${root.path.replace(/[\\/]$/, '')}${sep}${trimmed}`;
+  const recordVisit = async (portId: string) => {
+    const cfg = portalConfigRef.current;
+    if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey || !cfg?.deviceId) return;
     try {
-      const result = await API.createFolder(fullPath);
-      if (!result.success) {
-        showToast((result as any).error || '폴더 생성 실패', 'error');
-        return;
-      }
-      const portNum = port ? parseInt(port) : undefined;
-      if (portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
-        showToast('포트 번호는 1~65535 사이여야 합니다', 'error'); return;
-      }
-      const newPort: PortInfo = {
-        id: Date.now().toString(),
-        name: name.trim() || trimmed,
-        port: portNum,
-        commandPath: commandPath || undefined,
-        terminalCommand: terminalCommand || undefined,
-        folderPath: fullPath,
-        deployUrl: deployUrl || undefined,
-        githubUrl: githubUrl || undefined,
-        category: category || undefined,
-        description: description || undefined,
-        isRunning: false,
-      };
-      setPorts(prev => [newPort, ...prev]);
-      showToast(`프로젝트 생성 완료: ${trimmed}`, 'success');
-      setShowAddProjectModal(false);
-    } catch (e: any) {
-      showToast('폴더 생성 실패: ' + (e?.message ?? e), 'error');
-    }
+      const base = isTauri() ? 'http://localhost:3001' : '';
+      await fetch(`${base}/api/port-visits`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portId, deviceId: cfg.deviceId, supabaseUrl: cfg.supabaseUrl, supabaseKey: cfg.supabaseAnonKey }),
+      });
+      setVisitCounts(prev => {
+        const existing = prev.find(v => v.portId === portId);
+        if (existing) return prev.map(v => v.portId === portId ? { ...v, count: v.count + 1 } : v).sort((a, b) => b.count - a.count);
+        return [...prev, { portId, count: 1 }].sort((a, b) => b.count - a.count);
+      });
+    } catch {}
+  };
+
+  const scrollToPort = (portId: string) => {
+    setHighlightedPortId(portId);
+    const el = document.getElementById(`port-card-${portId}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(() => setHighlightedPortId(null), 2000);
   };
 
   const handleAddWorkspaceRoot = async () => {
-    const pick = async (): Promise<string | null> => {
-      if (isTauri()) {
-        const { open } = await import('@tauri-apps/plugin-dialog');
-        const selected = await open({ directory: true, multiple: false });
-        return (selected && typeof selected === 'string') ? selected : null;
+    if (isTauri()) {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({ directory: true, multiple: false });
+      if (selected && typeof selected === 'string') {
+        const name = selected.split('/').pop() || selected;
+        const id = crypto.randomUUID();
+        const updated = [...workspaceRoots, { id, name, path: selected }];
+        setWorkspaceRoots(updated);
       }
-      const res = await fetch('/api/pick-folder');
-      const data = await res.json();
-      return data?.path ?? null;
-    };
-    try {
-      const selected = await pick();
-      if (!selected) return;
-      if (!isAbsolutePath(selected)) {
-        showToast(`절대경로가 필요합니다: ${selected}`, 'error');
-        return;
+    } else {
+      try {
+        const res = await fetch('/api/pick-folder');
+        const data = await res.json();
+        if (!data.path) return;
+        const selected: string = data.path;
+        const name = selected.split('/').pop() || selected;
+        const id = crypto.randomUUID();
+        const updated = [...workspaceRoots, { id, name, path: selected }];
+        setWorkspaceRoots(updated);
+      } catch (e: any) {
+        if (e.name !== 'AbortError') showToast('폴더 선택 실패: ' + e.message, 'error');
       }
-      if (workspaceRoots.some(r => r.path === selected)) {
-        showToast('이미 추가된 작업루트입니다', 'error');
-        return;
-      }
-      const basename = selected.split(/[\\/]/).filter(Boolean).pop() || selected;
-      const id = crypto.randomUUID();
-      setWorkspaceRoots([...workspaceRoots, { id, name: basename, path: selected }]);
-      showToast(`작업루트 추가: ${basename}`, 'success');
-    } catch (e: any) {
-      if (e?.name !== 'AbortError') showToast('폴더 선택 실패: ' + (e?.message ?? e), 'error');
     }
   };
 
@@ -2476,6 +2600,110 @@ function App() {
     setWorkspaceRoots(updated);
   };
 
+  const handleCreateProjectFolder = async () => {
+    const root = workspaceRoots.find(r => r.id === activeRootId);
+    if (!root) { showToast('작업 루트를 찾을 수 없습니다', 'error'); return; }
+    const trimmed = newProjectName.trim();
+    if (!trimmed) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
+
+    const addProject = (fullPath: string) => {
+      if (registerAsProject) {
+        const newPort: PortInfo = {
+          id: crypto.randomUUID(),
+          name: trimmed,
+          folderPath: fullPath,
+        };
+        setPorts(prev => [newPort, ...prev]);
+      }
+    };
+
+    if (isTauri()) {
+      if (!root.path.startsWith('/')) {
+        showToast('루트 폴더 경로가 절대경로가 아닙니다. 루트를 삭제 후 다시 추가해주세요.', 'error');
+        return;
+      }
+      const fullPath = `${root.path}/${trimmed}`;
+      try {
+        const result = await API.createFolder(fullPath);
+        if (result.success) {
+          addProject(fullPath);
+          showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
+          setNewProjectName('');
+          setShowNewProjectModal(false);
+        } else {
+          showToast((result as any).error || '폴더 생성 실패', 'error');
+        }
+      } catch (e: any) {
+        showToast('폴더 생성 실패: ' + e.message, 'error');
+      }
+    } else {
+      if (!root.path.startsWith('/')) {
+        showToast('루트 폴더 경로가 절대경로가 아닙니다. 루트를 삭제 후 다시 추가해주세요.', 'error');
+        return;
+      }
+      const fullPath = `${root.path}/${trimmed}`;
+      try {
+        const result = await API.createFolder(fullPath);
+        if (result.success) {
+          addProject(fullPath);
+          showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
+          setNewProjectName('');
+          setShowNewProjectModal(false);
+        } else {
+          showToast((result as any).error || '폴더 생성 실패', 'error');
+        }
+      } catch (e: any) {
+        showToast('폴더 생성 실패: ' + e.message, 'error');
+      }
+    }
+  };
+
+  const handleRegisterExistingFolder = () => {
+    const trimmed = existingFolderPath.trim();
+    if (!trimmed) {
+      showToast('폴더 경로를 입력하세요', 'error');
+      return;
+    }
+    if (!trimmed.startsWith('/') && !trimmed.match(/^[A-Z]:\\/i)) {
+      showToast('절대 경로를 입력하세요', 'error');
+      return;
+    }
+    const name = trimmed.split(/[\\/]/).filter(Boolean).pop() || trimmed;
+    const newPort: PortInfo = {
+      id: crypto.randomUUID(),
+      name,
+      folderPath: trimmed,
+    };
+    setPorts(prev => [newPort, ...prev]);
+    showToast(`프로젝트 등록 완료: ${name}`, 'success');
+    setExistingFolderPath('');
+    setShowNewProjectModal(false);
+  };
+
+  const handlePickExistingFolder = async () => {
+    if (isTauri()) {
+      try {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const selected = await open({ directory: true, multiple: false });
+        if (selected && typeof selected === 'string') {
+          setExistingFolderPath(selected);
+        }
+      } catch (e: any) {
+        showToast('폴더 선택 실패: ' + e.message, 'error');
+      }
+    } else {
+      try {
+        const res = await fetch('/api/pick-folder');
+        const data = await res.json();
+        if (res.ok && data.path) {
+          setExistingFolderPath(data.path);
+        }
+        // cancelled or error: silently ignore
+      } catch (e: any) {
+        if (e.name !== 'AbortError') showToast('폴더 선택 실패: ' + e.message, 'error');
+      }
+    }
+  };
 
   const handleInstallWindowsPrereqs = async () => {
     if (isBuilding) return;
@@ -2513,7 +2741,7 @@ function App() {
           }
         } catch (e) { console.error(e); }
       }, 2000);
-      setTimeout(() => { clearInterval(poll); if (isBuilding) { setIsBuilding(false); setBuildLogs(p => [...p, '⚠️ 설치 타임아웃 (60분 초과)']); } }, 3600000);
+      setTimeout(() => { clearInterval(poll); if (isBuildingRef.current) { setIsBuilding(false); setBuildLogs(p => [...p, '⚠️ 설치 타임아웃 (60분 초과)']); } }, 3600000);
     } catch (e) {
       setBuildLogs(prev => [...prev, '❌ 설치 요청 실패: ' + e]);
       setIsBuilding(false);
@@ -2567,7 +2795,7 @@ function App() {
 
       setTimeout(() => {
         clearInterval(pollInterval);
-        if (isBuilding) {
+        if (isBuildingRef.current) {
           setIsBuilding(false);
           setBuildLogs(prev => [...prev, '⚠️ 타임아웃 (30분 초과)']);
         }
@@ -2663,6 +2891,12 @@ function App() {
     }
   };
 
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      addPort();
+    }
+  };
+
   const handleEditKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       saveEdit();
@@ -2723,8 +2957,293 @@ function App() {
     return q ? ports.filter(p => matchesSearch(p, q)) : ports;
   }, [ports, searchQuery]);
 
+  const v3Ports = useMemo(() => {
+    let list = ports;
+    if (sidebarSection === 'running') list = list.filter(p => p.isRunning);
+    else if (sidebarSection === 'starred') list = list.filter(p => p.favorite);
+    else if (sidebarSection === 'wt') list = list.filter(p => !!p.worktreePath);
+    else if (sidebarSection.startsWith('tag:')) list = list.filter(p => p.category === sidebarSection.slice(4));
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        (p.aiName || '').toLowerCase().includes(q) ||
+        (p.category || '').toLowerCase().includes(q) ||
+        (p.worktreePath || '').toLowerCase().includes(q) ||
+        String(p.port ?? '').includes(q)
+      );
+    }
+    return list;
+  }, [ports, sidebarSection, searchQuery]);
+
+  const v3Running = useMemo(() => v3Ports.filter(p => p.isRunning), [v3Ports]);
+  const v3Idle = useMemo(() => v3Ports.filter(p => !p.isRunning), [v3Ports]);
+
+  const inpV3: React.CSSProperties = {
+    width:'100%', padding:'7px 10px', background:'#15120f',
+    border:'1px solid rgba(255,240,220,0.07)', borderRadius:6,
+    color:'#ede7dd', fontSize:12, outline:'none', fontFamily:'inherit', boxSizing:'border-box',
+  };
+
+  const renderV3Card = (item: PortInfo) => {
+    if (editingId === item.id) {
+      return (
+        <div key={item.id} style={{padding:12,background:'#1c1916',border:'1px solid rgba(255,240,220,0.12)',borderRadius:8,display:'flex',flexDirection:'column',gap:6}}>
+          <div style={{display:'flex',gap:6}}>
+            <input type="text" value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={handleEditKeyPress}
+              style={{...inpV3,flex:1}} placeholder="프로젝트 이름" autoFocus />
+            <input type="number" value={editPort} onChange={e=>setEditPort(e.target.value)} onKeyDown={handleEditKeyPress}
+              style={{...inpV3,width:70,flex:'none'}} placeholder="포트" />
+            <button onClick={saveEdit} style={{padding:'5px 8px',background:'rgba(143,185,110,0.14)',border:'1px solid rgba(143,185,110,0.3)',borderRadius:6,cursor:'pointer',display:'flex',alignItems:'center'}}>
+              <Check className="w-3.5 h-3.5" style={{color:'#8fb96e'}} />
+            </button>
+            <button onClick={cancelEdit} style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:6,cursor:'pointer',display:'flex',alignItems:'center'}}>
+              <XIcon className="w-3.5 h-3.5" style={{color:'#6b6459'}} />
+            </button>
+          </div>
+          <input type="text" value={editCommandPath} onChange={e=>setEditCommandPath(e.target.value)} onKeyDown={handleEditKeyPress}
+            style={inpV3} placeholder={`${execFileExt()} 파일 경로`} />
+          <input type="text" value={editTerminalCommand} onChange={e=>setEditTerminalCommand(e.target.value)} onKeyDown={handleEditKeyPress}
+            style={inpV3} placeholder="터미널 명령어" />
+          <input type="text" value={editFolderPath} onChange={e=>setEditFolderPath(e.target.value)} onKeyDown={handleEditKeyPress}
+            style={inpV3} placeholder="폴더 경로" />
+          <input type="text" value={editDeployUrl} onChange={e=>setEditDeployUrl(e.target.value)} onKeyDown={handleEditKeyPress}
+            style={inpV3} placeholder="배포 주소" />
+          <input type="text" value={editGithubUrl} onChange={e=>setEditGithubUrl(e.target.value)} onKeyDown={handleEditKeyPress}
+            style={inpV3} placeholder="GitHub 주소" />
+          <div style={{display:'flex',gap:6}}>
+            <input type="text" value={editCategory} onChange={e=>setEditCategory(e.target.value)} onKeyDown={handleEditKeyPress}
+              style={{...inpV3,flex:1}} placeholder="카테고리" />
+            <input type="text" value={editDescription} onChange={e=>setEditDescription(e.target.value)} onKeyDown={handleEditKeyPress}
+              style={{...inpV3,flex:2}} placeholder="프로젝트 설명" />
+          </div>
+        </div>
+      );
+    }
+
+    const menuOpen = v3MenuOpenId === item.id;
+    const btnBase: React.CSSProperties = {padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#ede7dd',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11};
+
+    return (
+      <div key={item.id} className="group" style={{
+        padding:12, background:'#1c1916',
+        border:'1px solid rgba(255,240,220,0.07)',
+        borderRadius:8, cursor:'pointer',
+        display:'flex', flexDirection:'column', gap:6,
+        minHeight:108, position:'relative',
+        zIndex: menuOpen ? 50 : 'auto',
+      }}
+        onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.borderColor='rgba(255,240,220,0.12)'; }}
+        onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.borderColor='rgba(255,240,220,0.07)'; }}
+      >
+        <div style={{display:'flex',alignItems:'center',gap:5}}>
+          <span style={{width:7,height:7,borderRadius:4,flexShrink:0,background:item.isRunning?'#8fb96e':'#6b6459'}} />
+          <span style={{fontSize:13,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.name}</span>
+          {item.favorite && <Star style={{width:10,height:10,flexShrink:0,fill:'#e8a557',color:'#e8a557'}} />}
+          {item.port && <span style={{fontSize:11,fontFamily:'JetBrains Mono, monospace',color:'#e8a557',flexShrink:0}}>:{item.port}</span>}
+        </div>
+
+        {item.aiName && (
+          <div style={{fontSize:11.5,color:'#a39a8c',marginTop:-2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.aiName}</div>
+        )}
+
+        {item.worktreePath && (
+          <div style={{display:'flex',alignItems:'center',gap:4,fontSize:10.5,fontFamily:'JetBrains Mono, monospace',color:'#7ba7c9',overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}}>
+            <GitBranch style={{width:10,height:10,flexShrink:0}} />
+            {item.worktreePath.split('/').pop() || item.worktreePath}
+          </div>
+        )}
+
+        {/* Primary action strip — visible on hover */}
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity" style={{marginTop:'auto',display:'flex',gap:4}}>
+          <button onClick={e=>{e.stopPropagation(); item.isRunning ? stopCommand(item) : executeCommand(item);}} style={{
+            flex:1,padding:'5px 0',borderRadius:5,
+            background:item.isRunning?'rgba(201,106,90,0.14)':'rgba(143,185,110,0.14)',
+            color:item.isRunning?'#c96a5a':'#8fb96e',
+            border:'none',fontSize:11,fontWeight:600,cursor:'pointer',
+            display:'flex',alignItems:'center',justifyContent:'center',gap:4,fontFamily:'inherit',
+          }}>
+            {item.isRunning ? <Square style={{width:9,height:9}}/> : <Play style={{width:9,height:9}}/>}
+            {item.isRunning ? 'Stop' : 'Run'}
+          </button>
+          <button onClick={e=>{e.stopPropagation(); setWorktreePickerState({item,mode:'claude'});}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}>Claude</button>
+          <button onClick={e=>{e.stopPropagation(); toggleWorktreePanel(item.id, item.folderPath);}} style={{...btnBase, color:expandedWorktreeIds.has(item.id)?'#e8a557':'#ede7dd', borderColor:expandedWorktreeIds.has(item.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title="워크트리 관리">
+            <GitBranch style={{width:11,height:11}}/>
+          </button>
+          <button onClick={e=>{e.stopPropagation(); item.port && API.openInChrome(`http://localhost:${item.port}`).catch(()=>{});}} style={btnBase} title="Chrome에서 열기">
+            <Globe style={{width:11,height:11}}/>
+          </button>
+          <button onClick={e=>{e.stopPropagation(); if(menuOpen){setV3MenuOpenId(null);setV3MenuRect(null);}else{const r=e.currentTarget.getBoundingClientRect();setV3MenuOpenId(item.id);setV3MenuRect({top:r.bottom+4,right:window.innerWidth-r.right});}}} style={{...btnBase, color: menuOpen?'#e8a557':'#ede7dd', borderColor: menuOpen?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}}>
+            <ChevronDown style={{width:11,height:11}}/>
+          </button>
+        </div>
+
+        {/* Worktree panel */}
+        {expandedWorktreeIds.has(item.id) && (
+          <div style={{marginTop:4,background:'#221f1b',borderRadius:6,border:'1px solid rgba(255,240,220,0.07)',padding:'8px 8px 6px',display:'flex',flexDirection:'column',gap:4}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:2}}>
+              <div style={{display:'flex',alignItems:'center',gap:4,fontSize:10,color:'#6b6459',fontWeight:600,letterSpacing:0.5,textTransform:'uppercase'}}>
+                <GitBranch style={{width:9,height:9}}/> Git Worktrees
+              </div>
+              <button onClick={e=>{e.stopPropagation(); item.folderPath && loadWorktrees(item.id, item.folderPath);}} style={{padding:'2px 5px',background:'transparent',border:'none',cursor:'pointer',color:'#6b6459',display:'flex',alignItems:'center'}} title="새로고침">
+                <RotateCw style={{width:10,height:10}}/>
+              </button>
+            </div>
+            {worktreeLoading[item.id] ? (
+              <div style={{fontSize:10.5,color:'#6b6459',textAlign:'center',padding:'4px 0'}}>로딩 중...</div>
+            ) : (worktreeLists[item.id] ?? []).length === 0 ? (
+              <div style={{fontSize:10.5,color:'#6b6459',textAlign:'center',padding:'4px 0'}}>워크트리 없음</div>
+            ) : (
+              (worktreeLists[item.id] ?? []).map(wt => {
+                const wtName = wt.path.replace(/\/$/, '').split('/').pop() ?? wt.path;
+                const displayName = wt.branch || wtName;
+                const miniBtn: React.CSSProperties = {padding:'3px 7px',borderRadius:4,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#a39a8c',cursor:'pointer',fontSize:10,fontFamily:'inherit'};
+                const wtPortEntry = ports.find(p =>
+                  p.worktreePath === wt.path ||
+                  (wt.branch && p.worktreePath === wt.branch) ||
+                  (p.worktreePath && wt.path.endsWith('/' + p.worktreePath.replace(/^\/+/, ''))) ||
+                  p.folderPath === wt.path
+                );
+                const usedPorts = new Set(ports.map(p => p.port).filter((p): p is number => p != null));
+                // wtActualPorts: CWD 기반으로 감지된 실제 포트 (없으면 해시 포트 사용)
+                const detectedPort = wtActualPorts[wt.path];
+                const wtPort = detectedPort ?? (wtPortEntry?.port ?? worktreePortFromPath(wt.path, usedPorts));
+                const isWtRunning = detectedPort != null || (wtPortEntry?.isRunning ?? wtPortStatuses[wtPort] ?? false);
+                const wtClaudeBypass = () => {
+                  const branchName = wt.branch || wt.path.replace(/\/$/, '').split('/').pop()!;
+                  const sessionName = `${item.name.replace(/\s+/g,'-')}-${branchName}`;
+                  const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                  fetch(`${baseUrl}/api/open-tmux-claude-bypass`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionName, folderPath: item.folderPath, worktreePath: wt.path, branch: branchName }),
+                  })
+                    .then(() => showToast(`Claude(bypass) 실행: ${displayName}`, 'success'))
+                    .catch(err => showToast(`Claude 실행 실패: ${err}`, 'error'));
+                };
+                return (
+                  <div key={wt.path} style={{
+                    padding:'5px 6px', borderRadius:5,
+                    background: wt.is_main ? 'rgba(232,165,87,0.04)' : 'rgba(255,240,220,0.02)',
+                    border:'1px solid rgba(255,240,220,0.05)',
+                    borderLeft: wt.is_main ? '2px solid rgba(232,165,87,0.35)' : '1px solid rgba(255,240,220,0.05)',
+                    display:'flex', flexDirection:'column', gap:4,
+                  }}>
+                    {/* Branch name row */}
+                    <div style={{display:'flex',alignItems:'center',gap:5}}>
+                      <GitBranch style={{width:9,height:9,color:wt.is_main?'#6b6459':'#7ba7c9',flexShrink:0}}/>
+                      <span style={{fontSize:11,fontWeight:600,color:wt.is_main?'#ede7dd':'#7ba7c9',fontFamily:'JetBrains Mono, monospace',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{displayName}</span>
+                      {wt.is_main && <span style={{fontSize:9,color:'#6b6459',background:'rgba(255,240,220,0.06)',padding:'1px 4px',borderRadius:3}}>main</span>}
+                    </div>
+                    {/* Action buttons row */}
+                    <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
+                    {wt.is_main ? <>
+                      <button onClick={e=>{e.stopPropagation(); item.isRunning ? stopCommand(item) : executeCommand(item);}} style={{...miniBtn,color:item.isRunning?'#c96a5a':'#8fb96e',borderColor:item.isRunning?'rgba(201,106,90,0.2)':'rgba(143,185,110,0.2)'}} title={item.isRunning ? `포트 ${item.port}` : undefined}>
+                        {item.isRunning ? '중지' : `실행(${item.port})`}
+                      </button>
+                      <button onClick={e=>{e.stopPropagation(); item.port && window.open(`http://localhost:${item.port}`, '_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
+                      <button onClick={e=>{e.stopPropagation(); wt.path && API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
+                      <button onClick={e=>{e.stopPropagation(); forceRestartCommand(item);}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
+                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}>Claude</button>
+                      <button onClick={e=>{e.stopPropagation(); setCommitModal({item,wt,msg:''});}} style={miniBtn}>커밋</button>
+                      <button onClick={e=>{e.stopPropagation();
+                        const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                        fetch(`${baseUrl}/api/git-push`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({folderPath:item.folderPath}) })
+                          .then(r=>r.json()).then(d=>{ if(d.success) showToast('푸시 완료','success'); else showToast(`푸시 실패: ${d.error}`,'error'); })
+                          .catch(()=>showToast('푸시 실패','error'));
+                      }} style={miniBtn}>푸시</button>
+                    </> : <>
+                      <button onClick={e=>{e.stopPropagation();
+                        if (wtPortEntry) { isWtRunning ? stopCommand(wtPortEntry) : executeCommand(wtPortEntry); }
+                        else { executeCommand({...item, id:`${item.id}_wt_${wtName}`, port:wtPort, worktreePath:wt.path}); }
+                      }} style={{...miniBtn,color:isWtRunning?'#c96a5a':'#8fb96e',borderColor:isWtRunning?'rgba(201,106,90,0.2)':'rgba(143,185,110,0.2)'}} title={isWtRunning ? `포트 ${wtPort}` : undefined}>
+                        {isWtRunning ? '중지' : `실행(${wtPort})`}
+                      </button>
+                      <button onClick={e=>{e.stopPropagation(); window.open(`http://localhost:${wtPort}`, '_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
+                      <button onClick={e=>{e.stopPropagation();
+                        if (wtPortEntry) forceRestartCommand(wtPortEntry);
+                        else forceRestartCommand({...item, id:`${item.id}_wt_${wtName}`, port:wtPort, worktreePath:wt.path});
+                      }} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
+                      <button onClick={e=>{e.stopPropagation(); API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
+                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}>Claude</button>
+                      <button onClick={e=>{e.stopPropagation(); setCommitModal({item,wt,msg:''});}} style={miniBtn}>커밋</button>
+                      <button onClick={e=>{e.stopPropagation();
+                        const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+                        fetch(`${baseUrl}/api/git-push`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({folderPath:wt.path}) })
+                          .then(r=>r.json()).then(d=>{ if(d.success) showToast(`푸시 완료: ${displayName}`,'success'); else showToast(`푸시 실패: ${d.error}`,'error'); })
+                          .catch(()=>showToast('푸시 실패','error'));
+                      }} style={miniBtn}>푸시</button>
+                      <button onClick={e=>{e.stopPropagation(); handleWorktreeMerge(item, wt);}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}}>머지</button>
+                      <button onClick={e=>{e.stopPropagation(); handleWorktreeRemove(item, wt);}} style={{...miniBtn,color:'#c96a5a',borderColor:'rgba(201,106,90,0.2)'}}>삭제</button>
+                    </>}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            <div style={{display:'flex',gap:4,marginTop:2}}>
+              <input
+                type="text"
+                value={worktreeNewBranch[item.id] ?? ''}
+                onChange={e => setWorktreeNewBranch(prev => ({...prev, [item.id]: e.target.value}))}
+                onKeyDown={e => { if(e.key==='Enter') { e.stopPropagation(); handleWorktreeAdd(item); } }}
+                onClick={e => e.stopPropagation()}
+                placeholder="브랜치명"
+                style={{flex:1,padding:'4px 7px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:4,color:'#ede7dd',fontSize:10.5,outline:'none',fontFamily:'inherit'}}
+              />
+              <button onClick={e=>{e.stopPropagation(); handleWorktreeAdd(item);}} style={{padding:'4px 8px',background:'rgba(232,165,87,0.1)',border:'1px solid rgba(232,165,87,0.25)',borderRadius:4,color:'#e8a557',fontSize:10,cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>
+                + 추가
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Secondary menu */}
+        {menuOpen && v3MenuRect && (
+          <div style={{position:'fixed',top:v3MenuRect.top,right:v3MenuRect.right,zIndex:9999,background:'#221f1b',border:'1px solid rgba(255,240,220,0.12)',borderRadius:8,padding:'4px 0',boxShadow:'0 12px 32px rgba(0,0,0,0.7)',minWidth:150}}>
+            {[
+              {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item)},
+              {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath)},
+              {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>API.openLog(item.id)},
+              {label:'Claude (bypass)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item)},
+              {label:'수정', icon:<Pencil style={{width:11,height:11}}/>, action:()=>startEdit(item)},
+              {label:'삭제', icon:<Trash2 style={{width:11,height:11}}/>, action:()=>setDeleteConfirmId(item.id), danger:true},
+            ].map(({label,icon,action,danger}:{label:string;icon:React.ReactNode;action:()=>void;danger?:boolean}) => (
+              <button key={label} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
+                display:'flex',alignItems:'center',gap:8,padding:'6px 12px',width:'100%',
+                background:'transparent',border:'none',cursor:'pointer',
+                fontSize:12,color:danger?'#c96a5a':'#ede7dd',fontFamily:'inherit',textAlign:'left',
+              }}
+                onMouseEnter={e=>(e.currentTarget.style.background='rgba(255,240,220,0.05)')}
+                onMouseLeave={e=>(e.currentTarget.style.background='transparent')}
+              >
+                {icon}{label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="min-h-screen bg-[#0a0a0b] p-8">
+    <div className="h-screen flex flex-col overflow-hidden" style={{background:'#15120f'}}>
+      {updateInfo && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-blue-600/95 text-white text-sm px-4 py-2 flex items-center justify-between">
+          <span>🆕 새 버전 <strong>{updateInfo.version}</strong>이 있습니다</span>
+          <div className="flex items-center gap-2">
+            <button onClick={async () => {
+              try {
+                const { check } = await import('@tauri-apps/plugin-updater');
+                const { relaunch } = await import('@tauri-apps/plugin-process');
+                const update = await check();
+                if (update) { await update.downloadAndInstall(); await relaunch(); }
+              } catch (e) { showToast(`업데이트 실패: ${String(e)}`, 'error'); }
+            }} className="px-3 py-0.5 bg-white/20 rounded hover:bg-white/30 text-xs font-medium">지금 업데이트</button>
+            <button onClick={() => setUpdateInfo(null)} className="px-2 py-0.5 bg-white/10 rounded hover:bg-white/20 text-xs">나중에</button>
+          </div>
+        </div>
+      )}
       {!isTauri() && apiServerOnline === false && (
         <div className="fixed top-0 left-0 right-0 z-50 bg-amber-500/90 text-black text-sm px-4 py-2 flex items-center justify-between">
           <span>⚠️ API 서버가 꺼져 있습니다. <code className="bg-black/10 px-1 rounded">bun run start</code> 로 실행하세요. Supabase는 캐시된 인증 정보로 동작합니다.</span>
@@ -2734,7 +3253,7 @@ function App() {
       {/* 머지 확인 모달 */}
       {commitModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm p-6 space-y-4">
+          <div className="bg-[#1c1916] rounded-xl border border-stone-700/50 w-full max-w-sm p-6 space-y-4">
             <div className="flex items-center gap-3">
               <div className="bg-amber-500/15 p-2 rounded-lg border border-amber-500/30">
                 <GitCommit className="w-5 h-5 text-amber-400" />
@@ -2764,10 +3283,10 @@ function App() {
                   else showToast(`커밋 실패: ${data?.error ?? '알 수 없는 오류'}`, 'error');
                 } else if (e.key === 'Escape') setCommitModal(null);
               }}
-              className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/50"
+              className="w-full px-3 py-2 bg-[#221f1b] border border-stone-700/50 rounded-lg text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-amber-500/50"
             />
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setCommitModal(null)} className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 rounded-lg transition-colors">취소</button>
+              <button onClick={() => setCommitModal(null)} className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white border border-stone-700/50 hover:border-zinc-500 rounded-lg transition-colors">취소</button>
               <button
                 disabled={!commitModal.msg.trim()}
                 onClick={async () => {
@@ -2793,7 +3312,7 @@ function App() {
 
       {deleteWorktreeConfirm && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm p-6 space-y-4">
+          <div className="bg-[#1c1916] rounded-xl border border-stone-700/50 w-full max-w-sm p-6 space-y-4">
             <div className="flex items-center gap-3">
               <div className="bg-red-500/15 p-2 rounded-lg border border-red-500/30">
                 <Trash2 className="w-5 h-5 text-red-400" />
@@ -2803,8 +3322,8 @@ function App() {
                 <p className="text-zinc-400 text-xs mt-0.5">이 작업은 되돌릴 수 없습니다</p>
               </div>
             </div>
-            <div className="bg-zinc-900/60 rounded-lg p-3 border border-zinc-800">
-              <p className="text-xs text-zinc-300">
+            <div className="bg-[#221f1b]/60 rounded-lg p-3 border border-stone-800/40">
+              <p className="text-xs text-[#ede7dd]/90">
                 <span className="text-red-400 font-mono">{deleteWorktreeConfirm.wt.branch ?? deleteWorktreeConfirm.wt.path.split('/').pop()}</span> 워크트리를 삭제하시겠습니까?
               </p>
               <p className="text-xs text-zinc-500 mt-1 font-mono break-all">{deleteWorktreeConfirm.wt.path}</p>
@@ -2812,7 +3331,7 @@ function App() {
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setDeleteWorktreeConfirm(null)}
-                className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 rounded-lg transition-colors"
+                className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white border border-stone-700/50 hover:border-zinc-500 rounded-lg transition-colors"
               >
                 취소
               </button>
@@ -2829,7 +3348,7 @@ function App() {
 
       {mergeConfirm && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-lg p-6 space-y-4">
+          <div className="bg-[#1c1916] rounded-xl border border-stone-700/50 w-full max-w-lg p-6 space-y-4">
             <div className="flex items-center gap-3">
               <div className="bg-blue-500/15 p-2 rounded-lg border border-blue-500/30">
                 <GitBranch className="w-5 h-5 text-blue-400" />
@@ -2839,7 +3358,7 @@ function App() {
                 <p className="text-xs text-zinc-400 mt-0.5 font-mono">
                   <span className="text-teal-400">{mergeConfirm.wt.branch}</span>
                   <span className="text-zinc-500"> → </span>
-                  <span className="text-zinc-300">{mergeConfirm.mainBranch}</span>
+                  <span className="text-[#ede7dd]/90">{mergeConfirm.mainBranch}</span>
                 </p>
               </div>
             </div>
@@ -2850,15 +3369,15 @@ function App() {
               </div>
             )}
             {mergeConfirm.commits ? (
-              <div className="bg-black/40 rounded-lg p-3 border border-zinc-800">
+              <div className="bg-black/40 rounded-lg p-3 border border-stone-800/40">
                 <p className="text-[10px] text-zinc-500 mb-1.5 font-medium uppercase tracking-wide">머지될 커밋</p>
-                <pre className="text-xs text-zinc-300 font-mono whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{mergeConfirm.commits}</pre>
+                <pre className="text-xs text-[#ede7dd]/90 font-mono whitespace-pre-wrap leading-relaxed max-h-32 overflow-y-auto">{mergeConfirm.commits}</pre>
               </div>
             ) : (
               <p className="text-xs text-zinc-500 italic">커밋 없음 (이미 최신 상태)</p>
             )}
             {mergeConfirm.stat && (
-              <div className="bg-black/40 rounded-lg p-3 border border-zinc-800">
+              <div className="bg-black/40 rounded-lg p-3 border border-stone-800/40">
                 <p className="text-[10px] text-zinc-500 mb-1.5 font-medium uppercase tracking-wide">변경 파일</p>
                 <pre className="text-xs text-zinc-400 font-mono whitespace-pre-wrap leading-relaxed max-h-24 overflow-y-auto">{mergeConfirm.stat}</pre>
               </div>
@@ -2874,11 +3393,11 @@ function App() {
                   setMergeConfirm(null);
                   showToast('터미널에서 git merge 실행 중', 'success');
                 }}
-                className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors"
+                className="px-4 py-2 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-sm rounded-lg transition-colors"
               >
                 터미널에서 머지
               </button>
-              <button onClick={() => setMergeConfirm(null)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
+              <button onClick={() => setMergeConfirm(null)} className="px-4 py-2 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-sm rounded-lg transition-colors">
                 취소
               </button>
               <button
@@ -2897,7 +3416,7 @@ function App() {
       {/* 머지 에러 모달 (충돌 등) */}
       {mergeError && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#18181b] rounded-xl border border-red-800/50 w-full max-w-lg p-5 space-y-4">
+          <div className="bg-[#1c1916] rounded-xl border border-red-800/50 w-full max-w-lg p-5 space-y-4">
             {/* Header */}
             <div className="flex items-center gap-3">
               <div className="bg-red-500/15 p-2 rounded-lg border border-red-500/30 shrink-0">
@@ -2938,8 +3457,8 @@ function App() {
                 : '(충돌 파일 확인 중...)';
               const prompt = `다음 경로에서 git 머지 충돌을 해결해줘:\n\`\`\`\n${mergeError.folderPath}\n\`\`\`\n\n충돌 파일:\n${files}\n\n각 파일의 충돌 마커(<<<<<<, =======, >>>>>>>)를 제거하고 올바르게 병합한 뒤,\n\`git add .\` → \`git commit --no-edit\` 순서로 머지를 완료해줘.`;
               return (
-                <div className="bg-zinc-900/80 rounded-lg border border-zinc-700/60">
-                  <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-700/40">
+                <div className="bg-[#221f1b]/80 rounded-lg border border-stone-700/50">
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-stone-700/40">
                     <span className="text-[10px] text-zinc-400 uppercase tracking-wider font-medium">Claude Code 프롬프트</span>
                     <button
                       onClick={() => {
@@ -2950,7 +3469,7 @@ function App() {
                       <Copy className="w-3 h-3" /> 복사
                     </button>
                   </div>
-                  <pre className="text-xs text-zinc-300 font-mono px-3 py-2.5 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">{prompt}</pre>
+                  <pre className="text-xs text-[#ede7dd]/90 font-mono px-3 py-2.5 whitespace-pre-wrap leading-relaxed max-h-28 overflow-y-auto">{prompt}</pre>
                 </div>
               );
             })()}
@@ -2986,7 +3505,7 @@ function App() {
                   </button>
                 </>
               )}
-              <button onClick={() => { setMergeError(null); setMergeConflictFiles([]); }} className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
+              <button onClick={() => { setMergeError(null); setMergeConflictFiles([]); }} className="px-3 py-2 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-sm rounded-lg transition-colors">
                 닫기
               </button>
             </div>
@@ -2997,7 +3516,7 @@ function App() {
       {/* 머지 후 main 푸시 확인 모달 */}
       {mergePushConfirm && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#18181b] rounded-xl border border-zinc-700 w-full max-w-sm p-6 space-y-4">
+          <div className="bg-[#1c1916] rounded-xl border border-stone-700/50 w-full max-w-sm p-6 space-y-4">
             <div className="flex items-center gap-3">
               <div className="bg-blue-500/15 p-2 rounded-lg border border-blue-500/30">
                 <GitBranch className="w-5 h-5 text-blue-400" />
@@ -3027,7 +3546,7 @@ function App() {
               >
                 푸시
               </button>
-              <button onClick={() => setMergePushConfirm(null)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">
+              <button onClick={() => setMergePushConfirm(null)} className="px-4 py-2 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-sm rounded-lg transition-colors">
                 나중에
               </button>
             </div>
@@ -3038,15 +3557,15 @@ function App() {
       {/* 워크트리 경로 피커 모달 */}
       {worktreePickerState && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-[#18181b] rounded-xl border border-zinc-700 p-5 w-[460px] shadow-2xl">
+          <div className="bg-[#1c1916] rounded-xl border border-stone-700/50 p-5 w-[460px] shadow-2xl">
             {/* 헤더: 프로젝트명 + 모드 */}
             <div className="mb-3">
               <div className="flex items-center gap-2 mb-0.5">
                 <span className="text-[10px] font-medium text-violet-400 uppercase tracking-wider">
                   {worktreePickerState.mode === 'tmux' ? 'tmux' : 'Claude'}
                 </span>
-                <span className="text-zinc-600 text-[10px]">·</span>
-                <span className="text-xs font-semibold text-zinc-200 truncate">
+                <span className="text-[#6b6459] text-[10px]">·</span>
+                <span className="text-xs font-semibold text-[#ede7dd] truncate">
                   {worktreePickerState.item.aiName || worktreePickerState.item.name}
                 </span>
               </div>
@@ -3055,7 +3574,7 @@ function App() {
 
             {/* 감지된 워크트리 목록 */}
             {detectedWorktrees.length > 0 && (
-              <div className="mb-3 border border-zinc-700 rounded-lg overflow-hidden">
+              <div className="mb-3 border border-stone-700/50 rounded-lg overflow-hidden">
                 {detectedWorktrees.map((wt) => {
                   const wtBasename = wt.path.replace(/\/$/, '').split('/').pop() ?? wt.path;
                   const displayName = wt.branch || wtBasename;
@@ -3064,19 +3583,21 @@ function App() {
                     <button
                       key={wt.path}
                       onClick={() => setWorktreePickerValue(wt.path)}
-                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-zinc-700/50 transition-colors border-b border-zinc-700/50 last:border-0 ${
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-[#2a2520]/50 transition-colors border-b border-stone-700/50 last:border-0 ${
                         isSelected ? 'bg-violet-600/20' : ''
                       }`}
                     >
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`font-semibold ${isSelected ? 'text-violet-300' : wt.is_main ? 'text-zinc-300' : 'text-teal-300'}`}>{displayName}</span>
+                        <div className="flex items-center gap-1 flex-wrap">
+                          <span className="text-zinc-400 text-[10px]">{worktreePickerState.item.aiName || worktreePickerState.item.name}</span>
+                          <span className="text-[#6b6459] text-[10px]">/</span>
+                          <span className={`font-semibold text-xs ${isSelected ? 'text-violet-300' : wt.is_main ? 'text-[#ede7dd]/90' : 'text-teal-300'}`}>{displayName}</span>
                           {wt.is_main && <span className="text-[10px] text-zinc-500">(main)</span>}
                         </div>
-                        <span className="text-zinc-600 font-mono text-[10px] truncate block">{wtBasename}</span>
+                        <span className="text-[#6b6459] font-mono text-[10px] truncate block">{wtBasename}</span>
                       </div>
                       {wt.branch && wt.branch !== displayName && (
-                        <span className="text-zinc-500 ml-2 shrink-0 text-[10px] bg-zinc-800 px-1.5 py-0.5 rounded">{wt.branch}</span>
+                        <span className="text-zinc-500 ml-2 shrink-0 text-[10px] bg-[#221f1b] px-1.5 py-0.5 rounded">{wt.branch}</span>
                       )}
                     </button>
                   );
@@ -3095,19 +3616,19 @@ function App() {
                 if (e.key === 'Escape') { setWorktreePickerState(null); setDetectedWorktrees([]); }
               }}
               placeholder="직접 경로 입력..."
-              className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 mb-3"
+              className="w-full px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 mb-3"
             />
 
             {/* 워크트리 제거 가이드 */}
-            <div className="mb-4 px-3 py-2.5 bg-zinc-900/60 rounded-lg border border-zinc-800">
+            <div className="mb-4 px-3 py-2.5 bg-[#221f1b]/60 rounded-lg border border-stone-800/40">
               <p className="text-[10px] text-zinc-500 font-medium mb-1.5">워크트리 제거 방법</p>
               <div className="space-y-1">
                 <div className="flex items-start gap-1.5">
-                  <span className="text-zinc-600 text-[10px] mt-0.5">·</span>
+                  <span className="text-[#6b6459] text-[10px] mt-0.5">·</span>
                   <code className="text-[10px] text-violet-400 font-mono">git worktree remove &lt;path&gt;</code>
                 </div>
                 <div className="flex items-start gap-1.5">
-                  <span className="text-zinc-600 text-[10px] mt-0.5">·</span>
+                  <span className="text-[#6b6459] text-[10px] mt-0.5">·</span>
                   <span className="text-[10px] text-zinc-500"><code className="text-zinc-400 font-mono">git worktree prune</code> — 삭제된 폴더 정리</span>
                 </div>
               </div>
@@ -3116,11 +3637,11 @@ function App() {
             <div className="flex gap-2 justify-end items-center">
               <button
                 onClick={() => { setWorktreePickerState(null); setDetectedWorktrees([]); }}
-                className="px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+                className="px-3 py-1.5 text-xs text-zinc-500 hover:text-[#ede7dd]/90 transition-colors"
               >취소</button>
               <button
                 onClick={() => { executeWithWorktree(undefined); }}
-                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 border border-zinc-700 rounded-lg transition-colors"
+                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-[#ede7dd] border border-stone-700/50 rounded-lg transition-colors"
               >워크트리 없이 실행</button>
               <button
                 disabled={!worktreePickerValue.trim()}
@@ -3139,9 +3660,9 @@ function App() {
       {/* 빌드 로그 모달 */}
       {showBuildLog && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#18181b] rounded-xl border border-zinc-800 w-full max-w-4xl max-h-[80vh] flex flex-col">
+          <div className="bg-[#1c1916] rounded-xl border border-stone-800/40 w-full max-w-4xl max-h-[80vh] flex flex-col">
             {/* 헤더 */}
-            <div className="flex items-center justify-between p-6 border-b border-zinc-800">
+            <div className="flex items-center justify-between p-6 border-b border-stone-800/40">
               <div className="flex items-center gap-3">
                 {buildType === 'windows'
                   ? <Monitor className={`w-5 h-5 ${isBuilding ? 'animate-spin text-blue-400' : 'text-green-400'}`} />
@@ -3160,14 +3681,14 @@ function App() {
               </div>
               <button
                 onClick={() => setShowBuildLog(false)}
-                className="p-2 hover:bg-zinc-800 rounded-lg transition-colors"
+                className="p-2 hover:bg-[#221f1b] rounded-lg transition-colors"
               >
                 <XIcon className="w-5 h-5 text-zinc-400" />
               </button>
             </div>
 
             {/* 로그 내용 */}
-            <div className="flex-1 overflow-y-auto p-6 font-mono text-xs">
+            <div ref={buildLogContainerRef} className="flex-1 overflow-y-auto p-6 font-mono text-xs">
               <div className="space-y-1">
                 {buildLogs.map((log, index) => (
                   <div
@@ -3179,7 +3700,7 @@ function App() {
                         ? 'text-green-400'
                         : log.includes('⚠️') || log.includes('warning')
                         ? 'text-yellow-400'
-                        : 'text-zinc-300'
+                        : 'text-[#ede7dd]/90'
                     }`}
                   >
                     {log}
@@ -3194,7 +3715,7 @@ function App() {
             </div>
 
             {/* 푸터 */}
-            <div className="p-4 border-t border-zinc-800 bg-zinc-900/50">
+            <div className="p-4 border-t border-stone-800/40 bg-[#1c1916]/80">
               <div className="flex items-center justify-between">
                 <div className="text-xs text-zinc-400">
                   총 {buildLogs.length}줄의 로그
@@ -3214,12 +3735,59 @@ function App() {
                       navigator.clipboard.writeText(logText);
                       showToast('로그가 클립보드에 복사되었습니다', 'success');
                     }}
-                    className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded-lg transition-colors"
+                    className="px-3 py-1.5 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-xs rounded-lg transition-colors"
                   >
                     로그 복사
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Push 히스토리 모달 — 포트 */}
+      {showPortsHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowPortsHistory(false)}>
+          <div className="bg-[#18181b] border border-zinc-800 rounded-xl w-full max-w-md mx-4 shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-indigo-400" />
+                <span className="text-sm font-semibold text-white">Push 히스토리 — 포트</span>
+              </div>
+              <button onClick={() => setShowPortsHistory(false)} className="text-zinc-500 hover:text-white transition-colors"><XIcon className="w-4 h-4" /></button>
+            </div>
+            <div className="overflow-y-auto max-h-96">
+              {portsHistoryLoading ? (
+                <div className="flex items-center justify-center py-10"><RefreshCw className="w-5 h-5 text-zinc-500 animate-spin" /></div>
+              ) : portsHistoryList.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 gap-2">
+                  <Clock className="w-8 h-8 text-zinc-700" />
+                  <p className="text-sm text-zinc-500">저장된 히스토리가 없습니다</p>
+                  <p className="text-xs text-zinc-600">Push 시 자동으로 스냅샷이 저장됩니다</p>
+                </div>
+              ) : portsHistoryList.map((snap, i) => (
+                <div key={snap.id} className="flex items-center justify-between px-4 py-3 border-b border-zinc-800/60 hover:bg-zinc-800/30 transition-colors">
+                  <div className="min-w-0">
+                    <p className="text-sm text-white font-medium">{new Date(snap.created_at).toLocaleString('ko-KR')}</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      {snap.row_count}개 포트{snap.device_name ? ` · ${snap.device_name}` : ''}
+                      {i === 0 && <span className="ml-1.5 text-emerald-500 font-medium">최신</span>}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => restorePortsSnapshot(snap.id)}
+                    disabled={portsHistoryRestoring !== null}
+                    className="ml-3 shrink-0 flex items-center gap-1 px-2.5 py-1.5 text-xs bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-lg transition-all disabled:opacity-50"
+                  >
+                    {portsHistoryRestoring === snap.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RotateCw className="w-3 h-3" />}
+                    복원
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="px-4 py-2.5 border-t border-zinc-800 bg-zinc-900/40">
+              <p className="text-xs text-zinc-600">복원 시 현재 Supabase 포트 데이터를 선택한 시점으로 되돌립니다</p>
             </div>
           </div>
         </div>
@@ -3254,19 +3822,23 @@ function App() {
         ))}
       </div>
 
-      <div className="max-w-4xl mx-auto">
+      <div className="flex-1 flex flex-col min-h-0">
         {/* 탭 네비게이션 */}
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2 px-6 py-2.5 shrink-0 flex-wrap" style={{borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
           <div className="flex items-center gap-2">
-            <div className="flex gap-1 bg-[#18181b] border border-zinc-800 rounded-xl p-1 w-fit">
+            <div className="flex gap-1 rounded-xl p-1 w-fit" style={{background:'#1c1916',border:'1px solid rgba(255,240,220,0.07)'}}>
               {!isMobile && (
                 <button
                   onClick={() => setActiveTab('ports')}
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
                     activeTab === 'ports'
-                      ? 'bg-zinc-700 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
+                      ? 'shadow-sm'
+                      : ''
                   }`}
+                  style={{
+                    background: activeTab === 'ports' ? '#2a2520' : 'transparent',
+                    color: activeTab === 'ports' ? '#ede7dd' : '#a39a8c',
+                  }}
                 >
                   <Server className="w-3.5 h-3.5" />
                   프로젝트 관리
@@ -3274,11 +3846,11 @@ function App() {
               )}
               <button
                 onClick={() => setActiveTab('portal')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  activeTab === 'portal'
-                    ? 'bg-zinc-700 text-white shadow-sm'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60'
-                }`}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200"
+                style={{
+                  background: activeTab === 'portal' ? '#2a2520' : 'transparent',
+                  color: activeTab === 'portal' ? '#ede7dd' : '#a39a8c',
+                }}
               >
                 <BookMarked className="w-3.5 h-3.5" />
                 {isMobile ? '북마크' : '포털'}
@@ -3288,11 +3860,11 @@ function App() {
             {/* 포털 탭 전용 액션 버튼 (글로벌 위치) */}
             {activeTab === 'portal' && (
               <>
-                <div className="flex items-center rounded-lg border border-zinc-800 overflow-hidden">
+                <div className="flex items-center rounded-lg border border-stone-800/40 overflow-hidden">
                   <button
                     onClick={() => portalActionsRef.current?.push()}
                     title="Supabase Push"
-                    className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-800 transition-all flex items-center gap-1"
+                    className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm border-r border-stone-800/40 transition-all flex items-center gap-1"
                   >
                     <CloudUpload className="w-3.5 h-3.5 text-indigo-400" />
                     <span className="text-xs font-medium">Push</span>
@@ -3300,7 +3872,7 @@ function App() {
                   <button
                     onClick={() => portalActionsRef.current?.pull()}
                     title="Supabase Pull"
-                    className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm transition-all flex items-center gap-1"
+                    className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm transition-all flex items-center gap-1"
                   >
                     <CloudDownload className="w-3.5 h-3.5 text-indigo-400" />
                     <span className="text-xs font-medium">Pull</span>
@@ -3309,21 +3881,21 @@ function App() {
                 <button
                   onClick={() => portalActionsRef.current?.exportData()}
                   title="내보내기"
-                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                  className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
                 >
                   <Download className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => portalActionsRef.current?.importData()}
                   title="불러오기"
-                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                  className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
                 >
                   <Upload className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => portalActionsRef.current?.openSettings()}
                   title="Supabase / 단말 설정"
-                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                  className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
                 >
                   <Settings className="w-4 h-4" />
                 </button>
@@ -3333,29 +3905,36 @@ function App() {
             {/* 포트 탭 전용 액션 버튼 (글로벌 위치) */}
             {activeTab === 'ports' && (
               <>
-                <button onClick={handleExportPorts} title="내보내기" className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all">
+                <button onClick={handleExportPorts} title="내보내기" className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all">
                   <Download className="w-4 h-4" />
                 </button>
-                <button onClick={handleImportPorts} title="불러오기" className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all">
+                <button onClick={handleImportPorts} title="불러오기" className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all">
                   <Upload className="w-4 h-4" />
                 </button>
-                <button onClick={handleRefresh} disabled={isRefreshing || isAiEnriching} title={isAiEnriching ? 'AI 분석 중…' : '새로고침'} className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                <button onClick={handleRefresh} disabled={isRefreshing || isAiEnriching} title={isAiEnriching ? 'AI 분석 중…' : '새로고침'} className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
                   <RefreshCw className={`w-4 h-4 ${isRefreshing || isAiEnriching ? 'animate-spin' : ''}`} />
                 </button>
-                <div className="flex items-center rounded-xl border border-zinc-800 overflow-hidden">
-                  <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm border-r border-zinc-800 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                <div className="flex items-center rounded-xl border border-stone-800/40 overflow-hidden">
+                  <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm border-r border-stone-800/40 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
                     <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
                     <span className="text-xs font-medium">Push</span>
                   </button>
-                  <button onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-300 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <button onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
                     <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
                     <span className="text-xs font-medium">Pull</span>
                   </button>
                 </div>
                 <button
+                  onClick={openPortsHistory}
+                  title="Push 히스토리 / 복원"
+                  className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
+                >
+                  <Clock className="w-4 h-4" />
+                </button>
+                <button
                   onClick={() => setOpenPortalSettings(true)}
                   title="Supabase / 단말 설정"
-                  className="p-2 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all"
+                  className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
                 >
                   <Settings className="w-4 h-4" />
                 </button>
@@ -3366,7 +3945,7 @@ function App() {
             <button
               onClick={() => setShowSetupWizard(true)}
               title="초기 설정 마법사"
-              className="px-2.5 py-1.5 bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 text-xs rounded-xl border border-zinc-800 hover:border-zinc-600 transition-all flex items-center gap-1"
+              className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 text-xs rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all flex items-center gap-1"
             >
               <Rocket className="w-3.5 h-3.5" />
               <span>세팅</span>
@@ -3379,7 +3958,7 @@ function App() {
               className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-xl border transition-all ${
                 logCopied
                   ? 'bg-green-500/10 border-green-500/30 text-green-400'
-                  : 'bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 border-zinc-800 hover:border-zinc-600'
+                  : 'bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 border-stone-800/40 hover:border-stone-700/60'
               }`}
             >
               {logCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
@@ -3390,7 +3969,7 @@ function App() {
             <button
               onClick={() => setShowGuideModal(true)}
               title="사용자 가이드"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-xl border bg-[#18181b] hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300 border-zinc-800 hover:border-zinc-600 transition-all"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-xl border bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 border-stone-800/40 hover:border-stone-700/60 transition-all"
             >
               <BookOpen className="w-3.5 h-3.5" />
               <span>가이드</span>
@@ -3399,19 +3978,21 @@ function App() {
         </div>
 
         {/* 포털 탭 — 항상 마운트, isVisible로 UI 표시 제어 (설정 모달은 탭 무관하게 동작) */}
-        <PortalManager
-          showToast={showToast}
-          openSettings={openPortalSettings}
-          onSettingsClosed={() => setOpenPortalSettings(false)}
-          actionsRef={portalActionsRef}
-          isVisible={activeTab === 'portal'}
-        />
+        <div className={activeTab === 'portal' ? 'flex-1 overflow-auto' : ''}>
+          <PortalManager
+            showToast={showToast}
+            openSettings={openPortalSettings}
+            onSettingsClosed={() => setOpenPortalSettings(false)}
+            actionsRef={portalActionsRef}
+            isVisible={activeTab === 'portal'}
+          />
+        </div>
 
         {/* 경로 remapping 모달 — 다른 기기 Pull 후 경로 없는 포트 설정 */}
         {remappingPorts.length > 0 && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[90] flex items-center justify-center p-6">
-            <div className="bg-[#0a0a0b] border border-zinc-700/80 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
-              <div className="px-5 py-4 border-b border-zinc-800 shrink-0">
+            <div className="bg-[#15120f] border border-stone-700/80 rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
+              <div className="px-5 py-4 border-b border-stone-800/40 shrink-0">
                 <h2 className="text-sm font-semibold text-white flex items-center gap-2">
                   <FolderOpen className="w-4 h-4 text-amber-400" />
                   경로 설정 필요 — {remappingPorts.length}개 프로젝트
@@ -3420,7 +4001,7 @@ function App() {
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {remappingPorts.map(p => (
-                  <div key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3">
+                  <div key={p.id} className="bg-[#221f1b] border border-stone-800/40 rounded-xl p-3">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium text-white">{p.name}</span>
                       {p.port && <span className="text-xs text-zinc-500 font-mono">:{p.port}</span>}
@@ -3431,7 +4012,7 @@ function App() {
                         value={remappingPaths[p.id] ?? ''}
                         onChange={e => setRemappingPaths(prev => ({ ...prev, [p.id]: e.target.value }))}
                         placeholder="/Users/nhis/..."
-                        className="flex-1 px-3 py-1.5 text-xs bg-black/40 border border-zinc-700 text-white placeholder-zinc-600 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
+                        className="flex-1 px-3 py-1.5 text-xs bg-black/40 border border-stone-700/50 text-white placeholder-zinc-600 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 font-mono"
                       />
                       <button
                         onClick={async () => {
@@ -3441,7 +4022,7 @@ function App() {
                             if (path) setRemappingPaths(prev => ({ ...prev, [p.id]: path }));
                           } catch {}
                         }}
-                        className="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 text-xs rounded-lg border border-zinc-700 transition-all"
+                        className="px-2.5 py-1.5 bg-[#221f1b] hover:bg-[#2a2520] text-zinc-400 hover:text-[#ede7dd] text-xs rounded-lg border border-stone-700/50 transition-all"
                         title="폴더 선택"
                       >
                         <FolderOpen className="w-3.5 h-3.5" />
@@ -3450,10 +4031,10 @@ function App() {
                   </div>
                 ))}
               </div>
-              <div className="border-t border-zinc-800 px-5 py-4 flex justify-between shrink-0">
+              <div className="border-t border-stone-800/40 px-5 py-4 flex justify-between shrink-0">
                 <button
                   onClick={() => setRemappingPorts([])}
-                  className="px-4 py-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+                  className="px-4 py-2 text-sm text-zinc-500 hover:text-[#ede7dd]/90 transition-colors"
                 >
                   나중에 설정
                 </button>
@@ -3481,168 +4062,156 @@ function App() {
         {/* 설정 마법사 오버레이 */}
         {/* 사용자 가이드 모달 */}
         {showGuideModal && (
-          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[200] flex items-center justify-center p-4" onClick={() => setShowGuideModal(false)}>
-            <div className="bg-[#0f0f11] border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 z-[200] flex items-start justify-center" style={{background:'rgba(10,8,6,0.65)',backdropFilter:'blur(2px)',paddingTop:60}} onClick={() => setShowGuideModal(false)}>
+            <div style={{width:640,maxHeight:'calc(100vh - 100px)',background:'#1c1916',borderRadius:12,border:'1px solid rgba(255,240,220,0.12)',boxShadow:'0 24px 80px rgba(0,0,0,0.6)',overflow:'hidden',display:'flex',flexDirection:'column'}} onClick={e => e.stopPropagation()}>
               {/* 헤더 */}
-              <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
-                <div className="flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-indigo-400" />
-                  <h2 className="text-base font-semibold text-white">포트 관리기 사용자 가이드</h2>
-                </div>
-                <button onClick={() => setShowGuideModal(false)} className="text-zinc-500 hover:text-white transition-colors">
-                  <XIcon className="w-5 h-5" />
+              <div style={{padding:'14px 20px',display:'flex',alignItems:'center',gap:8,borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
+                <GitBranch className="w-3.5 h-3.5" style={{color:'#e8a557'}} />
+                <h2 style={{margin:0,fontSize:14,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>포트 관리기 사용자 가이드</h2>
+                <div style={{flex:1}}/>
+                <button onClick={() => setShowGuideModal(false)} style={{background:'transparent',border:'none',color:'#a39a8c',cursor:'pointer',padding:4,display:'flex',alignItems:'center'}}>
+                  <XIcon className="w-3.5 h-3.5" />
                 </button>
               </div>
               {/* 본문 */}
-              <div className="overflow-y-auto p-6 space-y-6 text-sm text-zinc-300">
-                {/* 앱 소개 */}
-                <section>
-                  <p className="text-zinc-400 text-xs mb-3">처음 쓰는 분도 5분이면 핵심 기능을 모두 쓸 수 있습니다.</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="bg-[#18181b] border border-zinc-800 rounded-xl p-4">
-                      <div className="text-indigo-400 font-medium mb-1">📁 프로젝트 관리</div>
-                      <div className="text-zinc-400 text-xs">.command 파일로 개발 서버를 한 클릭으로 실행/중지/재시작</div>
-                    </div>
-                    <div className="bg-[#18181b] border border-zinc-800 rounded-xl p-4">
-                      <div className="text-indigo-400 font-medium mb-1">🌐 포털</div>
-                      <div className="text-zinc-400 text-xs">자주 쓰는 사이트·폴더를 카테고리별 북마크로 관리</div>
-                    </div>
-                  </div>
-                </section>
+              <div style={{overflow:'auto',padding:'16px 20px'}}>
+                <div style={{fontSize:12.5,color:'#a39a8c',marginBottom:14}}>
+                  처음 쓰는 분도 5분이면 핵심 기능을 모두 쓸 수 있습니다.
+                </div>
 
-                {/* 5분 퀵스타트 */}
-                <section>
-                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2"><span className="bg-indigo-500/20 text-indigo-300 text-xs px-2 py-0.5 rounded-full">⚡ 퀵스타트</span></h3>
-                  <div className="space-y-2">
-                    {[
-                      ['Step 1', '브라우저: localhost:9000 접속 또는 포트관리기.app 실행'],
-                      ['Step 2', 'Finder에서 .command 파일을 앱 창으로 끌어다 놓기 → 포트·폴더 자동 감지'],
-                      ['Step 3', '프로젝트 카드의 ▶ 실행 버튼 클릭 → 우측 상단 초록 Toast 확인'],
-                      ['Step 4', '카드의 🌐 열기 버튼 → Chrome에서 localhost:포트 자동 오픈'],
-                    ].map(([step, desc]) => (
-                      <div key={step} className="flex gap-3 items-start">
-                        <span className="bg-zinc-800 text-zinc-400 text-xs px-2 py-0.5 rounded shrink-0 mt-0.5">{step}</span>
-                        <span className="text-zinc-300 text-xs">{desc}</span>
+                {/* GuideCards 2-col */}
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:18}}>
+                  {[
+                    {icon:<Server className="w-3 h-3"/>, tone:{bg:'rgba(232,165,87,0.12)',fg:'#e8a557'}, title:'프로젝트 관리', desc:'.command 파일로 개발 서버를 한 클릭으로 실행/중지/재시작'},
+                    {icon:<BookMarked className="w-3 h-3"/>, tone:{bg:'rgba(123,167,201,0.14)',fg:'#7ba7c9'}, title:'포털', desc:'자주 쓰는 사이트·폴더를 카테고리별 북마크로 관리'},
+                  ].map(c => (
+                    <div key={c.title} style={{padding:'14px 16px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:9}}>
+                      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+                        <div style={{width:26,height:26,borderRadius:6,background:c.tone.bg,color:c.tone.fg,display:'flex',alignItems:'center',justifyContent:'center'}}>{c.icon}</div>
+                        <div style={{fontSize:13,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>{c.title}</div>
                       </div>
-                    ))}
-                  </div>
-                </section>
+                      <div style={{fontSize:11.5,color:'#a39a8c',lineHeight:1.5}}>{c.desc}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 퀵스타트 */}
+                <div style={{display:'flex',alignItems:'center',gap:6,margin:'0 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>
+                  <span style={{width:20,height:20,borderRadius:5,background:'rgba(232,165,87,0.12)',color:'#e8a557',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
+                    <Play className="w-2.5 h-2.5"/>
+                  </span>
+                  퀵스타트
+                </div>
+                <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
+                  {[
+                    '브라우저: localhost:9000 접속 또는 포트관리기.app 실행',
+                    'Finder에서 .command 파일을 앱 창으로 끌어다 놓기 → 포트·폴더 자동 감지',
+                    '프로젝트 카드의 ▶ 실행 버튼 클릭 → 우측 상단 초록 Toast 확인',
+                    '카드의 🟢 열기 버튼 → Chrome에서 localhost:포트 자동 오픈',
+                  ].map((line, i) => (
+                    <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 10px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:6,fontSize:12}}>
+                      <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:'#e8a557',background:'rgba(232,165,87,0.12)',padding:'2px 7px',borderRadius:4,flexShrink:0}}>Step {i+1}</span>
+                      <span style={{flex:1,color:'#ede7dd'}}>{line}</span>
+                    </div>
+                  ))}
+                </div>
 
                 {/* 프로젝트 카드 버튼 */}
-                <section>
-                  <h3 className="text-white font-semibold mb-3">프로젝트 카드 버튼</h3>
-                  <div className="bg-[#18181b] border border-zinc-800 rounded-xl overflow-hidden">
-                    {[
-                      ['▶ 실행', '.command 파일 실행, 로그 자동 저장'],
-                      ['⏹ 중지', 'SIGTERM → (응답 없으면) SIGKILL 자동 전환'],
-                      ['⚠ 강제 재실행', '모든 PID 즉시 종료 → 500ms 대기 → 재실행'],
-                      ['🌐 열기', 'Chrome에서 localhost:포트 오픈'],
-                      ['📁 폴더', 'Finder에서 프로젝트 폴더 열기'],
-                      ['📋 로그', 'Terminal에서 tail -f로 실시간 로그 확인'],
-                    ].map(([btn, desc], i) => (
-                      <div key={btn} className={`flex gap-3 px-4 py-2.5 text-xs ${i % 2 === 0 ? '' : 'bg-zinc-900/40'}`}>
-                        <span className="text-indigo-300 font-medium w-28 shrink-0">{btn}</span>
-                        <span className="text-zinc-400">{desc}</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
+                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>프로젝트 카드 버튼</div>
+                <div style={{border:'1px solid rgba(255,240,220,0.07)',borderRadius:8,overflow:'hidden',background:'#15120f',marginBottom:16}}>
+                  {[
+                    ['▶ 실행', '.command 파일 실행, 로그 자동 저장'],
+                    ['■ 중지', 'SIGTERM → (응답 없으면) SIGKILL 자동 전환'],
+                    ['⟳ 강제 재실행', '모든 PID 즉시 종료 → 500ms 대기 → 재실행'],
+                    ['● 열기', 'Chrome에서 localhost:포트 오픈'],
+                    ['📁 폴더', 'Finder에서 프로젝트 폴더 열기'],
+                    ['📜 로그', 'Terminal에서 tail -f로 실시간 로그 확인'],
+                  ].map(([btn, desc], i) => (
+                    <div key={String(btn)} style={{display:'grid',gridTemplateColumns:'120px 1fr',gap:10,padding:'8px 12px',fontSize:12,borderTop:i===0?'none':'1px solid rgba(255,240,220,0.07)'}}>
+                      <span style={{color:'#e8a557',fontFamily:"'JetBrains Mono',monospace"}}>{btn}</span>
+                      <span style={{color:'#a39a8c'}}>{desc}</span>
+                    </div>
+                  ))}
+                </div>
 
                 {/* 포털 탭 */}
-                <section>
-                  <h3 className="text-white font-semibold mb-3">포털 탭</h3>
-                  <div className="space-y-2 text-xs text-zinc-400">
-                    <p>우측 하단 <span className="text-white">+</span> 버튼 → URL 또는 폴더 경로 입력</p>
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      <div className="bg-[#18181b] border border-zinc-800 rounded-lg p-3">
-                        <div className="text-zinc-300 font-medium mb-1">📌 핀 고정</div>
-                        <div>카드 hover → 핀 아이콘 → 최상단 고정</div>
+                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>포털 탭</div>
+                <div style={{fontSize:12,color:'#a39a8c',marginBottom:10}}>우측 상단 + 버튼 → URL 또는 폴더 경로 입력</div>
+                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:16}}>
+                  {[
+                    {icon:<Star className="w-3 h-3"/>, tone:{bg:'rgba(232,165,87,0.12)',fg:'#e8a557'}, title:'핀 고정', desc:'카드 hover → 핀 아이콘 → 최상단 고정'},
+                    {icon:<RefreshCw className="w-3 h-3"/>, tone:{bg:'rgba(90,192,74,0.12)',fg:'#8fb96e'}, title:'기기 동기화', desc:'URL·카테고리는 전 기기 공유, 폴더는 기기별 관리'},
+                  ].map(c => (
+                    <div key={c.title} style={{padding:'10px 12px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:9}}>
+                      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+                        <div style={{width:26,height:26,borderRadius:6,background:c.tone.bg,color:c.tone.fg,display:'flex',alignItems:'center',justifyContent:'center'}}>{c.icon}</div>
+                        <div style={{fontSize:13,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>{c.title}</div>
                       </div>
-                      <div className="bg-[#18181b] border border-zinc-800 rounded-lg p-3">
-                        <div className="text-zinc-300 font-medium mb-1">🔄 기기 동기화</div>
-                        <div>URL·카테고리는 전 기기 공유, 폴더는 기기별 관리</div>
-                      </div>
+                      <div style={{fontSize:11.5,color:'#a39a8c',lineHeight:1.5}}>{c.desc}</div>
                     </div>
-                  </div>
-                </section>
+                  ))}
+                </div>
 
                 {/* 숨겨진 기능 */}
-                <section>
-                  <h3 className="text-white font-semibold mb-3">💎 이런 기능이 있었어? TOP 6</h3>
-                  <div className="space-y-1.5">
-                    {[
-                      ['Cmd+F', '프로젝트 검색창 즉시 포커스'],
-                      ['✨ AI 버튼', '전체 프로젝트 이름·카테고리 한 번에 자동 생성'],
-                      ['⚠ 강제 재실행', '좀비 프로세스 한 방에 정리'],
-                      ['📋 로그 버튼', 'Terminal 자동 오픈 + tail -f 실시간 확인'],
-                      ['JSON 내보내기', 'Supabase 없이 백업/복원 가능'],
-                      ['단말 조회', '설정 → 고급 설정 → 다른 맥의 포트 목록 Pull'],
-                    ].map(([feat, desc]) => (
-                      <div key={feat} className="flex gap-2 items-center text-xs">
-                        <span className="text-amber-400 font-medium w-28 shrink-0">{feat}</span>
-                        <span className="text-zinc-400">{desc}</span>
-                      </div>
-                    ))}
-                  </div>
-                </section>
+                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>💎 이런 기능이 있었어? TOP 6</div>
+                <div style={{border:'1px solid rgba(255,240,220,0.07)',borderRadius:8,overflow:'hidden',background:'#15120f',marginBottom:16}}>
+                  {[
+                    ['Cmd+F', '프로젝트 검색창 즉시 포커스'],
+                    ['✨ AI 버튼', '전체 프로젝트 이름·카테고리 한 번에 자동 생성'],
+                    ['⚠ 강제 재실행', '좀비 프로세스 한 방에 정리'],
+                    ['📜 로그 버튼', 'Terminal 자동 오픈 + tail -f 실시간 확인'],
+                    ['JSON 내보내기', 'Supabase 없이 백업/복원 가능'],
+                    ['단말 조회', '설정 → 고급 설정 → 다른 맥의 포트 목록 Pull'],
+                  ].map(([feat, desc], i) => (
+                    <div key={String(feat)} style={{display:'grid',gridTemplateColumns:'120px 1fr',gap:10,padding:'8px 12px',fontSize:12,borderTop:i===0?'none':'1px solid rgba(255,240,220,0.07)'}}>
+                      <span style={{color:'#e8a557',fontFamily:"'JetBrains Mono',monospace"}}>{feat}</span>
+                      <span style={{color:'#a39a8c'}}>{desc}</span>
+                    </div>
+                  ))}
+                </div>
 
                 {/* 북마크 웹버전 */}
-                <section>
-                  <h3 className="text-white font-semibold mb-3">🌍 북마크 웹버전 (어디서나 접속)</h3>
-                  <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-4 mb-3 text-xs text-zinc-300">
-                    포털 탭과 동일한 북마크 기능을 <span className="text-indigo-300 font-medium">Vercel 배포 URL</span>로 제공합니다.<br />
-                    회사 PC, 스마트폰, 어디서나 브라우저 하나로 내 북마크에 접근할 수 있습니다.
-                  </div>
-                  <div className="space-y-1.5 text-xs mb-3">
-                    {[
-                      ['비밀번호 보호', '배포 시 환경변수로 설정 — 타인 접근 차단'],
-                      ['기기 선택', '첫 접속 시 Supabase 등록 기기 목록에서 선택'],
-                      ['자동 Pull', '접속하면 선택 기기의 북마크를 즉시 불러옴'],
-                      ['모바일 최적화', '스마트폰에서도 편하게 사용 가능'],
-                    ].map(([feat, desc]) => (
-                      <div key={feat} className="flex gap-2 items-start">
-                        <span className="text-indigo-300 font-medium w-24 shrink-0">{feat}</span>
-                        <span className="text-zinc-400">{desc}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="bg-[#18181b] border border-zinc-800 rounded-lg p-3 text-xs">
-                    <div className="text-zinc-400 mb-1">포털 탭 vs 북마크 웹버전</div>
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-zinc-500">
-                      <span className="text-zinc-300">포털 탭</span><span className="text-zinc-300">웹버전</span>
-                      <span>localhost:9000</span><span>Vercel URL</span>
-                      <span>프로젝트 관리 함께</span><span>북마크만</span>
-                      <span>인터넷 불필요</span><span>어디서나 접속</span>
+                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>🌍 북마크 웹버전</div>
+                <div style={{background:'rgba(232,165,87,0.06)',border:'1px solid rgba(232,165,87,0.2)',borderRadius:9,padding:'12px 14px',marginBottom:10,fontSize:12,color:'#ede7dd',lineHeight:1.6}}>
+                  포털 탭과 동일한 북마크 기능을 <span style={{color:'#e8a557',fontWeight:500}}>Vercel 배포 URL</span>로 제공합니다.<br/>
+                  회사 PC, 스마트폰, 어디서나 브라우저 하나로 내 북마크에 접근할 수 있습니다.
+                </div>
+                <div style={{border:'1px solid rgba(255,240,220,0.07)',borderRadius:8,overflow:'hidden',background:'#15120f',marginBottom:16}}>
+                  {[
+                    ['비밀번호 보호', '배포 시 환경변수로 설정 — 타인 접근 차단'],
+                    ['기기 선택', '첫 접속 시 Supabase 등록 기기 목록에서 선택'],
+                    ['자동 Pull', '접속하면 선택 기기의 북마크를 즉시 불러옴'],
+                    ['모바일 최적화', '스마트폰에서도 편하게 사용 가능'],
+                  ].map(([feat, desc], i) => (
+                    <div key={String(feat)} style={{display:'grid',gridTemplateColumns:'120px 1fr',gap:10,padding:'8px 12px',fontSize:12,borderTop:i===0?'none':'1px solid rgba(255,240,220,0.07)'}}>
+                      <span style={{color:'#e8a557',fontFamily:"'JetBrains Mono',monospace"}}>{feat}</span>
+                      <span style={{color:'#a39a8c'}}>{desc}</span>
                     </div>
-                  </div>
-                </section>
+                  ))}
+                </div>
 
                 {/* 트러블슈팅 */}
-                <section>
-                  <h3 className="text-white font-semibold mb-3">🔧 자주 겪는 문제</h3>
-                  <div className="space-y-2 text-xs">
-                    {[
-                      ['서버가 안 켜져요', '카드의 ⚠ 강제 재실행 클릭'],
-                      ['Push/Pull이 안 눌려요', '⚙ 세팅에서 Supabase URL + anon key 확인'],
-                      ['포트 번호가 안 잡혀요', '.command 파일 안에 PORT=3000 또는 localhost:3000 포함 필요'],
-                      ['웹버전에 내 기기가 없어요', '세팅 → 기기 이름 확인 후 Device ID 직접 입력'],
-                    ].map(([q, a]) => (
-                      <div key={q} className="bg-[#18181b] border border-zinc-800 rounded-lg p-3">
-                        <div className="text-zinc-300 font-medium mb-0.5">Q. {q}</div>
-                        <div className="text-zinc-400">→ {a}</div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
+                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>🔧 자주 겪는 문제</div>
+                <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
+                  {[
+                    ['서버가 안 켜져요', '카드의 ⚠ 강제 재실행 클릭'],
+                    ['Push/Pull이 안 눌려요', '⚙ 세팅에서 Supabase URL + anon key 확인'],
+                    ['포트 번호가 안 잡혀요', '.command 파일 안에 PORT=3000 또는 localhost:3000 포함 필요'],
+                    ['웹버전에 내 기기가 없어요', '세팅 → 기기 이름 확인 후 Device ID 직접 입력'],
+                  ].map(([q, a]) => (
+                    <div key={String(q)} style={{background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:8,padding:'10px 12px'}}>
+                      <div style={{fontSize:12,fontWeight:500,color:'#ede7dd',marginBottom:2}}>Q. {q}</div>
+                      <div style={{fontSize:12,color:'#a39a8c'}}>→ {a}</div>
+                    </div>
+                  ))}
+                </div>
 
                 {/* 단축키 */}
-                <section>
-                  <h3 className="text-white font-semibold mb-2">⌨️ 단축키</h3>
-                  <div className="flex gap-4 text-xs text-zinc-400">
-                    <span><kbd className="bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded text-xs">Cmd+F</kbd> 검색창 포커스</span>
-                    <span><kbd className="bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded text-xs">Esc</kbd> 검색창 닫기</span>
-                  </div>
-                </section>
+                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>⌨️ 단축키</div>
+                <div style={{display:'flex',gap:16,fontSize:12,color:'#a39a8c',marginBottom:8}}>
+                  <span><kbd style={{background:'#221f1b',color:'#ede7dd',padding:'2px 6px',borderRadius:4,fontSize:11,fontFamily:"'JetBrains Mono',monospace"}}>Cmd+F</kbd> 검색창 포커스</span>
+                  <span><kbd style={{background:'#221f1b',color:'#ede7dd',padding:'2px 6px',borderRadius:4,fontSize:11,fontFamily:"'JetBrains Mono',monospace"}}>Esc</kbd> 검색창 닫기</span>
+                </div>
               </div>
             </div>
           </div>
@@ -3653,7 +4222,7 @@ function App() {
           const target = ports.find(p => p.id === deleteConfirmId);
           return (
             <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[300] flex items-center justify-center p-4" onClick={() => setDeleteConfirmId(null)}>
-              <div className="bg-[#18181b] border border-zinc-700 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
+              <div className="bg-[#1c1916] border border-stone-700/50 rounded-2xl shadow-2xl w-full max-w-sm p-6" onClick={e => e.stopPropagation()}>
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-9 h-9 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center shrink-0">
                     <Trash2 className="w-4 h-4 text-red-400" />
@@ -3663,11 +4232,11 @@ function App() {
                     <p className="text-xs text-zinc-500 mt-0.5">이 작업은 되돌릴 수 없습니다</p>
                   </div>
                 </div>
-                <p className="text-sm text-zinc-300 mb-5">
+                <p className="text-sm text-[#ede7dd]/90 mb-5">
                   <span className="text-white font-medium">"{target?.name ?? deleteConfirmId}"</span> 포트를 삭제하시겠습니까?
                 </p>
                 <div className="flex gap-2">
-                  <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-xl border border-zinc-700 transition-all">취소</button>
+                  <button onClick={() => setDeleteConfirmId(null)} className="flex-1 py-2 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-sm rounded-xl border border-stone-700/50 transition-all">취소</button>
                   <button onClick={() => handleConfirmDelete(deleteConfirmId)} className="flex-1 py-2 bg-red-600 hover:bg-red-500 text-white text-sm rounded-xl border border-red-500 transition-all">삭제</button>
                 </div>
               </div>
@@ -3710,1069 +4279,435 @@ function App() {
           />
         )}
 
-        {/* 포트 관리 탭 */}
-        {activeTab === 'ports' && <>
-
-        {/* Vercel 배포본 안내 배너 — filesystem 기능 비활성 상태 */}
-        {isDeployedWeb() && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-4 flex items-start gap-3">
-            <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-            <div className="flex-1 text-sm text-amber-200">
-              <p className="font-medium mb-0.5">조회 전용 모드</p>
-              <p className="text-xs text-amber-300/80">
-                이 화면은 웹에 배포된 포털입니다. 프로젝트 추가·실행·빌드는 로컬 데스크톱 앱에서만 동작합니다. 포털(북마크) 탭은 정상 사용 가능합니다.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* 헤더 */}
-        <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-6 mb-6">
-          {/* 헤더 1행: 타이틀 + 주요 버튼 */}
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="bg-zinc-900 p-2 rounded-lg border border-zinc-700 shrink-0">
-                <Server className="w-5 h-5 text-zinc-500" />
+        {/* 포트 관리 탭 - V3 Sidebar */}
+        {activeTab === 'ports' && (
+          <div style={{flex:1,display:'flex',minHeight:0,overflow:'hidden'}}>
+            {/* LEFT SIDEBAR */}
+            <div style={{
+              width:240,flexShrink:0,display:'flex',flexDirection:'column',
+              background:'#1c1916',borderRight:'1px solid rgba(255,240,220,0.07)',
+              overflowY:'auto' as const,
+            }}>
+              {/* Logo */}
+              <div style={{
+                padding:'16px 12px 12px',display:'flex',alignItems:'center',gap:8,
+                borderBottom:'1px solid rgba(255,240,220,0.07)',
+              }}>
+                <div style={{
+                  width:22,height:22,borderRadius:6,background:'#e8a557',
+                  display:'flex',alignItems:'center',justifyContent:'center',
+                  fontSize:11,fontWeight:700,fontFamily:'JetBrains Mono, monospace',color:'#15120f',
+                }}>P</div>
+                <span style={{fontSize:13,fontWeight:600,color:'#ede7dd'}}>Port Manager</span>
               </div>
-              <div className="min-w-0">
-                <h1 className="text-xl font-semibold text-white whitespace-nowrap">프로젝트 관리 프로그램</h1>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <p className="text-xs text-zinc-400 whitespace-nowrap">로컬 개발 프로젝트를 관리하세요</p>
+
+              {/* Search */}
+              <div style={{padding:'10px 8px'}}>
+                <div style={{position:'relative'}}>
+                  <Search style={{position:'absolute',left:8,top:'50%',transform:'translateY(-50%)',width:12,height:12,color:'#6b6459'}} />
+                  <input
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder="Search…"
+                    style={{
+                      width:'100%',paddingLeft:26,paddingRight:8,paddingTop:6,paddingBottom:6,
+                      background:'#221f1b',border:'1px solid rgba(255,240,220,0.07)',
+                      borderRadius:6,color:'#ede7dd',fontSize:12,outline:'none',
+                      fontFamily:'Inter Tight, system-ui, sans-serif',boxSizing:'border-box' as const,
+                    }}
+                  />
                 </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 ml-4">
-              <button
-                onClick={handleCopyAiNamePrompt}
-                title="Claude Code에 붙여넣을 AI이름 생성 프롬프트를 클립보드에 복사합니다"
-                className="px-2.5 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 text-sm rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all flex items-center gap-1"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                <span className="text-xs font-medium">AI이름 프롬프트</span>
-              </button>
-            </div>
-          </div>
 
-          {/* 헤더 2행: 빌드 버튼 (로컬 웹 모드 전용 — Vercel에서는 API 서버 없음) */}
-          {!isTauri() && !isDeployedWeb() && (
-            <div className="flex items-center gap-2 justify-end mb-3">
-              <button onClick={() => API.openBuildFolder()} className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center gap-1.5">
-                <FolderOpen className="w-3.5 h-3.5" />
-                <span className="font-medium">DMG 폴더</span>
-              </button>
-              <button onClick={handleBuildApp} disabled={isBuilding} className="px-3 py-1.5 bg-green-500/15 hover:bg-green-500/25 text-green-300 text-sm rounded-lg border border-green-500/40 hover:border-green-500/60 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-                <Terminal className={`w-3.5 h-3.5 ${isBuilding && buildType === 'app' ? 'animate-spin' : ''}`} />
-                <span className="font-medium">{isBuilding && buildType === 'app' ? '앱 빌드 중...' : '앱 빌드'}</span>
-              </button>
-              <button onClick={handleBuildDmg} disabled={isBuilding} className="px-3 py-1.5 bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 text-sm rounded-lg border border-purple-500/40 hover:border-purple-500/60 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-                <Package className={`w-3.5 h-3.5 ${isBuilding && buildType === 'dmg' ? 'animate-spin' : ''}`} />
-                <span className="font-medium">{isBuilding && buildType === 'dmg' ? 'DMG 빌드 중...' : 'DMG 빌드'}</span>
-              </button>
-              <button onClick={handleExportDmg} className="px-3 py-1.5 bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 text-sm rounded-lg border border-blue-500/40 hover:border-blue-500/60 transition-all flex items-center gap-1.5">
-                <Rocket className="w-3.5 h-3.5" />
-                <span className="font-medium">DMG 출시하기</span>
-              </button>
-              <button onClick={handleBuildWindows} disabled={isBuilding} className="px-3 py-1.5 bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 text-sm rounded-lg border border-indigo-500/40 hover:border-indigo-500/60 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed">
-                <Monitor className={`w-3.5 h-3.5 ${isBuilding && buildType === 'windows' ? 'animate-spin' : ''}`} />
-                <span className="font-medium">{isBuilding && buildType === 'windows' ? 'Windows 빌드 중...' : 'Windows 빌드'}</span>
-              </button>
-            </div>
-          )}
-
-          {/* 단일 "+ 프로젝트 추가" 진입점 — 모달로 열림 (Vercel에서는 숨김) */}
-          {!isDeployedWeb() && (
-            <div className="flex justify-center">
-              <button
-                onClick={() => openAddProjectModal('connect')}
-                className="px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-blue-500/20"
-              >
-                <Plus className="w-4 h-4" />
-                <span>프로젝트 추가</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* 작업 루트 (Vercel에서는 filesystem 없음 → 숨김) */}
-        {!isDeployedWeb() && (
-        <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-4 mb-6">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="bg-zinc-900 p-1.5 rounded-lg border border-zinc-700 shrink-0">
-                <Folder className="w-4 h-4 text-zinc-500" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-zinc-300">작업 루트</p>
-                <button
-                  onClick={() => API.openAppDataDir().catch(e => showToast('폴더 열기 실패: ' + e, 'error'))}
-                  className="text-xs text-zinc-600 font-mono truncate hover:text-zinc-400 transition-colors text-left"
-                  title="저장 폴더 열기"
-                >
-                  {isTauri()
-                    ? '~/Library/Application Support/com.portmanager.portmanager/ ↗'
-                    : 'workspace-roots.json ↗'}
+              {/* Section nav */}
+              {([
+                {id:'all',    label:'All projects', count: ports.length,                              Icon: Server},
+                {id:'running',label:'Running now',  count: ports.filter((p:PortInfo)=>p.isRunning).length,      Icon: Play},
+                {id:'starred',label:'Starred',      count: ports.filter((p:PortInfo)=>p.favorite).length,       Icon: Star},
+                {id:'wt',     label:'Worktrees',    count: ports.filter((p:PortInfo)=>!!p.worktreePath).length, Icon: GitBranch},
+              ] as const).map(({id,label,count,Icon}) => (
+                <button key={id} onClick={() => setSidebarSection(id)} style={{
+                  display:'flex',alignItems:'center',gap:8,
+                  padding:'6px 8px',margin:'0 4px',borderRadius:5,cursor:'pointer',
+                  background: sidebarSection === id ? '#221f1b' : 'transparent',
+                  color: sidebarSection === id ? '#ede7dd' : '#a39a8c',
+                  border:'none',fontSize:12.5,
+                  fontFamily:'Inter Tight, system-ui, sans-serif',textAlign:'left' as const,
+                }}>
+                  <Icon style={{width:12,height:12,flexShrink:0}} />
+                  <span style={{flex:1}}>{label}</span>
+                  <span style={{fontSize:10.5,color:'#6b6459',fontFamily:'JetBrains Mono, monospace'}}>{count}</span>
                 </button>
-              </div>
-              {workspaceRoots.length > 0 && (
-                <span className="text-xs text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded-md shrink-0">{workspaceRoots.length}</span>
-              )}
-            </div>
-            <button
-              onClick={handleAddWorkspaceRoot}
-              className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all duration-200 flex items-center gap-1.5"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span className="font-medium">루트 추가</span>
-            </button>
-          </div>
-
-          {workspaceRoots.length === 0 ? (
-            <p className="text-sm text-zinc-600 italic text-center py-2">루트 폴더를 추가하세요</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {workspaceRoots.map(root => (
-                <div key={root.id} className="flex items-center justify-between gap-2 bg-zinc-900/60 rounded-lg px-3 py-2 border border-zinc-800">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-zinc-200 font-medium truncate">{root.name}</p>
-                    <p className="text-xs text-zinc-500 font-mono truncate">{root.path}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      onClick={() => { setActiveRootId(root.id); openAddProjectModal('create'); }}
-                      className="px-2.5 py-1 bg-green-500/15 hover:bg-green-500/25 text-green-300 text-xs rounded-md border border-green-500/40 hover:border-green-500/60 transition-all flex items-center gap-1"
-                    >
-                      <FilePlus className="w-3 h-3" />
-                      <span>새 폴더</span>
-                    </button>
-                    <button
-                      onClick={() => handleRemoveWorkspaceRoot(root.id)}
-                      className="p-1 text-zinc-600 hover:text-red-400 hover:bg-red-500/10 rounded-md transition-all"
-                      title="루트 제거"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
               ))}
+
+              {/* Tags */}
+              {(() => {
+                const tags = [...new Set(ports.map((p:PortInfo)=>p.category).filter(Boolean) as string[])].slice(0,8);
+                if (!tags.length) return null;
+                return (
+                  <>
+                    <div style={{
+                      padding:'12px 12px 4px',fontSize:10,
+                      fontFamily:'JetBrains Mono, monospace',
+                      color:'#6b6459',textTransform:'uppercase' as const,letterSpacing:0.5,
+                    }}>Tags</div>
+                    {tags.map((tag:string) => {
+                      const n = ports.filter((p:PortInfo)=>p.category===tag).length;
+                      const active = sidebarSection === `tag:${tag}`;
+                      return (
+                        <button key={tag} onClick={() => setSidebarSection(`tag:${tag}`)} style={{
+                          display:'flex',alignItems:'center',gap:8,
+                          padding:'5px 8px',margin:'0 4px',borderRadius:5,cursor:'pointer',
+                          background: active ? '#221f1b' : 'transparent',
+                          color: active ? '#ede7dd' : '#a39a8c',
+                          border:'none',fontSize:12,textAlign:'left' as const,
+                          fontFamily:'Inter Tight, system-ui, sans-serif',
+                        }}>
+                          <span style={{width:7,height:7,borderRadius:2,background:'#e8a557',opacity:0.5,flexShrink:0}} />
+                          <span style={{flex:1,fontFamily:'JetBrains Mono, monospace',fontSize:11}}>{tag}</span>
+                          <span style={{fontSize:10.5,color:'#6b6459',fontFamily:'JetBrains Mono, monospace'}}>{n}</span>
+                        </button>
+                      );
+                    })}
+                  </>
+                );
+              })()}
+
+              {/* Workspace Roots Panel */}
+              <div style={{marginTop:'auto',borderTop:'1px solid rgba(255,240,220,0.07)'}}>
+                <button
+                  onClick={() => setWorkspaceRootsOpen(v => !v)}
+                  style={{
+                    display:'flex',alignItems:'center',gap:6,width:'100%',
+                    padding:'8px 12px',background:'transparent',border:'none',cursor:'pointer',
+                    color:'#6b6459',
+                  }}
+                >
+                  {workspaceRootsOpen
+                    ? <ChevronDown style={{width:11,height:11}}/>
+                    : <ChevronDown style={{width:11,height:11,transform:'rotate(-90deg)'}}/>
+                  }
+                  <span style={{fontSize:10,fontFamily:'JetBrains Mono, monospace',textTransform:'uppercase' as const,letterSpacing:0.5,flex:1,textAlign:'left' as const}}>
+                    작업 루트
+                  </span>
+                  {workspaceRoots.length > 0 && (
+                    <span style={{fontSize:9,fontFamily:'JetBrains Mono, monospace',color:'#6b6459',background:'rgba(255,240,220,0.06)',padding:'1px 5px',borderRadius:3}}>
+                      {workspaceRoots.length}
+                    </span>
+                  )}
+                </button>
+
+                {workspaceRootsOpen && (
+                  <div style={{paddingBottom:8}}>
+                    {workspaceRoots.map((root: WorkspaceRoot) => {
+                      const projectCount = ports.filter((p: PortInfo) => p.folderPath?.startsWith(root.path)).length;
+                      return (
+                        <div key={root.id} style={{display:'flex',alignItems:'center',gap:4,padding:'3px 8px 3px 20px'}}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:11,fontFamily:'JetBrains Mono, monospace',color:'#c8bfb5',whiteSpace:'nowrap' as const,overflow:'hidden',textOverflow:'ellipsis'}}>
+                              {root.name}
+                            </div>
+                            <div style={{fontSize:9.5,fontFamily:'JetBrains Mono, monospace',color:'#6b6459',whiteSpace:'nowrap' as const,overflow:'hidden',textOverflow:'ellipsis'}}>
+                              {root.path}
+                            </div>
+                          </div>
+                          {projectCount > 0 && (
+                            <span style={{fontSize:9,fontFamily:'JetBrains Mono, monospace',color:'#6b6459',background:'rgba(255,240,220,0.06)',padding:'1px 4px',borderRadius:3,flexShrink:0}}>
+                              {projectCount}
+                            </span>
+                          )}
+                          <button
+                            onClick={() => { setActiveRootId(root.id); setShowNewProjectModal(true); }}
+                            title="새 프로젝트 폴더"
+                            style={{padding:'2px 6px',background:'rgba(232,165,87,0.1)',border:'1px solid rgba(232,165,87,0.2)',borderRadius:4,color:'#e8a557',cursor:'pointer',fontSize:10,fontFamily:'Inter Tight, system-ui, sans-serif',flexShrink:0}}
+                          >
+                            새 폴더
+                          </button>
+                          <button
+                            onClick={() => handleRemoveWorkspaceRoot(root.id)}
+                            title="루트 제거"
+                            style={{padding:'2px 4px',background:'transparent',border:'none',color:'#6b6459',cursor:'pointer',display:'flex',alignItems:'center',flexShrink:0}}
+                          >
+                            <XIcon style={{width:10,height:10}}/>
+                          </button>
+                        </div>
+                      );
+                    })}
+                    <button
+                      onClick={handleAddWorkspaceRoot}
+                      style={{
+                        display:'flex',alignItems:'center',gap:5,
+                        margin:'4px 8px 0 20px',padding:'4px 8px',
+                        background:'transparent',border:'1px dashed rgba(255,240,220,0.12)',
+                        borderRadius:5,color:'#6b6459',cursor:'pointer',
+                        fontSize:10,fontFamily:'Inter Tight, system-ui, sans-serif',
+                      }}
+                    >
+                      <Plus style={{width:10,height:10}}/> 루트 추가
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
-          )}
-        </div>
+
+            {/* MAIN AREA */}
+            <div style={{flex:1,display:'flex',flexDirection:'column',minHeight:0,overflow:'hidden'}}>
+              {/* Main header */}
+              <div style={{
+                flexShrink:0,padding:'14px 28px 12px',
+                display:'flex',alignItems:'center',gap:10,
+                borderBottom:'1px solid rgba(255,240,220,0.07)',
+              }}>
+                <h1 style={{margin:0,fontSize:18,fontWeight:600,letterSpacing:-0.3,color:'#ede7dd'}}>
+                  {sidebarSection === 'all' ? 'All projects'
+                    : sidebarSection === 'running' ? 'Running now'
+                    : sidebarSection === 'starred' ? 'Starred'
+                    : sidebarSection === 'wt' ? 'Worktrees'
+                    : sidebarSection.startsWith('tag:') ? sidebarSection.slice(4)
+                    : 'All projects'}
+                </h1>
+                <span style={{fontSize:12,color:'#a39a8c'}}>{v3Ports.length} projects</span>
+                <div style={{flex:1}} />
+                <button onClick={handleExportPorts} title="내보내기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                  <Download style={{width:13,height:13}} />
+                </button>
+                <button onClick={handleImportPorts} title="불러오기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                  <Upload style={{width:13,height:13}} />
+                </button>
+                <button onClick={handleRefresh} disabled={isRefreshing||isAiEnriching} title="새로고침" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                  <RefreshCw style={{width:13,height:13}} className={isRefreshing||isAiEnriching ? 'animate-spin' : ''} />
+                </button>
+                <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
+                  <CloudUpload style={{width:13,height:13}} className={isPushingPorts ? 'animate-pulse' : ''} />
+                  Push
+                </button>
+                <button onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
+                  <CloudDownload style={{width:13,height:13}} className={isRestoring ? 'animate-pulse' : ''} />
+                  Pull
+                </button>
+                <button onClick={() => setOpenPortalSettings(true)} title="설정" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                  <Settings style={{width:13,height:13}} />
+                </button>
+                {!isTauri() && (
+                  <>
+                    <button onClick={handleBuildApp} disabled={isBuilding} title="앱 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                      <Terminal style={{width:13,height:13}} className={isBuilding && buildType==='app' ? 'animate-spin' : ''} />
+                    </button>
+                    <button onClick={handleBuildDmg} disabled={isBuilding} title="DMG 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                      <Package style={{width:13,height:13}} className={isBuilding && buildType==='dmg' ? 'animate-spin' : ''} />
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => { setActiveRootId(workspaceRoots[0]?.id ?? null); setShowNewProjectModal(true); }}
+                  style={{
+                    padding:'5px 12px',background:'#e8a557',border:'none',borderRadius:5,
+                    fontSize:11.5,fontWeight:600,cursor:'pointer',color:'#15120f',
+                    display:'flex',alignItems:'center',gap:4,
+                    fontFamily:'Inter Tight, system-ui, sans-serif',
+                  }}
+                >
+                  <Plus style={{width:11,height:11}} />
+                  New project
+                </button>
+              </div>
+
+              {/* Card grid */}
+              <div style={{flex:1,overflowY:'auto',padding:'16px 28px 28px'}}>
+                {v3Running.length > 0 && (
+                  <div style={{marginBottom:24}}>
+                    <div style={{
+                      display:'flex',alignItems:'center',gap:6,marginBottom:10,
+                      fontSize:11,fontFamily:'JetBrains Mono, monospace',
+                      color:'#a39a8c',textTransform:'uppercase' as const,letterSpacing:0.5,
+                    }}>
+                      <span style={{width:6,height:6,borderRadius:3,background:'#8fb96e',display:'inline-block'}} />
+                      Running <span style={{color:'#6b6459',marginLeft:4}}>{v3Running.length}</span>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(240px, 1fr))',gap:12}}>
+                      {v3Running.map(item => renderV3Card(item))}
+                    </div>
+                  </div>
+                )}
+
+                {v3Idle.length > 0 && (
+                  <div>
+                    <div style={{
+                      display:'flex',alignItems:'center',gap:6,marginBottom:10,
+                      fontSize:11,fontFamily:'JetBrains Mono, monospace',
+                      color:'#a39a8c',textTransform:'uppercase' as const,letterSpacing:0.5,
+                    }}>
+                      <span style={{width:6,height:6,borderRadius:3,background:'#6b6459',display:'inline-block'}} />
+                      Idle <span style={{color:'#6b6459',marginLeft:4}}>{v3Idle.length}</span>
+                    </div>
+                    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(240px, 1fr))',gap:12}}>
+                      {v3Idle.map(item => renderV3Card(item))}
+                    </div>
+                  </div>
+                )}
+
+                {v3Ports.length === 0 && (
+                  <div style={{textAlign:'center',padding:'60px 0',color:'#6b6459'}}>
+                    <Server style={{width:40,height:40,margin:'0 auto 16px',opacity:0.25}} />
+                    <p style={{fontSize:14,fontWeight:600,color:'#a39a8c',marginBottom:8}}>아직 등록된 프로젝트가 없습니다</p>
+                    <p style={{fontSize:12,color:'#6b6459'}}>우측 상단 <strong style={{color:'#e8a557'}}>+</strong> 버튼을 눌러 첫 번째 포트를 추가하세요</p>
+                  </div>
+                )}
+
+                <div style={{marginTop:32,textAlign:'center'}}>
+                  <p style={{fontSize:11,color:'#6b6459'}}>
+                    © {new Date().getFullYear()} CS & Company. All rights reserved.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
 
-        {/* 통합 "+ 프로젝트 추가" 모달 — 기존 폴더 연결 / 새 폴더 생성 두 모드 */}
-        {showAddProjectModal && (
-          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowAddProjectModal(false)}>
-            <div className="bg-[#18181b] rounded-xl border border-zinc-800 w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="bg-blue-500/15 p-2 rounded-lg border border-blue-500/30">
-                    <Plus className="w-5 h-5 text-blue-400" />
+      {/* New project 모달 */}
+      {showNewProjectModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => { setShowNewProjectModal(false); setProjectModalTab('new'); setExistingFolderPath(''); }}>
+          <div className="bg-[#1c1916] rounded-xl border border-stone-800/40 w-full max-w-sm p-6 space-y-4"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-white">프로젝트 추가</h2>
+              <button onClick={() => { setShowNewProjectModal(false); setProjectModalTab('new'); setExistingFolderPath(''); }}
+                className="p-1.5 hover:bg-stone-800 rounded-lg transition-colors text-zinc-500 hover:text-zinc-300">
+                <XIcon className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* 탭 선택 */}
+            <div className="flex border-b border-stone-700">
+              <button
+                onClick={() => setProjectModalTab('new')}
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                  projectModalTab === 'new'
+                    ? 'text-amber-500 border-b-2 border-amber-500'
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                새 폴더 만들기
+              </button>
+              <button
+                onClick={() => setProjectModalTab('existing')}
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                  projectModalTab === 'existing'
+                    ? 'text-amber-500 border-b-2 border-amber-500'
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                기존 폴더 등록
+              </button>
+            </div>
+
+            {/* 새 폴더 만들기 탭 */}
+            {projectModalTab === 'new' && (
+              <>
+                {workspaceRoots.length === 0 ? (
+                  <div className="text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                    먼저 작업 루트 폴더를 추가해주세요.<br />
+                    <span className="text-xs text-zinc-400">사이드바 → Workspace Roots → + 버튼</span>
                   </div>
-                  <h2 className="text-base font-semibold text-white">프로젝트 추가</h2>
-                </div>
-                <button onClick={() => setShowAddProjectModal(false)} className="p-1 text-zinc-500 hover:text-zinc-300 rounded-md"><XIcon className="w-5 h-5" /></button>
-              </div>
+                ) : (
+                  <>
+                    {workspaceRoots.length > 1 && (
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1 block">위치</label>
+                        <select
+                          value={activeRootId ?? ''}
+                          onChange={e => setActiveRootId(e.target.value)}
+                          className="w-full px-3 py-2 bg-stone-900 border border-stone-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-amber-500/50">
+                          {workspaceRoots.map(r => (
+                            <option key={r.id} value={r.id}>{r.name || r.path}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <label className="text-xs text-zinc-400 mb-1 block">프로젝트 이름</label>
+                      <input
+                        autoFocus
+                        type="text"
+                        value={newProjectName}
+                        onChange={e => setNewProjectName(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleCreateProjectFolder()}
+                        placeholder="my-project"
+                        className="w-full px-3 py-2 bg-stone-900 border border-stone-700 rounded-lg text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50"
+                      />
+                      {activeRootId && (
+                        <p className="text-[11px] text-zinc-600 mt-1 font-mono truncate">
+                          {workspaceRoots.find(r => r.id === activeRootId)?.path}/{newProjectName || '...'}
+                        </p>
+                      )}
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input type="checkbox" checked={registerAsProject} onChange={e => setRegisterAsProject(e.target.checked)}
+                        className="accent-amber-500 w-3.5 h-3.5" />
+                      <span className="text-xs text-zinc-400">포트 목록에 프로젝트로 등록</span>
+                    </label>
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => { setShowNewProjectModal(false); setProjectModalTab('new'); }}
+                        className="flex-1 py-2 text-sm text-zinc-400 border border-stone-700 rounded-lg hover:bg-stone-800 transition-colors">
+                        취소
+                      </button>
+                      <button onClick={handleCreateProjectFolder}
+                        disabled={!newProjectName.trim()}
+                        className="flex-1 py-2 text-sm font-semibold bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors">
+                        만들기
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
 
-              {/* 모드 선택 탭 */}
-              <div className="flex gap-1 mb-4 bg-zinc-900/60 p-1 rounded-lg border border-zinc-800">
-                <button
-                  onClick={() => setAddProjectMode('connect')}
-                  className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-colors ${addProjectMode === 'connect' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40' : 'text-zinc-400 hover:text-zinc-200'}`}
-                >
-                  기존 폴더 연결
-                </button>
-                <button
-                  onClick={() => {
-                    setAddProjectMode('create');
-                    if (!activeRootId && workspaceRoots.length > 0) setActiveRootId(workspaceRoots[0].id);
-                  }}
-                  className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-colors ${addProjectMode === 'create' ? 'bg-green-500/20 text-green-300 border border-green-500/40' : 'text-zinc-400 hover:text-zinc-200'}`}
-                >
-                  새 폴더 만들기
-                </button>
-              </div>
-
-              {/* 모드별 고유 입력 */}
-              {addProjectMode === 'connect' && (
-                <div className="space-y-2 mb-3">
+            {/* 기존 폴더 등록 탭 */}
+            {projectModalTab === 'existing' && (
+              <>
+                <div>
+                  <label className="text-xs text-zinc-400 mb-1 block">폴더 경로</label>
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      placeholder="폴더 경로 (또는 폴더 선택 버튼)"
-                      value={folderPath}
-                      onChange={(e) => setFolderPath(e.target.value)}
-                      className="flex-1 px-3 py-2 text-sm bg-black/40 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                      value={existingFolderPath}
+                      onChange={e => setExistingFolderPath(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleRegisterExistingFolder()}
+                      placeholder="/Users/..."
+                      className="flex-1 px-3 py-2 bg-stone-900 border border-stone-700 rounded-lg text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50 font-mono"
                     />
                     <button
-                      onClick={async () => {
-                        const p = await pickFolder();
-                        if (p) await autofillFromFolder(p);
-                      }}
-                      className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs rounded-lg border border-zinc-700 flex items-center gap-1.5"
+                      onClick={handlePickExistingFolder}
+                      className="px-3 py-2 bg-stone-800 hover:bg-stone-700 text-zinc-300 rounded-lg border border-stone-700 transition-colors"
+                      title="폴더 선택"
                     >
-                      <FolderOpen className="w-3.5 h-3.5" />
-                      폴더 선택
+                      선택
                     </button>
                   </div>
-                  <p className="text-[11px] text-zinc-500 pl-1">폴더를 선택하면 이름·포트·실행 파일을 자동으로 채웁니다.</p>
-                </div>
-              )}
-
-              {addProjectMode === 'create' && (
-                <div className="space-y-2 mb-3">
-                  {workspaceRoots.length === 0 ? (
-                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
-                      <p className="text-xs text-amber-300 mb-2">작업루트가 없습니다. 먼저 루트를 추가하세요.</p>
-                      <button
-                        onClick={async () => { await handleAddWorkspaceRoot(); }}
-                        className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs rounded-md border border-amber-500/40 flex items-center gap-1.5"
-                      >
-                        <Plus className="w-3 h-3" />
-                        작업루트 추가
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <label className="block text-[11px] text-zinc-400 mb-1">작업루트</label>
-                      <select
-                        value={activeRootId ?? ''}
-                        onChange={(e) => setActiveRootId(e.target.value || null)}
-                        className="w-full px-3 py-2 text-sm bg-black/40 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 font-mono"
-                      >
-                        {workspaceRoots.map(r => (
-                          <option key={r.id} value={r.id}>{r.name} — {r.path}</option>
-                        ))}
-                      </select>
-                      <input
-                        type="text"
-                        placeholder="새 폴더 이름 (예: my-app)"
-                        value={newProjectName}
-                        onChange={(e) => setNewProjectName(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' && newProjectName.trim() && name.trim()) handleSubmitCreateProject(); }}
-                        autoFocus
-                        className="w-full px-3 py-2 text-sm bg-black/40 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 font-mono"
-                      />
-                      <p className="text-[11px] text-zinc-500 pl-1">
-                        생성 경로: <span className="font-mono text-zinc-400">{workspaceRoots.find(r => r.id === activeRootId)?.path}/{newProjectName || '...'}</span>
-                      </p>
-                    </>
+                  {existingFolderPath && (
+                    <p className="text-[11px] text-zinc-500 mt-1">
+                      프로젝트명: {existingFolderPath.split(/[\\/]/).filter(Boolean).pop() || '...'}
+                    </p>
                   )}
                 </div>
-              )}
-
-              {/* 공통 필드: 이름 + 포트 */}
-              <div className="space-y-2 border-t border-zinc-800 pt-3">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="프로젝트 이름"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                  <input
-                    type="number"
-                    placeholder="포트"
-                    value={port}
-                    onChange={(e) => setPort(e.target.value)}
-                    className="w-24 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => setShowOptionalFields(v => !v)}
-                  className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors select-none"
-                >
-                  <span className={`transition-transform ${showOptionalFields ? 'rotate-90' : ''}`}>▶</span>
-                  <span>추가 정보 {showOptionalFields ? '접기' : '펼치기'}</span>
-                </button>
-
-                {showOptionalFields && (
-                  <div className="space-y-2 pt-1">
-                    <input type="text" placeholder={`${execFileExt()} 파일 경로`} value={commandPath} onChange={(e) => setCommandPath(e.target.value)} className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                    <input type="text" placeholder="터미널 명령어 (예: bunx cursor-talk-to-figma-socket)" value={terminalCommand} onChange={(e) => setTerminalCommand(e.target.value)} className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                    {addProjectMode === 'connect' && (
-                      <input type="text" placeholder="프로젝트 폴더 경로" value={folderPath} onChange={(e) => setFolderPath(e.target.value)} className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                    )}
-                    <input type="text" placeholder="배포 사이트 (예: https://example.com)" value={deployUrl} onChange={(e) => setDeployUrl(e.target.value)} className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                    <input type="text" placeholder="GitHub 주소" value={githubUrl} onChange={(e) => setGithubUrl(e.target.value)} className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                    <div className="flex gap-2">
-                      <input type="text" placeholder="카테고리" value={category} onChange={(e) => setCategory(e.target.value)} className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                      <input type="text" placeholder="설명" value={description} onChange={(e) => setDescription(e.target.value)} className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex gap-2 justify-end mt-5">
-                <button onClick={() => setShowAddProjectModal(false)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">취소</button>
-                {addProjectMode === 'connect' ? (
-                  <button
-                    onClick={handleSubmitConnectProject}
-                    disabled={!name.trim()}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
-                  >
+                <div className="flex gap-2 pt-1">
+                  <button onClick={() => { setShowNewProjectModal(false); setProjectModalTab('new'); setExistingFolderPath(''); }}
+                    className="flex-1 py-2 text-sm text-zinc-400 border border-stone-700 rounded-lg hover:bg-stone-800 transition-colors">
+                    취소
+                  </button>
+                  <button onClick={handleRegisterExistingFolder}
+                    disabled={!existingFolderPath.trim()}
+                    className="flex-1 py-2 text-sm font-semibold bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors">
                     등록
                   </button>
-                ) : (
-                  <button
-                    onClick={handleSubmitCreateProject}
-                    disabled={!newProjectName.trim() || !name.trim() || !activeRootId}
-                    className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
-                  >
-                    생성 + 등록
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 포트 목록 */}
-        {ports.length > 0 ? (
-          <div className="bg-[#18181b] rounded-xl border border-zinc-800 overflow-hidden">
-            <div className="bg-zinc-900/50 px-6 py-4 border-b border-zinc-800">
-              {/* Row 1: Search input */}
-              <div className="relative mb-3">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="프로젝트 검색... (Cmd+F)"
-                  className="w-full pl-8 pr-8 py-1.5 bg-black/30 border border-zinc-700 text-zinc-200 text-xs rounded-lg placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => { setSearchQuery(''); searchInputRef.current?.focus(); }}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                  >
-                    <XIcon className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-              {/* Row 2: Filter tabs (counts reflect search results) */}
-              <div className="flex gap-1 mb-3">
-                {(['all', 'with-port', 'without-port'] as const).map(f => {
-                  const searchFiltered = searchFilteredPorts;
-                  const count = f === 'all' ? searchFiltered.length
-                    : f === 'with-port' ? searchFiltered.filter(p => p.port != null && p.port > 0).length
-                    : searchFiltered.filter(p => p.port == null || p.port === 0).length;
-                  const label = f === 'all' ? '전체' : f === 'with-port' ? '포트 있음' : '포트 없음';
-                  return (
-                    <button key={f} onClick={() => setFilterType(f)}
-                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${
-                        filterType === f ? 'bg-blue-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
-                      }`}>
-                      {label} <span className="opacity-70">({count})</span>
-                    </button>
-                  );
-                })}
-              </div>
-              {/* Row 2b: Category filter (only shown when categories exist) */}
-              {(() => {
-                const usedCategories = [...new Set(ports.map(p => p.category).filter(Boolean))] as string[];
-                if (usedCategories.length === 0) return null;
-                return (
-                  <div className="flex gap-1 mb-3 flex-wrap">
-                    <button onClick={() => setFilterCategory('all')}
-                      className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${filterCategory === 'all' ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
-                      전체 카테고리
-                    </button>
-                    {usedCategories.map(cat => (
-                      <button key={cat} onClick={() => setFilterCategory(cat)}
-                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${filterCategory === cat ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
-                        {cat} <span className="opacity-70">({ports.filter(p => p.category === cat).length})</span>
-                      </button>
-                    ))}
-                    {ports.some(p => !p.category) && (
-                      <button onClick={() => setFilterCategory('uncategorized')}
-                        className={`px-3 py-1 rounded-md text-xs font-medium transition-all ${filterCategory === 'uncategorized' ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>
-                        미분류 <span className="opacity-70">({ports.filter(p => !p.category).length})</span>
-                      </button>
-                    )}
-                  </div>
-                );
-              })()}
-              {/* Row 3: Title + Sort + Bypass Toggle */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <Terminal className="w-4 h-4 text-zinc-400" />
-                  <h2 className="text-sm font-semibold text-zinc-200">등록된 프로젝트</h2>
-                  <span className="bg-zinc-800 px-2 py-0.5 rounded-md text-xs text-zinc-300 font-medium border border-zinc-700">
-                    {searchQuery.trim() ? `${searchFilteredPorts.length}/${ports.length}` : ports.length}
-                  </span>
-                  <button
-                    onClick={handleRefresh}
-                    disabled={isRefreshing || isAiEnriching}
-                    className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 rounded-md transition-all disabled:opacity-40"
-                    title={isAiEnriching ? 'AI 분석 중…' : '새로고침 (실행파일 자동 감지)'}
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  </button>
                 </div>
-                <div className="flex items-center gap-3">
-                  {/* Bypass permissions toggle */}
-                  <button
-                    onClick={() => setBypassPermissions(v => !v)}
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-all duration-200 ${
-                      bypassPermissions
-                        ? 'bg-orange-500/20 text-orange-400 border-orange-500/50'
-                        : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:text-zinc-300'
-                    }`}
-                    title="claude --dangerously-skip-permissions 활성화 여부"
-                  >
-                    <span className={`w-2 h-2 rounded-full ${bypassPermissions ? 'bg-orange-400' : 'bg-zinc-600'}`} />
-                    bypass permissions
-                  </button>
-                  <div className="flex items-center gap-1.5">
-                    <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500" />
-                    <select
-                      value={sortBy}
-                      onChange={(e) => setSortBy(e.target.value as SortType)}
-                      className="bg-black/30 border border-zinc-700 text-zinc-200 text-xs rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all cursor-pointer"
-                    >
-                      <option value="recent">최근 등록순</option>
-                      <option value="name">이름순</option>
-                      <option value="port">포트순</option>
-                    </select>
-                    <button
-                      onClick={() => setSortOrder(o => o === 'asc' ? 'desc' : 'asc')}
-                      className="px-2 py-1 bg-black/30 border border-zinc-700 text-zinc-400 text-xs rounded-lg hover:bg-zinc-800 hover:text-zinc-200 transition-all"
-                      title={sortOrder === 'asc' ? '오름차순' : '내림차순'}
-                    >
-                      {sortOrder === 'asc' ? '↑ 오름' : '↓ 내림'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="divide-y divide-zinc-800">
-              {(() => {
-                if (displayedPorts.length === 0) {
-                  return (
-                    <div className="p-8 text-center text-sm text-zinc-500">
-                      {searchQuery.trim()
-                        ? `"${searchQuery.trim()}"에 대한 검색 결과가 없습니다`
-                        : '이 필터에 해당하는 프로젝트가 없습니다'}
-                    </div>
-                  );
-                }
-                return displayedPorts.map((item) => (
-                <div
-                  key={item.id}
-                  className="group p-4 hover:bg-zinc-900/30 transition-all duration-200"
-                >
-                  {editingId === item.id ? (
-                    // 수정 모드
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={editName}
-                          onChange={(e) => setEditName(e.target.value)}
-                          onKeyDown={handleEditKeyPress}
-                          className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                          placeholder="프로젝트 이름"
-                          autoFocus
-                        />
-                        <input
-                          type="number"
-                          value={editPort}
-                          onChange={(e) => setEditPort(e.target.value)}
-                          onKeyDown={handleEditKeyPress}
-                          className="w-24 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                          placeholder="포트"
-                        />
-                        <button
-                          onClick={saveEdit}
-                          className="p-2 bg-green-500/20 hover:bg-green-500/30 rounded-lg transition-colors border border-green-500/30"
-                        >
-                          <Check className="w-4 h-4 text-green-400" />
-                        </button>
-                        <button
-                          onClick={cancelEdit}
-                          className="p-2 hover:bg-zinc-800/50 rounded-lg transition-colors border border-transparent hover:border-zinc-700/50"
-                        >
-                          <XIcon className="w-4 h-4 text-zinc-500" />
-                        </button>
-                      </div>
-                      <input
-                        type="text"
-                        value={editCommandPath}
-                        onChange={(e) => setEditCommandPath(e.target.value)}
-                        onKeyDown={handleEditKeyPress}
-                        className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                        placeholder={`${execFileExt()} 파일 경로 (선택사항)`}
-                      />
-                      <input
-                        type="text"
-                        value={editTerminalCommand}
-                        onChange={(e) => setEditTerminalCommand(e.target.value)}
-                        onKeyDown={handleEditKeyPress}
-                        className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                        placeholder="터미널 명령어 (선택사항, 예: bunx cursor-talk-to-figma-socket)"
-                      />
-                      <input
-                        type="text"
-                        value={editFolderPath}
-                        onChange={(e) => setEditFolderPath(e.target.value)}
-                        onKeyDown={handleEditKeyPress}
-                        className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                        placeholder="프로젝트 폴더 경로 (선택사항)"
-                      />
-                      <input
-                        type="text"
-                        value={editDeployUrl}
-                        onChange={(e) => setEditDeployUrl(e.target.value)}
-                        onKeyDown={handleEditKeyPress}
-                        className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                        placeholder="배포 사이트 주소 (선택사항)"
-                      />
-                      <input
-                        type="text"
-                        value={editGithubUrl}
-                        onChange={(e) => setEditGithubUrl(e.target.value)}
-                        onKeyDown={handleEditKeyPress}
-                        className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                        placeholder="GitHub 주소 (선택사항)"
-                      />
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={editCategory}
-                          onChange={(e) => setEditCategory(e.target.value)}
-                          onKeyDown={handleEditKeyPress}
-                          placeholder="카테고리 (AI 자동)"
-                          className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                        />
-                        <input
-                          type="text"
-                          value={editDescription}
-                          onChange={(e) => setEditDescription(e.target.value)}
-                          onKeyDown={handleEditKeyPress}
-                          className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                          placeholder="프로젝트 설명 (선택사항)"
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    // 일반 모드
-                    <div className="flex flex-col gap-2">
-                      {/* 정보 행 */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          onClick={(e) => { e.stopPropagation(); toggleFavorite(item); }}
-                          className="flex-shrink-0 text-zinc-600 hover:text-yellow-400 transition-colors"
-                          title={item.favorite ? '즐겨찾기 해제' : '즐겨찾기 추가'}
-                        >
-                          <Star className={`w-3.5 h-3.5 ${item.favorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
-                        </button>
-                        <h3 className="text-sm font-medium text-white whitespace-nowrap">
-                          {item.name}
-                        </h3>
-                        {/* 폴더 이름 (name과 다를 때만) */}
-                        {item.folderPath && (() => {
-                          const parts = item.folderPath.replace(/\/$/, '').split('/');
-                          const basename = parts[parts.length - 1];
-                          return basename && basename !== item.name ? (
-                            <span className="text-[11px] text-zinc-500 font-mono whitespace-nowrap" title={item.folderPath}>
-                              {basename}
-                            </span>
-                          ) : null;
-                        })()}
-                        {/* 워크트리 뱃지 */}
-                        {item.worktreePath && (
-                          <span
-                            className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 text-[10px] font-medium rounded border border-amber-500/30 whitespace-nowrap"
-                            title={`Worktree: ${item.worktreePath}`}
-                          >
-                            WT: {item.worktreePath.replace(/\/$/, '').split('/').pop()}
-                          </span>
-                        )}
-                        {item.aiName && (
-                          <span
-                            className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-300 text-[10px] font-medium rounded border border-emerald-500/30 whitespace-nowrap"
-                            title="AI 추천 이름 (검색용 별칭)"
-                          >
-                            {item.aiName}
-                          </span>
-                        )}
-                        {item.category && (
-                          <span className="px-1.5 py-0.5 bg-violet-500/15 text-violet-400 text-[10px] font-medium rounded border border-violet-500/30 whitespace-nowrap">
-                            {item.category}
-                          </span>
-                        )}
-                        <div className="flex items-center gap-1">
-                          <Server className="w-3 h-3 text-zinc-600" />
-                          {item.port ? (
-                            <span className="font-mono text-xs text-zinc-400">
-                              Port: <span className="text-zinc-200 font-semibold">{item.port}</span>
-                            </span>
-                          ) : (
-                            <span className="font-mono text-xs text-zinc-600">No port</span>
-                          )}
-                        </div>
-                        {item.description && (
-                          <p className="text-[11px] text-zinc-500 truncate max-w-sm">{item.description}</p>
-                        )}
-                      </div>
-                      {/* 버튼 행 */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        {(item.commandPath || item.terminalCommand) && (
-                          isHtmlFile(item.commandPath) ? (
-                            <button
-                              onClick={() => executeCommand(item)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
-                              title="Chrome에서 HTML 파일 열기"
-                            >
-                              <ExternalLink className="w-3 h-3" />
-                              <span>열기</span>
-                            </button>
-                          ) : item.isRunning ? (
-                            <>
-                              <button
-                                onClick={() => stopCommand(item)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs font-medium rounded-lg border border-red-500/30 hover:border-red-500/50 transition-all duration-200"
-                              >
-                                <Square className="w-3 h-3 fill-current" />
-                                <span>중지</span>
-                              </button>
-                              <button
-                                onClick={() => forceRestartCommand(item)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 text-xs font-medium rounded-lg border border-orange-500/30 hover:border-orange-500/50 transition-all duration-200"
-                                title="정지가 안 되는 프로세스를 강제로 종료하고 재실행합니다"
-                              >
-                                <RotateCw className="w-3 h-3" />
-                                <span>강제재실행</span>
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => executeCommand(item)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-xs font-medium rounded-lg border border-green-500/30 hover:border-green-500/50 transition-all duration-200"
-                              >
-                                <Play className="w-3 h-3 fill-current" />
-                                <span>실행</span>
-                              </button>
-                              <button
-                                onClick={() => forceRestartCommand(item)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 text-xs font-medium rounded-lg border border-orange-500/30 hover:border-orange-500/50 transition-all duration-200"
-                                title="기존 프로세스를 강제 종료하고 새로 실행합니다"
-                              >
-                                <RotateCw className="w-3 h-3" />
-                                <span>강제재실행</span>
-                              </button>
-                            </>
-                          )
-                        )}
-                        {(item.commandPath || item.terminalCommand) && isTauri() && (
-                          <button
-                            onClick={async () => {
-                              try {
-                                await API.openLog(item.id);
-                                showToast('로그를 Terminal에서 열었습니다', 'success');
-                              } catch (error) {
-                                showToast('로그 열기 실패: ' + error, 'error');
-                              }
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-xs font-medium rounded-lg border border-amber-500/30 hover:border-amber-500/50 transition-all duration-200"
-                          >
-                            <FileText className="w-3 h-3" />
-                            <span>로그</span>
-                          </button>
-                        )}
-                        <div className="inline-flex rounded-lg overflow-hidden border border-violet-500/30">
-                          <button
-                            onClick={() => openTmuxClaude(item)}
-                            title={bypassPermissions
-                              ? `tmux + Claude --dangerously-skip-permissions (세션: ${getSessionName(item)}-bypass)`
-                              : `tmux 세션에서 Claude 실행 (세션: ${getSessionName(item)})`}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-all duration-200 ${
-                              bypassPermissions
-                                ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-400'
-                                : 'bg-violet-500/10 hover:bg-violet-500/20 text-violet-400'
-                            }`}
-                          >
-                            <SquareTerminal className="w-3 h-3" />
-                            <span>tmux{bypassPermissions ? ' ⚡' : ''}</span>
-                          </button>
-                          <button
-                            onClick={() => openTmuxClaudeFresh(item)}
-                            title="새로 열기 — 기존 세션 종료 후 새 세션 시작"
-                            className={`inline-flex items-center px-1.5 py-1.5 text-xs font-medium border-l transition-all duration-200 ${
-                              bypassPermissions
-                                ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border-orange-500/30'
-                                : 'bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border-violet-500/30'
-                            }`}
-                          >
-                            <span>↺</span>
-                          </button>
-                        </div>
-                        <button
-                          onClick={() => openTerminalClaude(item)}
-                          title={bypassPermissions ? 'Terminal에서 Claude --dangerously-skip-permissions 실행' : '일반 Terminal에서 Claude 실행'}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all duration-200 ${
-                            bypassPermissions
-                              ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 border-orange-500/30 hover:border-orange-500/50'
-                              : 'bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border-indigo-500/30 hover:border-indigo-500/50'
-                          }`}
-                        >
-                          <Terminal className="w-3 h-3" />
-                          <span>Claude{bypassPermissions ? ' ⚡' : ''}</span>
-                        </button>
-                        <div className="relative group/info inline-flex items-center">
-                          <Info className="w-3 h-3 text-zinc-500 hover:text-zinc-300 cursor-help transition-colors" />
-                          <div className="absolute bottom-full right-0 mb-2 w-56 p-2.5 bg-zinc-900 border border-zinc-700 rounded-lg text-xs text-zinc-300 shadow-xl opacity-0 group-hover/info:opacity-100 transition-opacity pointer-events-none z-50">
-                            <p className="font-semibold text-zinc-100 mb-1.5">설치 필요</p>
-                            <ul className="space-y-1 text-zinc-400">
-                              <li>· <span className="text-violet-400">tmux</span>: tmux + Claude CLI + iTerm</li>
-                              <li>· <span className="text-indigo-400">Claude</span>: Claude CLI + iTerm</li>
-                            </ul>
-                            <p className="mt-1.5 text-zinc-500 text-[10px]">claude.ai/code 에서 설치</p>
-                          </div>
-                        </div>
-                        {item.folderPath && (
-                          <button
-                            onClick={async () => {
-                              try {
-                                const wt = item.worktreePath?.split(',')[0]?.trim();
-                                const target = (wt && wt.startsWith('/')) ? wt : item.folderPath!;
-                                await API.openFolder(target);
-                                showToast('폴더를 열었습니다', 'success');
-                              } catch (e) {
-                                showToast('폴더 열기 실패: ' + e, 'error');
-                              }
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 text-xs font-medium rounded-lg border border-zinc-700/50 hover:border-zinc-600/50 transition-all duration-200"
-                          >
-                            <Folder className="w-3 h-3" />
-                            <span>폴더</span>
-                          </button>
-                        )}
-                        {item.deployUrl && (
-                          <a
-                              href={item.deployUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-xs font-medium rounded-lg border border-purple-500/30 hover:border-purple-500/50 transition-all duration-200"
-                            >
-                              <Globe className="w-3 h-3" />
-                              <span>배포</span>
-                            </a>
-                        )}
-                        {item.githubUrl && (
-                          <a
-                              href={item.githubUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-700/30 hover:bg-zinc-700/50 text-zinc-300 text-xs font-medium rounded-lg border border-zinc-600/40 hover:border-zinc-500/60 transition-all duration-200"
-                            >
-                              <Github className="w-3 h-3" />
-                              <span>GitHub</span>
-                            </a>
-                        )}
-                        {item.folderPath && (
-                          <button
-                            onClick={async () => {
-                              try {
-                                const baseUrl = isTauri() ? 'http://localhost:3001' : '';
-                                await fetch(`${baseUrl}/api/open-terminal-git-push`, {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ folderPath: item.folderPath, name: item.name, githubUrl: item.githubUrl, worktreePath: item.worktreePath })
-                                });
-                                showToast('터미널에서 git push 실행 중', 'success');
-                              } catch (error) {
-                                showToast('터미널 열기 실패: ' + error, 'error');
-                              }
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
-                            title={item.githubUrl ? `git push → ${item.githubUrl}` : `git push (원격 그대로)`}
-                          >
-                            <Terminal className="w-3 h-3" />
-                            <span>터미널푸시</span>
-                          </button>
-                        )}
-                        {item.folderPath && (
-                          <button
-                            onClick={async () => {
-                              try {
-                                const baseUrl = isTauri() ? 'http://localhost:3001' : '';
-                                await fetch(`${baseUrl}/api/open-terminal-git-pull`, {
-                                  method: 'POST',
-                                  headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ folderPath: item.folderPath, name: item.name, githubUrl: item.githubUrl, worktreePath: item.worktreePath })
-                                });
-                                showToast('터미널에서 git pull 실행 중', 'success');
-                              } catch (error) {
-                                showToast('터미널 열기 실패: ' + error, 'error');
-                              }
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-xs font-medium rounded-lg border border-emerald-500/30 hover:border-emerald-500/50 transition-all duration-200"
-                            title={item.githubUrl ? `git pull ← ${item.githubUrl}` : `git pull (원격 그대로)`}
-                          >
-                            <Terminal className="w-3 h-3" />
-                            <span>터미널풀</span>
-                          </button>
-                        )}
-                        {item.folderPath && (
-                          <button
-                            onClick={() => {
-                              const prompt = `cd "${item.folderPath}" && git push`;
-                              navigator.clipboard.writeText(prompt);
-                              showToast('푸시 프롬프트 복사됨', 'success');
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 text-xs font-medium rounded-lg border border-zinc-700/50 hover:border-zinc-600/50 transition-all duration-200"
-                            title={`cd "${item.folderPath}" && git push`}
-                          >
-                            <Copy className="w-3 h-3" />
-                            <span>푸시복사</span>
-                          </button>
-                        )}
-                        {item.folderPath && (
-                          <button
-                            onClick={() => {
-                              const prompt = `cd "${item.folderPath}" && git pull`;
-                              navigator.clipboard.writeText(prompt);
-                              showToast('풀 프롬프트 복사됨', 'success');
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 text-xs font-medium rounded-lg border border-zinc-700/50 hover:border-zinc-600/50 transition-all duration-200"
-                            title={`cd "${item.folderPath}" && git pull`}
-                          >
-                            <Copy className="w-3 h-3" />
-                            <span>풀복사</span>
-                          </button>
-                        )}
-                        {(item.commandPath || item.terminalCommand) && item.port && (
-                          <a
-                            href={`http://localhost:${item.port}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-xs font-medium rounded-lg border border-blue-500/30 hover:border-blue-500/50 transition-all duration-200"
-                          >
-                            <span>열기</span>
-                            <ExternalLink className="w-3 h-3" />
-                          </a>
-                        )}
-                        {/* Worktree 패널 토글 버튼 */}
-                        {item.folderPath && (
-                          <button
-                            onClick={() => toggleWorktreePanel(item.id, item.folderPath)}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border transition-all duration-200 ${
-                              expandedWorktreeIds.has(item.id)
-                                ? 'bg-teal-500/20 text-teal-300 border-teal-500/40'
-                                : 'bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 border-zinc-700/50 hover:border-zinc-600/50'
-                            }`}
-                            title="Git Worktrees 보기/관리"
-                          >
-                            <GitBranch className="w-3 h-3" />
-                            <span>Worktree</span>
-                          </button>
-                        )}
-                        {/* AI buttons (web mode only, folderPath required) */}
-                        <button
-                          onClick={() => startEdit(item)}
-                          className="p-1.5 hover:bg-zinc-800/60 rounded-lg transition-colors border border-transparent hover:border-zinc-700/50"
-                        >
-                          <Pencil className="w-3.5 h-3.5 text-zinc-600 hover:text-zinc-400 transition-colors" />
-                        </button>
-                        <button
-                          onClick={() => deletePort(item.id)}
-                          className="p-1.5 hover:bg-red-500/10 rounded-lg transition-colors border border-transparent hover:border-red-500/30"
-                        >
-                          <Trash2 className="w-3.5 h-3.5 text-zinc-600 hover:text-red-400 transition-colors" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                  {/* Worktree 패널 */}
-                  {/* 메모 아코디언 */}
-                  <MemoAccordionItem portId={item.id} memo={memos[item.id]} onSave={handleSaveMemo} />
-
-                  {expandedWorktreeIds.has(item.id) && item.folderPath && (
-                    <div className="mt-2 p-3 bg-zinc-900/60 rounded-lg border border-zinc-700/50">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
-                          <GitBranch className="w-3 h-3 text-teal-400" />
-                          Git Worktrees
-                        </h4>
-                        <button
-                          onClick={() => loadWorktrees(item.id, item.folderPath!)}
-                          className="p-1 hover:bg-zinc-800 rounded transition-colors"
-                          title="새로고침"
-                        >
-                          <RefreshCw className="w-3 h-3 text-zinc-500 hover:text-zinc-300" />
-                        </button>
-                      </div>
-                      {worktreeLoading[item.id] ? (
-                        <p className="text-xs text-zinc-500">로딩 중...</p>
-                      ) : (worktreeLists[item.id] ?? []).length === 0 ? (
-                        <p className="text-xs text-zinc-500">워크트리 없음</p>
-                      ) : (
-                        <div className="space-y-1.5 mb-2">
-                          {(worktreeLists[item.id] ?? []).map((wt, idx) => (
-                            <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-zinc-800/50 rounded text-xs">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className={`font-mono truncate ${wt.is_main ? 'text-zinc-300' : 'text-teal-300'}`}>
-                                  {wt.branch || wt.path.split('/').pop()}
-                                </span>
-                                {wt.is_main && <span className="text-[10px] text-zinc-500 shrink-0">(main)</span>}
-                              </div>
-                              {!wt.is_main && (() => {
-                                // 이 워크트리에 대응하는 PortInfo 탐색 (main item 제외, worktreePath 매칭)
-                                const wtPort = ports.find(p => p.id !== item.id && p.worktreePath === wt.path);
-                                // 전용 PortInfo 없어도 main 포트 기반으로 포트 추론 (단, *10 결과가 65535 초과 시 undefined)
-                                const nonMainWorktrees = (worktreeLists[item.id] ?? []).filter(w => !w.is_main);
-                                const wtIndex = nonMainWorktrees.findIndex(w => w.path === wt.path);
-                                const rawInferred = item.port ? item.port * 10 + (wtIndex + 1) : undefined;
-                                const usedPortSet = new Set(ports.map(p => p.port).filter((p): p is number => p != null));
-                                const inferredPort = rawInferred && rawInferred <= 65535
-                                  ? rawInferred
-                                  : wtIndex >= 0 ? worktreePortFromPath(wt.path, usedPortSet) : undefined;
-                                const effectivePort = wtPort?.port ?? inferredPort;
-                                return (
-                                  <div className="flex items-center gap-1 shrink-0 flex-wrap">
-                                    {/* 실행: 전용 PortInfo있으면 executeCommand, 없으면 PORT=N 터미널 */}
-                                    <button
-                                      onClick={async (e) => {
-                                        e.stopPropagation();
-                                        if (wtPort && (wtPort.commandPath || wtPort.terminalCommand)) {
-                                          executeCommand(wtPort);
-                                          showToast(`실행: ${wt.branch} (포트 ${effectivePort})`, 'success');
-                                        } else {
-                                          try {
-                                            const baseUrl = isTauri() ? 'http://localhost:3001' : '';
-                                            await fetch(`${baseUrl}/api/open-terminal-worktree-run`, {
-                                              method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                              body: JSON.stringify({ worktreePath: wt.path, name: item.name, terminalCommand: item.terminalCommand, port: effectivePort, folderPath: item.folderPath })
-                                            });
-                                            showToast(`터미널 열기: ${wt.branch} (포트 ${effectivePort ?? '?'})`, 'success');
-                                          } catch (err) { showToast('실행 실패: ' + err, 'error'); }
-                                        }
-                                      }}
-                                      className="px-1.5 py-0.5 bg-green-500/10 hover:bg-green-500/20 text-green-400 text-[10px] rounded border border-green-500/20"
-                                      title={`dev server 실행 (포트 ${effectivePort ?? '?'})`}
-                                    >
-                                      실행{effectivePort ? `(${effectivePort})` : ''}
-                                    </button>
-                                    {/* 열기: 새 탭으로 열기 */}
-                                    {effectivePort && (
-                                      <a
-                                        href={`http://localhost:${effectivePort}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        onClick={e => e.stopPropagation()}
-                                        className="px-1.5 py-0.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 text-[10px] rounded border border-purple-500/20"
-                                        title={`http://localhost:${effectivePort} 열기`}
-                                      >
-                                        열기
-                                      </a>
-                                    )}
-                                    {/* 구분선: 서버 제어 | git 제어 */}
-                                    <span className="w-px h-3 bg-zinc-600 mx-0.5 self-center" />
-                                    {/* 커밋: 메시지 입력 모달 → 백그라운드 git add -A && commit */}
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); setCommitModal({ item, wt, msg: '' }); }}
-                                      className="px-1.5 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 text-[10px] rounded border border-amber-500/20"
-                                      title={`git add -A && commit (${wt.path})`}
-                                    >
-                                      커밋
-                                    </button>
-                                    {/* 푸시: 백그라운드 silent push */}
-                                    <button
-                                      onClick={async (e) => {
-                                        e.stopPropagation();
-                                        try {
-                                          const baseUrl = isTauri() ? 'http://localhost:3001' : '';
-                                          const res = await fetch(`${baseUrl}/api/git-push`, {
-                                            method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({ folderPath: wt.path })
-                                          });
-                                          const data = await res.json();
-                                          if (data.success) showToast(`✅ 푸시 완료: ${wt.branch}`, 'success');
-                                          else showToast(`푸시 실패: ${data.error}`, 'error');
-                                        } catch (err) { showToast('푸시 실패: ' + err, 'error'); }
-                                      }}
-                                      className="px-1.5 py-0.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[10px] rounded border border-blue-500/20"
-                                      title={`git push: ${wt.branch} → remote`}
-                                    >
-                                      푸시
-                                    </button>
-                                    {/* 머지: wt.branch → main (confirm modal) */}
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleWorktreeMerge(item, wt); }}
-                                      className="px-1.5 py-0.5 bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 text-[10px] rounded border border-teal-500/20"
-                                      title={`${wt.branch} → main 머지`}
-                                    >
-                                      머지
-                                    </button>
-                                    {/* 삭제: worktree 제거 */}
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); handleWorktreeRemove(item, wt); }}
-                                      className="px-1.5 py-0.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] rounded border border-red-500/20"
-                                      title="워크트리 삭제"
-                                    >
-                                      삭제
-                                    </button>
-                                  </div>
-                                );
-                              })()}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <div className="flex items-center gap-1.5 mt-2">
-                        <input
-                          type="text"
-                          value={worktreeNewBranch[item.id] ?? ''}
-                          onChange={e => setWorktreeNewBranch(prev => ({ ...prev, [item.id]: e.target.value }))}
-                          onKeyDown={e => e.key === 'Enter' && handleWorktreeAdd(item)}
-                          placeholder="새 브랜치명..."
-                          className="flex-1 px-2 py-1 bg-zinc-800 border border-zinc-700 rounded text-xs text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-teal-500/50"
-                        />
-                        <button
-                          onClick={() => handleWorktreeAdd(item)}
-                          disabled={!worktreeNewBranch[item.id]?.trim()}
-                          className="px-2 py-1 bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 text-xs rounded border border-teal-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-                        >
-                          + Add
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ));
-              })()}
-            </div>
+              </>
+            )}
           </div>
-        ) : (
-          <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-12 text-center">
-            <div className="relative inline-block mb-4">
-              <div className="bg-zinc-900 p-4 rounded-xl border border-zinc-700">
-                <Server className="w-10 h-10 text-zinc-500" />
-              </div>
-            </div>
-            <h3 className="text-base font-medium text-zinc-200 mb-2">
-              등록된 프로젝트가 없습니다
-            </h3>
-            <p className="text-sm text-zinc-400 leading-relaxed">
-              위의 입력 폼에서 <span className="font-medium text-zinc-300">프로젝트 이름</span>과{' '}
-              <span className="font-medium text-zinc-300">포트 번호</span>를 입력하세요
-            </p>
-          </div>
-        )}
-
-        {/* 하단 저작권 */}
-        <div className="mt-6 text-center">
-          <p className="text-zinc-600 text-xs">
-            © {new Date().getFullYear()} CS & Company. All rights reserved.
-          </p>
         </div>
-        </>}
+      )}
+
       </div>
     </div>
   );

@@ -7,6 +7,9 @@ import { homedir } from "node:os";
 const escapeSq = (s: string): string => s.replace(/'/g, "'\\''");
 
 const IS_WIN = process.platform === 'win32';
+const DEV = process.env.NODE_ENV !== 'production';
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const devLog = (...args: any[]) => { if (DEV) console.log(...args); };
 
 /** Git 바이너리 절대경로 — Tauri sandbox·다른 머신 호환성을 위해 PATH 대신 절대경로 사용 */
 function resolveGitPath(): string {
@@ -69,7 +72,7 @@ function listWslDistros(): string[] {
   const distros = Array.from(stdout.matchAll(/DistributionName\s+REG_SZ\s+(.+)/g))
     .map((m: RegExpMatchArray) => m[1].trim())
     .filter((n: string) => n && !n.toLowerCase().includes('docker'));
-  console.log('[listWslDistros] found:', distros);
+  devLog('[listWslDistros] found:', distros);
   if (distros.length > 0) _cachedDistros = distros;
   return distros;
 }
@@ -80,14 +83,26 @@ function findWslDistro(): string | null {
   return distros[0] ?? null;
 }
 
-/** 터미널/탭 타이틀 조합: [tags] 프로젝트명 · 워크트리명 — tags는 ['tmux', 'bypass', 'fresh'] 등 */
-function buildWindowTitle(sessionName: string, worktreePath?: string | null, tags?: string | string[] | null): string {
+/** 터미널/탭 타이틀: ⚡️ tmux+bypass  🔷🆕 tmux+fresh  🔷 tmux  🛡️ bypass  🪟 normal */
+function buildWindowTitle(sessionName: string, worktreePath?: string | null, tags?: string | string[] | null, branchHint?: string | null): string {
   const wtRaw = worktreePath?.split(',')[0]?.trim();
-  // Windows \ 와 POSIX / 모두 지원, 마지막 구분자 이후 basename 추출
-  const wtName = wtRaw ? wtRaw.split(/[\\/]/).filter(Boolean).pop() : undefined;
-  const base = wtName ? `${sessionName} · ${wtName}` : sessionName;
+  const wtName = branchHint || (wtRaw ? wtRaw.split(/[\\/]/).filter(Boolean).pop() : undefined);
+  // Strip "-branchName" suffix from sessionName: "project-design" → "project \u203A design"
+  const displaySession = wtName && sessionName.endsWith(`-${wtName}`)
+    ? sessionName.slice(0, -(wtName.length + 1))
+    : sessionName;
+  const base = wtName ? `${displaySession} \u203A ${wtName}` : sessionName;
   const tagList = Array.isArray(tags) ? tags : tags ? [tags] : [];
-  return tagList.length ? `[${tagList.join('·')}] ${base}` : base;
+  const isTmux = tagList.includes('tmux');
+  const isBypass = tagList.includes('bypass');
+  const isFresh = tagList.includes('fresh');
+  let prefix: string;
+  if (isTmux && isBypass) prefix = '\u26A1\uFE0F ';
+  else if (isTmux && isFresh) prefix = '\u{1F537}\u{1F195} ';
+  else if (isTmux) prefix = '\u{1F537} ';
+  else if (isBypass) prefix = '\u{1F6E1}\uFE0F ';
+  else prefix = '\u{1FA9F} ';
+  return `${prefix}${base}`;
 }
 
 /** WSL tmux bash 명령 문자열 생성 (외부에서 bash -c로 실행됨 — WSL default PATH가 Windows npm 포함) */
@@ -178,9 +193,30 @@ function resolveClaudePath(): string | null {
 }
 const CLAUDE_PATH = resolveClaudePath();
 
+// Resolve git binary path once at startup
+function resolveGitPath(): string {
+  if (!IS_WIN) {
+    if (existsSync('/opt/homebrew/bin/git')) return '/opt/homebrew/bin/git';
+    if (existsSync('/usr/bin/git')) return '/usr/bin/git';
+  }
+  const finder = IS_WIN ? ['where', 'git'] : ['which', 'git'];
+  const result = Bun.spawnSync(finder, { env: { ...process.env } });
+  const resolved = result.stdout.toString().trim().split('\n')[0].trim();
+  return resolved || 'git';
+}
+// GIT_PATH already declared at line 27
+
 const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
 let buildStatus = { isBuilding: false, type: '', output: [] as string[], exitCode: null as number | null };
+
+let deployProcess: any = null;
+let deployStatus = {
+  isDeploying: false,
+  output: [] as string[],
+  exitCode: null as number | null,
+  url: null as string | null,
+};
 
 // GitHub Actions 설정 — 포크한 저장소 정보는 환경변수로 override 가능
 const GITHUB_OWNER = process.env.PORTMGR_GITHUB_OWNER || 'intenet1001-commits';
@@ -227,7 +263,7 @@ async function loadPortsData() {
       const data = await file.json();
       const { ports: remapped, changed } = remapPathsToCurrentUser(data);
       if (changed) {
-        console.log('[Data] Auto-remapped paths to current user home dir — saving');
+        devLog('[Data] Auto-remapped paths to current user home dir — saving');
         await Bun.write(PORTS_DATA_FILE, JSON.stringify(remapped, null, 2));
       }
       return remapped;
@@ -245,11 +281,11 @@ async function savePortsData(data: any) {
     if (!existsSync(APP_DATA_DIR)) {
       const { mkdirSync } = await import("node:fs");
       mkdirSync(APP_DATA_DIR, { recursive: true });
-      console.log("[Data] Created app data directory:", APP_DATA_DIR);
+      devLog("[Data] Created app data directory:", APP_DATA_DIR);
     }
 
     await Bun.write(PORTS_DATA_FILE, JSON.stringify(data, null, 2));
-    console.log("[Data] Ports data saved successfully to:", PORTS_DATA_FILE);
+    devLog("[Data] Ports data saved successfully to:", PORTS_DATA_FILE);
     return true;
   } catch (error) {
     console.error("[Data] Error saving ports data:", error);
@@ -385,7 +421,7 @@ const server = Bun.serve({
           projectName = fileName.replace(/\.(command|sh|bat|cmd)$/i, '');
         }
 
-        console.log(`[DetectPort] File: ${filePath}, Port: ${detectedPort}, Folder: ${folderPath}, Name: ${projectName}`);
+        devLog(`[DetectPort] File: ${filePath}, Port: ${detectedPort}, Folder: ${folderPath}, Name: ${projectName}`);
 
         return new Response(
           JSON.stringify({
@@ -409,7 +445,7 @@ const server = Bun.serve({
       try {
         const { portId, commandPath } = await req.json();
 
-        console.log(`[Execute] Received request for portId: ${portId}, path: ${commandPath}`);
+        devLog(`[Execute] Received request for portId: ${portId}, path: ${commandPath}`);
 
         if (!commandPath || !portId) {
           return new Response(
@@ -421,7 +457,7 @@ const server = Bun.serve({
         // 기존 프로세스가 실행 중이면 종료
         const existingProc = executableProcesses.get(portId);
         if (existingProc) {
-          console.log(`[Execute] Killing existing process for portId: ${portId}`);
+          devLog(`[Execute] Killing existing process for portId: ${portId}`);
           try {
             existingProc.kill();
           } catch (e) {
@@ -457,7 +493,7 @@ const server = Bun.serve({
               ? ['cmd', '/c', commandPath]
               : ['cmd', '/c', commandPath])
           : (isFilePath ? ['bash', commandPath] : ['bash', '-c', commandPath]);
-        console.log(`[Execute] Starting process: ${cmd.join(' ')}`);
+        devLog(`[Execute] Starting process: ${cmd.join(' ')}`);
 
         const proc = spawn({
           cmd,
@@ -468,11 +504,11 @@ const server = Bun.serve({
 
         executableProcesses.set(portId, proc);
 
-        console.log(`[Execute] Process started successfully with PID: ${proc.pid}`);
+        devLog(`[Execute] Process started successfully with PID: ${proc.pid}`);
 
         // 프로세스 종료 시 처리
         proc.exited.then((code) => {
-          console.log(`[Execute] Process for portId ${portId} exited with code: ${code}`);
+          devLog(`[Execute] Process for portId ${portId} exited with code: ${code}`);
           executableProcesses.delete(portId);
         });
 
@@ -500,7 +536,7 @@ const server = Bun.serve({
       try {
         const { portId, port } = await req.json();
 
-        console.log(`[Stop] Received stop request for portId: ${portId}, port: ${port}`);
+        devLog(`[Stop] Received stop request for portId: ${portId}, port: ${port}`);
 
         if (!portId) {
           return new Response(
@@ -514,11 +550,11 @@ const server = Bun.serve({
         // Map에서 프로세스 제거
         const proc = executableProcesses.get(portId);
         if (proc) {
-          console.log(`[Stop] Killing process from map for portId: ${portId}, PID: ${proc.pid}`);
+          devLog(`[Stop] Killing process from map for portId: ${portId}, PID: ${proc.pid}`);
           try {
             proc.kill();
             executableProcesses.delete(portId);
-            console.log(`[Stop] Process killed successfully`);
+            devLog(`[Stop] Process killed successfully`);
           } catch (e) {
             console.error(`[Stop] Error killing process:`, e);
           }
@@ -526,11 +562,11 @@ const server = Bun.serve({
 
         // 포트로 실행 중인 모든 프로세스 찾기
         if (port) {
-          console.log(`[Stop] Searching for all processes on port: ${port}`);
+          devLog(`[Stop] Searching for all processes on port: ${port}`);
           try {
             const pids = await getPidsByPort(port);
             if (pids.length > 0) {
-              console.log(`[Stop] Found ${pids.length} PIDs on port ${port}:`, pids);
+              devLog(`[Stop] Found ${pids.length} PIDs on port ${port}:`, pids);
               for (const pid of pids) {
                 await killPid(pid, false);
                 await new Promise(r => setTimeout(r, 200));
@@ -542,9 +578,9 @@ const server = Bun.serve({
                 }
                 killedPids.push(pid);
               }
-              console.log(`[Stop] Successfully killed ${killedPids.length} process(es)`);
+              devLog(`[Stop] Successfully killed ${killedPids.length} process(es)`);
             } else {
-              console.log(`[Stop] No process found on port ${port}`);
+              devLog(`[Stop] No process found on port ${port}`);
             }
           } catch (e) {
             console.error(`[Stop] Error finding/killing process by port:`, e);
@@ -576,7 +612,7 @@ const server = Bun.serve({
       try {
         const { portId, port, commandPath } = await req.json();
 
-        console.log(`[ForceRestart] Received request for portId: ${portId}, port: ${port}, path: ${commandPath}`);
+        devLog(`[ForceRestart] Received request for portId: ${portId}, port: ${port}, path: ${commandPath}`);
 
         if (!portId || !port || !commandPath) {
           return new Response(
@@ -586,12 +622,12 @@ const server = Bun.serve({
         }
 
         // 1단계: 포트로 실행 중인 모든 프로세스 강제 종료
-        console.log(`[ForceRestart] Killing all processes on port ${port}`);
+        devLog(`[ForceRestart] Killing all processes on port ${port}`);
 
         // Map에서도 제거
         const proc = executableProcesses.get(portId);
         if (proc) {
-          console.log(`[ForceRestart] Killing process from map, PID: ${proc.pid}`);
+          devLog(`[ForceRestart] Killing process from map, PID: ${proc.pid}`);
           try {
             proc.kill();
             executableProcesses.delete(portId);
@@ -604,14 +640,14 @@ const server = Bun.serve({
         try {
           const pids = await getPidsByPort(port);
           if (pids.length > 0) {
-            console.log(`[ForceRestart] Found PIDs on port ${port}:`, pids);
+            devLog(`[ForceRestart] Found PIDs on port ${port}:`, pids);
             for (const pid of pids) {
               await killPid(pid, true);
             }
             await new Promise(resolve => setTimeout(resolve, 500));
-            console.log(`[ForceRestart] Successfully killed all processes on port ${port}`);
+            devLog(`[ForceRestart] Successfully killed all processes on port ${port}`);
           } else {
-            console.log(`[ForceRestart] No process found on port ${port}`);
+            devLog(`[ForceRestart] No process found on port ${port}`);
           }
         } catch (e) {
           console.error(`[ForceRestart] Error finding/killing process by port:`, e);
@@ -624,7 +660,7 @@ const server = Bun.serve({
         const restartCmd = IS_WIN
           ? ['cmd', '/c', commandPath]
           : (isFilePath ? ['bash', commandPath] : ['bash', '-c', commandPath]);
-        console.log(`[ForceRestart] Starting new process: ${restartCmd.join(' ')}`);
+        devLog(`[ForceRestart] Starting new process: ${restartCmd.join(' ')}`);
 
         const newProc = spawn({
           cmd: restartCmd,
@@ -635,11 +671,11 @@ const server = Bun.serve({
 
         executableProcesses.set(portId, newProc);
 
-        console.log(`[ForceRestart] Process restarted successfully with PID: ${newProc.pid}`);
+        devLog(`[ForceRestart] Process restarted successfully with PID: ${newProc.pid}`);
 
         // 프로세스 종료 시 처리
         newProc.exited.then((code) => {
-          console.log(`[ForceRestart] Process for portId ${portId} exited with code: ${code}`);
+          devLog(`[ForceRestart] Process for portId ${portId} exited with code: ${code}`);
           executableProcesses.delete(portId);
         });
 
@@ -678,7 +714,7 @@ const server = Bun.serve({
         const pids = await getPidsByPort(port);
         const isRunning = pids.length > 0;
 
-        console.log(`[CheckPortStatus] Port ${port} is ${isRunning ? 'RUNNING' : 'NOT running'}`);
+        devLog(`[CheckPortStatus] Port ${port} is ${isRunning ? 'RUNNING' : 'NOT running'}`);
 
         return new Response(
           JSON.stringify({
@@ -699,11 +735,52 @@ const server = Bun.serve({
       }
     }
 
+    // 워크트리 폴더 경로와 CWD가 일치하는 프로세스의 실제 리스닝 포트 반환
+    if (url.pathname === "/api/find-worktree-port" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json();
+        if (!folderPath || IS_WIN) {
+          return new Response(JSON.stringify({ success: true, port: null }), { headers });
+        }
+        // 1) 10001-10499 범위에서 LISTEN 중인 포트+PID 수집
+        const r1 = Bun.spawnSync(['lsof', '-iTCP:10001-10499', '-sTCP:LISTEN', '-P', '-n', '-F', 'pn'], { stderr: 'pipe' });
+        const lines1 = r1.stdout.toString().split('\n');
+        const pidPortPairs: { pid: string; port: number }[] = [];
+        let curPid = '';
+        for (const line of lines1) {
+          if (line.startsWith('p')) { curPid = line.slice(1); }
+          else if (line.startsWith('n') && curPid) {
+            const m = line.match(/:(\d+)$/);
+            if (m) pidPortPairs.push({ pid: curPid, port: parseInt(m[1]) });
+          }
+        }
+        // 2) 각 고유 PID의 CWD가 folderPath 와 일치하는지 확인
+        const uniquePids = [...new Set(pidPortPairs.map(e => e.pid))];
+        for (const pid of uniquePids) {
+          const r2 = Bun.spawnSync(['lsof', '-a', '-p', pid, '-d', 'cwd', '-Fn'], { stderr: 'pipe' });
+          const cwdLine = r2.stdout.toString().split('\n').find(l => l.startsWith('n'));
+          if (!cwdLine) continue;
+          const cwd = cwdLine.slice(1).trim();
+          if (cwd === folderPath || cwd.startsWith(folderPath + '/') || folderPath.startsWith(cwd + '/')) {
+            const port = pidPortPairs.find(e => e.pid === pid)?.port ?? null;
+            if (port) {
+              devLog(`[FindWorktreePort] ${folderPath} → port ${port} (pid ${pid} cwd=${cwd})`);
+              return new Response(JSON.stringify({ success: true, port }), { headers });
+            }
+          }
+        }
+        return new Response(JSON.stringify({ success: true, port: null }), { headers });
+      } catch (error: any) {
+        console.error('[FindWorktreePort] Error:', error);
+        return new Response(JSON.stringify({ success: false, port: null, error: error.message }), { headers });
+      }
+    }
+
     if (url.pathname === "/api/open-add-command" && req.method === "POST") {
       try {
         const scriptPath = join(import.meta.dir, "포트에추가.command");
 
-        console.log(`[OpenAddCommand] Attempting to open: ${scriptPath}`);
+        devLog(`[OpenAddCommand] Attempting to open: ${scriptPath}`);
 
         // 파일 존재 여부 확인
         const file = Bun.file(scriptPath);
@@ -720,7 +797,7 @@ const server = Bun.serve({
           );
         }
 
-        console.log(`[OpenAddCommand] File exists, opening...`);
+        devLog(`[OpenAddCommand] File exists, opening...`);
 
         // macOS에서 .command 파일 열기
         spawn({
@@ -763,7 +840,7 @@ const server = Bun.serve({
 
         const buildCommand = type === 'dmg' ? 'tauri:build:dmg' : 'tauri:build';
 
-        console.log(`[Build] Starting ${type} build...`);
+        devLog(`[Build] Starting ${type} build...`);
 
         // bash를 통해 cargo 환경을 설정하고 실행
         buildProcess = spawn({
@@ -781,7 +858,7 @@ const server = Bun.serve({
             if (isStderr) {
               console.error(`[Build] ${text}`);
             } else {
-              console.log(`[Build] ${text}`);
+              devLog(`[Build] ${text}`);
             }
           }
         };
@@ -794,7 +871,7 @@ const server = Bun.serve({
           await Promise.all([stdoutDone, stderrDone]); // 스트림 완전 드레인 후
           buildStatus.exitCode = code;
           buildStatus.isBuilding = false;
-          console.log(`[Build] Process exited with code: ${code}`);
+          devLog(`[Build] Process exited with code: ${code}`);
         });
 
         return new Response(
@@ -826,12 +903,100 @@ const server = Bun.serve({
       return new Response(JSON.stringify({ success: true }), { headers });
     }
 
+    // ─── Vercel 포털 자동 배포 ──────────────────────────────────────────────
+    if (url.pathname === "/api/deploy-portal" && req.method === "POST") {
+      try {
+        if (deployStatus.isDeploying) {
+          return new Response(
+            JSON.stringify({ error: "배포가 이미 진행 중입니다" }),
+            { status: 400, headers }
+          );
+        }
+        deployStatus = { isDeploying: true, output: [], exitCode: null, url: null };
+        devLog(`[Deploy] Starting portal deployment...`);
+
+        // Windows에서는 cmd, 그 외는 bash
+        const isWin = process.platform === 'win32';
+        const cmd = isWin
+          ? ["cmd", "/c", `cd /d "${import.meta.dir}" && bun run build:portal && npx vercel --prod --yes`]
+          : ["bash", "-c", `cd "${import.meta.dir}" && bun run build:portal && npx vercel --prod --yes`];
+
+        deployProcess = spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+
+        const readStream = async (stream: any, isStderr = false) => {
+          const decoder = new TextDecoder();
+          for await (const chunk of stream) {
+            const text = decoder.decode(chunk);
+            deployStatus.output.push(text);
+            // URL 파싱: https://xxxxx.vercel.app
+            const m = text.match(/https:\/\/[a-zA-Z0-9-]+\.vercel\.app/);
+            if (m && !deployStatus.url) {
+              deployStatus.url = m[0];
+              devLog(`[Deploy] Detected URL: ${m[0]}`);
+            }
+            if (isStderr) console.error(`[Deploy] ${text}`);
+            else devLog(`[Deploy] ${text}`);
+          }
+        };
+
+        const stdoutDone = readStream(deployProcess.stdout, false);
+        const stderrDone = readStream(deployProcess.stderr, true);
+
+        deployProcess.exited.then(async (code: number) => {
+          await Promise.all([stdoutDone, stderrDone]);
+          deployStatus.exitCode = code;
+          deployStatus.isDeploying = false;
+          devLog(`[Deploy] Process exited with code: ${code}, url: ${deployStatus.url}`);
+        });
+
+        return new Response(
+          JSON.stringify({ success: true, message: "배포가 시작되었습니다" }),
+          { headers }
+        );
+      } catch (error: any) {
+        console.error(`[Deploy] Error:`, error);
+        deployStatus.isDeploying = false;
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/deploy-portal-status" && req.method === "GET") {
+      return new Response(JSON.stringify(deployStatus), { headers });
+    }
+
+    if (url.pathname === "/api/deploy-portal-reset" && req.method === "POST") {
+      if (deployProcess) {
+        try { deployProcess.kill(); } catch {}
+      }
+      deployStatus = { isDeploying: false, output: ['⚠️ 배포가 강제 초기화되었습니다.'], exitCode: null, url: null };
+      return new Response(JSON.stringify({ success: true }), { headers });
+    }
+
+    // Vercel 로그인 체크: whoami
+    if (url.pathname === "/api/vercel-whoami" && req.method === "GET") {
+      try {
+        const isWin = process.platform === 'win32';
+        const cmd = isWin ? ["cmd", "/c", "npx vercel whoami"] : ["bash", "-c", "npx vercel whoami"];
+        const proc = spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        const loggedIn = code === 0 && out.trim().length > 0 && !err.includes('Error');
+        return new Response(
+          JSON.stringify({ loggedIn, user: loggedIn ? out.trim() : null, message: loggedIn ? out.trim() : err.trim() }),
+          { headers }
+        );
+      } catch (e: any) {
+        return new Response(JSON.stringify({ loggedIn: false, message: e.message }), { headers });
+      }
+    }
+
     if (url.pathname === "/api/open-build-folder" && req.method === "POST") {
       try {
         // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
         const dmgFolder = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle/dmg");
 
-        console.log(`[OpenBuildFolder] Attempting to open: ${dmgFolder}`);
+        devLog(`[OpenBuildFolder] Attempting to open: ${dmgFolder}`);
 
         // macOS에서 폴더 열기
         spawn({
@@ -876,8 +1041,22 @@ const server = Bun.serve({
           await ps.exited;
           picked = (await new Response(ps.stdout).text()).trim();
         } else {
+          const appleScript = `
+use framework "AppKit"
+use scripting additions
+set panel to current application's NSOpenPanel's openPanel()
+panel's setShowsHiddenFiles_(true)
+panel's setCanChooseDirectories_(true)
+panel's setCanChooseFiles_(false)
+panel's setAllowsMultipleSelection_(false)
+panel's setPrompt_("선택")
+if panel's runModal() is 1 then
+  return (panel's URL()'s |path|()) as string
+end if
+return ""`;
           const proc = Bun.spawn({
-            cmd: ['osascript', '-e', 'POSIX path of (choose folder)'],
+            cmd: ['osascript', '-'],
+            stdin: new Blob([appleScript]),
             stdout: 'pipe', stderr: 'pipe',
           });
           await proc.exited;
@@ -892,11 +1071,22 @@ const server = Bun.serve({
       }
     }
 
+    if (url.pathname === "/api/expand-path" && req.method === "POST") {
+      try {
+        const { path: inputPath } = await req.json();
+        const home = process.env.HOME || homedir();
+        const expanded = (inputPath as string).replace(/^~/, home);
+        return new Response(JSON.stringify({ path: expanded }), { headers });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String(e) }), { status: 400, headers });
+      }
+    }
+
     if (url.pathname === "/api/open-folder" && req.method === "POST") {
       try {
         const { folderPath } = await req.json();
 
-        console.log(`[OpenFolder] Attempting to open: ${folderPath}`);
+        devLog(`[OpenFolder] Attempting to open: ${folderPath}`);
 
         if (!folderPath) {
           return new Response(
@@ -966,20 +1156,23 @@ const server = Bun.serve({
         const escCmd = shellCmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const escTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         const cdPart = folderPath ? `write text "cd '${escapeSq(folderPath)}'"\n    ` : '';
-        const script = `tell application "iTerm"\n  activate\n  set w to create window with default profile\n  tell current session of w\n    ${cdPart}write text "${escCmd}"\n    delay 0.3\n    set name to "${escTitle}"\n  end tell\nend tell`;
+        const script = `tell application "iTerm"\n  activate\n  set w to create window with default profile\n  tell current session of w\n    ${cdPart}write text "${escCmd}"\n    delay 2.0\n    set name to "${escTitle}"\n  end tell\nend tell`;
         spawn({ cmd: ['osascript', '-e', script], stdout: 'inherit', stderr: 'inherit' });
       }
     }
 
     if (url.pathname === "/api/open-tmux-claude" && req.method === "POST") {
       try {
-        const { sessionName, folderPath, worktreePath } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath, 'tmux');
+        const { sessionName, folderPath, worktreePath, branch } = await req.json();
+        const title = buildWindowTitle(sessionName, worktreePath, 'tmux', branch ?? null);
         if (IS_WIN) {
           spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, false), title);
         } else {
-          const claudeCmd = `tmux new-session -A -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
-          openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
+          const esc = escapeSq(sessionName);
+          const winName = escapeSq(title);
+          const claudeCmd = `tmux new-session -d -s '${esc}' -n '${winName}' 'claude' 2>/dev/null; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '${esc}' automatic-rename off 2>/dev/null; tmux rename-window -t '${esc}' '${winName}' 2>/dev/null; tmux attach-session -t '${esc}'`;
+          const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
+          openTerminalWithCmd(claudeCmd, cdPath, title);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude 실행 중 (세션: ${sessionName})` }), { headers });
       } catch (error: any) {
@@ -989,13 +1182,16 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/open-tmux-claude-fresh" && req.method === "POST") {
       try {
-        const { sessionName, folderPath, worktreePath } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'fresh']);
+        const { sessionName, folderPath, worktreePath, branch } = await req.json();
+        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'fresh'], branch ?? null);
         if (IS_WIN) {
           spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, true, false), title);
         } else {
-          const claudeCmd = `tmux kill-session -t '${escapeSq(sessionName)}' 2>/dev/null; tmux new-session -s '${escapeSq(sessionName)}' '${worktreePath ? `claude -w '${escapeSq(worktreePath)}'` : 'claude'}'`;
-          openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
+          const esc = escapeSq(sessionName);
+          const winName = escapeSq(title);
+          const claudeCmd = `tmux kill-session -t '${esc}' 2>/dev/null; tmux new-session -d -s '${esc}' -n '${winName}' 'claude'; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '${esc}' automatic-rename off 2>/dev/null; tmux rename-window -t '${esc}' '${winName}' 2>/dev/null; tmux attach-session -t '${esc}'`;
+          const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
+          openTerminalWithCmd(claudeCmd, cdPath, title);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude 새 세션 시작 (${sessionName})` }), { headers });
       } catch (error: any) {
@@ -1005,13 +1201,17 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/open-tmux-claude-bypass" && req.method === "POST") {
       try {
-        const { sessionName, folderPath, worktreePath } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'bypass']);
+        const { sessionName, folderPath, worktreePath, branch } = await req.json();
+        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'bypass'], branch ?? null);
         if (IS_WIN) {
           spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, true), title);
         } else {
-          const claudeCmd = `tmux new-session -A -s '${escapeSq(sessionName)}-bypass' '${worktreePath ? `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'` : 'claude --dangerously-skip-permissions'}'`;
-          openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
+          const esc = escapeSq(sessionName);
+          const bypassSess = `${esc}-bypass`;
+          const winName = escapeSq(title);
+          const claudeCmd = `tmux new-session -d -s '${bypassSess}' -n '${winName}' 'claude --dangerously-skip-permissions' 2>/dev/null; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '${bypassSess}' automatic-rename off 2>/dev/null; tmux rename-window -t '${bypassSess}' '${winName}' 2>/dev/null; tmux attach-session -t '${bypassSess}'`;
+          const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
+          openTerminalWithCmd(claudeCmd, cdPath, title);
         }
         return new Response(JSON.stringify({ success: true, message: `Claude bypass 실행 중 (${sessionName})` }), { headers });
       } catch (error: any) {
@@ -1090,10 +1290,8 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-terminal-claude" && req.method === "POST") {
       try {
         const { folderPath, name, worktreePath } = await req.json();
-        const claudeCmd = worktreePath
-          ? (IS_WIN ? `claude -w "${worktreePath}"` : `claude -w '${escapeSq(worktreePath)}'`)
-          : 'claude';
-        openTerminalWithCmd(claudeCmd, folderPath ?? null, buildWindowTitle(name || 'Claude', worktreePath));
+        const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
+        openTerminalWithCmd('claude', cdPath, buildWindowTitle(name || 'Claude', worktreePath));
         return new Response(JSON.stringify({ success: true, message: 'Terminal에서 Claude 실행' }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
@@ -1103,12 +1301,10 @@ const server = Bun.serve({
     if (url.pathname === "/api/open-terminal-claude-bypass" && req.method === "POST") {
       try {
         const { folderPath, name, worktreePath } = await req.json();
-        const claudeCmd = worktreePath
-          ? (IS_WIN ? `claude --dangerously-skip-permissions -w "${worktreePath}"` : `claude --dangerously-skip-permissions -w '${escapeSq(worktreePath)}'`)
-          : 'claude --dangerously-skip-permissions';
+        const claudeCmd = 'claude --dangerously-skip-permissions';
+        const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
         const title = buildWindowTitle(name || 'Claude', worktreePath, 'bypass');
-        console.log('[terminal-claude-bypass] name:', JSON.stringify(name), 'worktreePath:', JSON.stringify(worktreePath), 'title:', JSON.stringify(title));
-        openTerminalWithCmd(claudeCmd, folderPath ?? null, title);
+        openTerminalWithCmd(claudeCmd, cdPath, title);
         return new Response(JSON.stringify({ success: true, message: 'Terminal에서 Claude (bypass) 실행' }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
@@ -1339,7 +1535,7 @@ const server = Bun.serve({
         const appPath = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle/macos/포트관리기.app");
         const destPath = "/Applications/포트관리기.app";
 
-        console.log(`[InstallApp] Installing from: ${appPath} to: ${destPath}`);
+        devLog(`[InstallApp] Installing from: ${appPath} to: ${destPath}`);
 
         // 기존 앱이 있으면 삭제
         if (existsSync(destPath)) {
@@ -1379,7 +1575,7 @@ const server = Bun.serve({
 
     if (url.pathname === "/api/export-dmg" && req.method === "POST") {
       try {
-        console.log(`[ExportDMG] Starting...`);
+        devLog(`[ExportDMG] Starting...`);
         // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
         const bundleDir = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle");
 
@@ -1393,16 +1589,16 @@ const server = Bun.serve({
         let dmgFile: string | null = null;
 
         for (const dmgDir of dmgPaths) {
-          console.log(`[ExportDMG] Checking directory: ${dmgDir}`);
+          devLog(`[ExportDMG] Checking directory: ${dmgDir}`);
           if (existsSync(dmgDir)) {
             const { readdirSync } = await import("node:fs");
             const files = readdirSync(dmgDir);
-            console.log(`[ExportDMG] Files found:`, files);
+            devLog(`[ExportDMG] Files found:`, files);
 
             for (const file of files) {
               if (file.endsWith('.dmg') && !file.startsWith('rw.')) {
                 dmgFile = join(dmgDir, file);
-                console.log(`[ExportDMG] Found DMG: ${dmgFile}`);
+                devLog(`[ExportDMG] Found DMG: ${dmgFile}`);
                 break;
               }
             }
@@ -1429,7 +1625,7 @@ const server = Bun.serve({
         const dmgFilename = basename(dmgFile);
         const destPath = join(desktop, dmgFilename);
 
-        console.log(`[ExportDMG] Copying from: ${dmgFile} to: ${destPath}`);
+        devLog(`[ExportDMG] Copying from: ${dmgFile} to: ${destPath}`);
 
         // 기존 파일이 있으면 삭제
         if (existsSync(destPath)) {
@@ -1441,7 +1637,7 @@ const server = Bun.serve({
         const { copyFileSync } = await import("node:fs");
         copyFileSync(dmgFile, destPath);
 
-        console.log(`[ExportDMG] Copy successful`);
+        devLog(`[ExportDMG] Copy successful`);
 
         // Desktop 폴더 열기
         spawn({
@@ -1523,7 +1719,7 @@ const server = Bun.serve({
           return new Response(JSON.stringify({ success: false, error: "이미 존재하는 폴더입니다" }), { status: 400, headers });
         }
         mkdirSync(folderPath, { recursive: true });
-        console.log(`[CreateFolder] Created: ${folderPath}`);
+        devLog(`[CreateFolder] Created: ${folderPath}`);
         spawn({ cmd: ["open", folderPath], stdout: "inherit", stderr: "inherit" });
         return new Response(JSON.stringify({ success: true, path: folderPath }), { headers });
       } catch (error: any) {
@@ -1709,7 +1905,7 @@ const server = Bun.serve({
         await branchProc.exited;
         const branch = (await new Response(branchProc.stdout).text()).trim() || "main";
 
-        const proc = Bun.spawn([GIT_PATH, "push", "origin", branch], {
+        const proc = Bun.spawn([GIT_PATH, "push", "--set-upstream", "origin", branch], {
           cwd: folderPath,
           stdout: "pipe",
           stderr: "pipe",
@@ -1786,7 +1982,10 @@ const server = Bun.serve({
           worktrees.push({ path: currentPath, branch: currentBranch ?? undefined, is_main: isFirst });
         }
 
-        return new Response(JSON.stringify({ success: true, worktrees }), { headers });
+        // Filter out worktrees whose directory no longer exists (deleted but not pruned)
+        const validWorktrees = worktrees.filter(wt => existsSync(wt.path));
+
+        return new Response(JSON.stringify({ success: true, worktrees: validWorktrees }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ success: true, worktrees: [] }), { headers });
       }
@@ -1809,19 +2008,7 @@ const server = Bun.serve({
         const home = homedir();
         // 플랫폼 공통 basename: / 와 \ 둘 다 처리
         const baseName = (folderPath as string).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'project';
-        const targetPath = worktreePath || (() => {
-          if (isICloud) {
-            // iCloud 경로: git checkout이 SIGBUS → ~/worktrees/ (iCloud 밖)에 생성
-            return join(home, 'worktrees', `${baseName}-${dirSafeBranch}`);
-          }
-          // 형제 디렉터리로 생성: <parent>/<baseName>-<branch>
-          const trimmed = (folderPath as string).replace(/[\\/]+$/, '');
-          const sepMatch = trimmed.match(/[\\/]/);
-          const sep = sepMatch ? sepMatch[0] : (IS_WIN ? '\\' : '/');
-          const parts = trimmed.split(/[\\/]/);
-          parts[parts.length - 1] = parts[parts.length - 1] + '-' + dirSafeBranch;
-          return parts.join(sep);
-        })();
+        const targetPath = worktreePath || join(home, 'worktrees', `${baseName}-${dirSafeBranch}`);
         // Check if worktree for this branch already exists
         const listProc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
         await listProc.exited;
@@ -2132,12 +2319,14 @@ const server = Bun.serve({
     // Portal 데이터 로드
     if (url.pathname === "/api/portal" && req.method === "GET") {
       try {
+        const { hostname } = await import("node:os");
         const file = Bun.file(PORTAL_DATA_FILE);
+        const base = { _hostname: hostname() };
         if (await file.exists()) {
           const data = await file.json();
-          return new Response(JSON.stringify(data), { headers });
+          return new Response(JSON.stringify({ ...base, ...data }), { headers });
         }
-        return new Response(JSON.stringify({ items: [], categories: [] }), { headers });
+        return new Response(JSON.stringify({ ...base, items: [], categories: [] }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
       }
@@ -2155,6 +2344,55 @@ const server = Bun.serve({
         return new Response(JSON.stringify({ success: true }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // Port visits: record a click/action
+    if (url.pathname === "/api/port-visits" && req.method === "POST") {
+      try {
+        const { portId, deviceId, supabaseUrl, supabaseKey } = await req.json() as {
+          portId: string; deviceId: string; supabaseUrl: string; supabaseKey: string;
+        };
+        if (!supabaseUrl || !supabaseKey) return new Response(JSON.stringify({ error: 'no_credentials' }), { status: 400, headers });
+        const res = await fetch(`${supabaseUrl}/rest/v1/port_visits`, {
+          method: 'POST',
+          headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json', 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ port_id: portId, device_id: deviceId }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    // Port visits: get top ports by window (alltime | weekly | daily)
+    if (url.pathname === "/api/port-visits" && req.method === "GET") {
+      try {
+        const supabaseUrl = url.searchParams.get('supabaseUrl') || '';
+        const supabaseKey = url.searchParams.get('supabaseKey') || '';
+        const window = url.searchParams.get('window') || 'alltime';
+        const deviceId = url.searchParams.get('deviceId') || '';
+        if (!supabaseUrl || !supabaseKey) return new Response(JSON.stringify([]), { headers });
+        let filter = `device_id=eq.${encodeURIComponent(deviceId)}`;
+        if (window === 'daily') {
+          const since = new Date(Date.now() - 86400000).toISOString();
+          filter += `&visited_at=gte.${encodeURIComponent(since)}`;
+        } else if (window === 'weekly') {
+          const since = new Date(Date.now() - 7 * 86400000).toISOString();
+          filter += `&visited_at=gte.${encodeURIComponent(since)}`;
+        }
+        const res = await fetch(`${supabaseUrl}/rest/v1/port_visits?select=port_id&${filter}`, {
+          headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` },
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const rows = await res.json() as { port_id: string }[];
+        const counts: Record<string, number> = {};
+        for (const r of rows) counts[r.port_id] = (counts[r.port_id] || 0) + 1;
+        const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([portId, count]) => ({ portId, count }));
+        return new Response(JSON.stringify(sorted), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify([]), { headers });
       }
     }
 
@@ -2450,4 +2688,4 @@ Analyze this project and reply with JSON only (no markdown, no explanation):
   },
 });
 
-console.log(`🚀 API Server running at http://localhost:${server.port}`);
+devLog(`🚀 API Server running at http://localhost:${server.port}`);
