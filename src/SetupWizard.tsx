@@ -9,6 +9,14 @@ interface SetupWizardProps {
   onSkip: () => void;
 }
 
+/** 포크 사용자는 여기 두 줄 또는 VITE_REPO_URL 환경변수만 바꾸면 됩니다.
+ *  git clone 예시 / "이 앱 포크" 링크가 자동으로 이 저장소를 가리킵니다. */
+const REPO_URL: string = (import.meta as any).env?.VITE_REPO_URL
+  ?? 'https://github.com/intenet1001-commits/portmanagement';
+const REPO_CLONE_URL = REPO_URL.endsWith('.git') ? REPO_URL : `${REPO_URL}.git`;
+const REPO_FORK_URL = `${REPO_URL}/fork`;
+const REPO_DIR_NAME = REPO_URL.split('/').filter(Boolean).pop()?.replace(/\.git$/, '') ?? 'portmanagement';
+
 type Mode = 'choose' | 'first' | 'additional' | 'portal' | 'windows_env' | 'mac_env';
 type OS = 'mac' | 'windows';
 
@@ -601,12 +609,12 @@ function AdditionalDeviceWizard({ onComplete, onBack }: { onComplete: SetupWizar
   ];
 
   const cloneCmd = os === 'mac'
-    ? `git clone https://github.com/intenet1001-commits/portmanagement.git
-cd portmanagement
+    ? `git clone ${REPO_CLONE_URL}
+cd ${REPO_DIR_NAME}
 bun install
 bun run start`
-    : `git clone https://github.com/intenet1001-commits/portmanagement.git
-cd portmanagement
+    : `git clone ${REPO_CLONE_URL}
+cd ${REPO_DIR_NAME}
 # Bun 설치 (없는 경우): https://bun.sh
 bun install
 bun run start`;
@@ -1142,7 +1150,7 @@ vercel --prod`;
       <div className="space-y-3">
         <div>
           <p className="text-xs text-zinc-400 mb-2">① 저장소 Fork</p>
-          <a href="https://github.com/intenet1001-commits/portmanagement/fork"
+          <a href={REPO_FORK_URL}
             target="_blank" rel="noopener"
             className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-lg text-sm text-white transition-colors">
             <ExternalLink className="w-3.5 h-3.5" /> GitHub에서 Fork 열기

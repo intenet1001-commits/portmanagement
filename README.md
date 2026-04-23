@@ -16,6 +16,31 @@
 
 ---
 
+## Fork 후 5분 체크리스트
+
+포크해서 본인의 저장소로 옮긴 직후, 다음 파일만 업데이트하면 그대로 사용할 수 있습니다.
+
+1. **`src-tauri/tauri.conf.json`** — `identifier`를 본인 도메인으로 변경 (예: `com.yourname.portmanager`). 그대로 두면 macOS 서명 충돌 발생.
+2. **`.env.example` → `.env`** 복사 후 값 채우기
+   - `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` — Supabase 프로젝트 API Settings에서 복사
+   - `VITE_REPO_URL` — 포크한 저장소 URL (SetupWizard의 git clone / Fork 링크 자동 교체)
+   - `PORTMGR_GITHUB_OWNER` / `PORTMGR_GITHUB_REPO` — 포크한 owner/repo (Windows 빌드 자동화용)
+3. **`package.json`** — `homepage` / `repository.url`을 본인 저장소 URL로.
+4. **`.github/workflows/build-windows.yml`** — GitHub Actions를 그대로 쓸 거면 포크한 저장소에 Secrets 재설정.
+
+검증:
+
+```bash
+bun install
+bun run start      # 로컬(데스크톱/웹) 동작 확인
+bun run build:portal
+# Vercel 연결 후 환경변수 등록 → vercel --prod
+```
+
+문제 발생 시 [docs/ERRORS.md](docs/ERRORS.md), 전체 동작 확인은 [docs/DOGFOOD.md](docs/DOGFOOD.md) 참고.
+
+---
+
 ## 주요 기능
 
 | 기능 | 설명 |

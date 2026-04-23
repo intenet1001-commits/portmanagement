@@ -182,10 +182,10 @@ const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
 let buildStatus = { isBuilding: false, type: '', output: [] as string[], exitCode: null as number | null };
 
-// GitHub Actions 설정
-const GITHUB_OWNER = 'intenet1001-commits';
-const GITHUB_REPO = 'portmanagement';
-const GITHUB_WORKFLOW = 'build-windows.yml';
+// GitHub Actions 설정 — 포크한 저장소 정보는 환경변수로 override 가능
+const GITHUB_OWNER = process.env.PORTMGR_GITHUB_OWNER || 'intenet1001-commits';
+const GITHUB_REPO = process.env.PORTMGR_GITHUB_REPO || 'portmanagement';
+const GITHUB_WORKFLOW = process.env.PORTMGR_GITHUB_WORKFLOW || 'build-windows.yml';
 
 // 포트 데이터 파일 - Tauri와 동일한 위치 사용 (플랫폼별)
 // macOS: ~/Library/Application Support/com.portmanager.portmanager
@@ -1421,7 +1421,7 @@ const server = Bun.serve({
           );
         }
 
-        const home = process.env.HOME || "/Users/gwanli";
+        const home = process.env.HOME || homedir();
         const desktop = join(home, "Desktop");
 
         // 원본 파일명 추출 (버전 정보 포함)

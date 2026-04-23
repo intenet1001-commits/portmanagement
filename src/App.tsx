@@ -5,13 +5,7 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
 import PortalManager, { type PortalActions } from './PortalManager';
 import SetupWizard from './SetupWizard';
-
-// Tauri API 체크
-const isTauri = () => {
-  if (typeof window === 'undefined') return false;
-  // Tauri v2에서는 __TAURI_INTERNALS__ 또는 __TAURI__ 확인
-  return '__TAURI__' in window || '__TAURI_INTERNALS__' in window;
-};
+import { isTauri, isDeployedWeb } from './lib/env';
 
 // OS 감지
 const isWindows = () => typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('win');
@@ -961,11 +955,12 @@ function App() {
   const lastLogIndexRef = useRef<number>(0);
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>([]);
   const dirHandlesRef = useRef<Map<string, FileSystemDirectoryHandle>>(new Map());
-  const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showOptionalFields, setShowOptionalFields] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [activeRootId, setActiveRootId] = useState<string | null>(null);
-  const [registerAsProject, setRegisterAsProject] = useState(true);
+  // 통합 "+ 프로젝트 추가" 모달
+  const [showAddProjectModal, setShowAddProjectModal] = useState(false);
+  const [addProjectMode, setAddProjectMode] = useState<'connect' | 'create'>('connect');
   const portalConfigRef = useRef<any>(null);
   const portalActionsRef = useRef<PortalActions | null>(null);
   const autoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1357,7 +1352,7 @@ function App() {
           // Supabase 자동 Pull (10s timeout, Model B merge)
           if (portalData?.supabaseUrl && portalData?.supabaseAnonKey) {
             try {
-              const supabase = getSupabaseClient(portalData.supabaseUrl, portalData.supabaseAnonKey);
+              const supabase = getSupabaseClient(portalData.supabaseUrl.trim(), portalData.supabaseAnonKey.trim());
               let portsQuery = supabase.from('ports').select('*');
               if (portalData.deviceId) portsQuery = portsQuery.eq('device_id', portalData.deviceId);
               let { data: remoteData, error } = await withTimeout(portsQuery, 10_000);
@@ -1508,7 +1503,7 @@ function App() {
       if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey) return;
       if (ports.length === 0) return; // 빈 배열로 stale-delete 방지
       try {
-        const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+        const supabase = getSupabaseClient(cfg.supabaseUrl.trim(), cfg.supabaseAnonKey.trim());
         const deviceId = cfg.deviceId ?? null;
         const deviceNameVal = cfg.deviceName ?? null;
         // 다른 기기 소유 포트는 push 제외 (sourceDeviceId가 내 deviceId와 다른 경우)
@@ -1933,7 +1928,7 @@ function App() {
         return;
       }
 
-      const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
+      const supabase = getSupabaseClient(supabaseUrl.trim(), supabaseAnonKey.trim());
       // 설정의 "다른 기기 보기"가 선택돼 있으면 그 기기 기준으로 Pull
       const pullDeviceId = portalData?.viewingDeviceId || portalData?.deviceId || null;
       const isOtherDevice = portalData?.viewingDeviceId && portalData.viewingDeviceId !== portalData?.deviceId;
@@ -2037,7 +2032,7 @@ function App() {
       }
       const deviceId = portalData.deviceId ?? null;
       const deviceNameVal = portalData.deviceName ?? null;
-      const supabase = getSupabaseClient(supabaseUrl, supabaseAnonKey);
+      const supabase = getSupabaseClient(supabaseUrl.trim(), supabaseAnonKey.trim());
 
       // 새 기기에서 포트 목록이 비어있으면 Pull 먼저 하도록 안내
       if (ports.length === 0) {
@@ -2353,29 +2348,124 @@ function App() {
     }
   };
 
-  const handleAddWorkspaceRoot = async () => {
+  /** 네이티브 폴더 선택 (Tauri / 로컬 웹). 취소/실패 시 null */
+  const pickFolder = async (): Promise<string | null> => {
     if (isTauri()) {
       const { open } = await import('@tauri-apps/plugin-dialog');
       const selected = await open({ directory: true, multiple: false });
-      if (selected && typeof selected === 'string') {
-        const name = selected.split('/').pop() || selected;
-        const id = crypto.randomUUID();
-        const updated = [...workspaceRoots, { id, name, path: selected }];
-        setWorkspaceRoots(updated);
+      return (selected && typeof selected === 'string') ? selected : null;
+    }
+    const res = await fetch('/api/pick-folder');
+    const data = await res.json();
+    return data?.path ?? null;
+  };
+
+  /** 폴더 경로에서 실행 파일 탐지 후 폼 상태에 port/commandPath/folderPath 채움 */
+  const autofillFromFolder = async (folder: string) => {
+    setFolderPath(folder);
+    if (!name) {
+      const base = folder.split(/[\\/]/).filter(Boolean).pop() || '';
+      if (base) setName(base);
+    }
+    try {
+      const files = await API.scanCommandFiles(folder);
+      if (files.length === 0) return;
+      const execFile = files[0];
+      setCommandPath(execFile);
+      const d = await API.detectPort(execFile);
+      if (d?.port && !port) setPort(String(d.port));
+    } catch { /* silent */ }
+  };
+
+  /** 통합 모달 열기: 상태 초기화 */
+  const openAddProjectModal = (mode: 'connect' | 'create' = 'connect') => {
+    setAddProjectMode(mode);
+    setShowAddProjectModal(true);
+    setShowOptionalFields(false);
+    setName(''); setPort(''); setCommandPath(''); setTerminalCommand('');
+    setFolderPath(''); setDeployUrl(''); setGithubUrl('');
+    setWorktreePath(''); setCategory(''); setDescription('');
+    setNewProjectName('');
+    if (mode === 'create' && !activeRootId && workspaceRoots.length > 0) {
+      setActiveRootId(workspaceRoots[0].id);
+    }
+  };
+
+  /** 통합 모달의 "등록" — 기존 폴더 연결. addPort 래퍼 + 모달 닫기 */
+  const handleSubmitConnectProject = () => {
+    if (!name.trim()) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
+    addPort();
+    setShowAddProjectModal(false);
+  };
+
+  /** 통합 모달의 "생성" — 작업루트 하위 폴더 생성 + 포트 등록 */
+  const handleSubmitCreateProject = async () => {
+    const root = workspaceRoots.find(r => r.id === activeRootId);
+    if (!root) { showToast('작업루트를 선택하세요', 'error'); return; }
+    if (!isAbsolutePath(root.path)) { showToast('루트 경로가 절대경로가 아닙니다', 'error'); return; }
+    const trimmed = newProjectName.trim();
+    if (!trimmed) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
+    const sep = root.path.includes('\\') && !root.path.includes('/') ? '\\' : '/';
+    const fullPath = `${root.path.replace(/[\\/]$/, '')}${sep}${trimmed}`;
+    try {
+      const result = await API.createFolder(fullPath);
+      if (!result.success) {
+        showToast((result as any).error || '폴더 생성 실패', 'error');
+        return;
       }
-    } else {
-      try {
-        const res = await fetch('/api/pick-folder');
-        const data = await res.json();
-        if (!data.path) return;
-        const selected: string = data.path;
-        const name = selected.split('/').pop() || selected;
-        const id = crypto.randomUUID();
-        const updated = [...workspaceRoots, { id, name, path: selected }];
-        setWorkspaceRoots(updated);
-      } catch (e: any) {
-        if (e.name !== 'AbortError') showToast('폴더 선택 실패: ' + e.message, 'error');
+      const portNum = port ? parseInt(port) : undefined;
+      if (portNum !== undefined && (isNaN(portNum) || portNum < 1 || portNum > 65535)) {
+        showToast('포트 번호는 1~65535 사이여야 합니다', 'error'); return;
       }
+      const newPort: PortInfo = {
+        id: Date.now().toString(),
+        name: name.trim() || trimmed,
+        port: portNum,
+        commandPath: commandPath || undefined,
+        terminalCommand: terminalCommand || undefined,
+        folderPath: fullPath,
+        deployUrl: deployUrl || undefined,
+        githubUrl: githubUrl || undefined,
+        category: category || undefined,
+        description: description || undefined,
+        isRunning: false,
+      };
+      setPorts(prev => [newPort, ...prev]);
+      showToast(`프로젝트 생성 완료: ${trimmed}`, 'success');
+      setShowAddProjectModal(false);
+    } catch (e: any) {
+      showToast('폴더 생성 실패: ' + (e?.message ?? e), 'error');
+    }
+  };
+
+  const handleAddWorkspaceRoot = async () => {
+    const pick = async (): Promise<string | null> => {
+      if (isTauri()) {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const selected = await open({ directory: true, multiple: false });
+        return (selected && typeof selected === 'string') ? selected : null;
+      }
+      const res = await fetch('/api/pick-folder');
+      const data = await res.json();
+      return data?.path ?? null;
+    };
+    try {
+      const selected = await pick();
+      if (!selected) return;
+      if (!isAbsolutePath(selected)) {
+        showToast(`절대경로가 필요합니다: ${selected}`, 'error');
+        return;
+      }
+      if (workspaceRoots.some(r => r.path === selected)) {
+        showToast('이미 추가된 작업루트입니다', 'error');
+        return;
+      }
+      const basename = selected.split(/[\\/]/).filter(Boolean).pop() || selected;
+      const id = crypto.randomUUID();
+      setWorkspaceRoots([...workspaceRoots, { id, name: basename, path: selected }]);
+      showToast(`작업루트 추가: ${basename}`, 'success');
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') showToast('폴더 선택 실패: ' + (e?.message ?? e), 'error');
     }
   };
 
@@ -2386,63 +2476,6 @@ function App() {
     setWorkspaceRoots(updated);
   };
 
-  const handleCreateProjectFolder = async () => {
-    const root = workspaceRoots.find(r => r.id === activeRootId);
-    if (!root) { showToast('작업 루트를 찾을 수 없습니다', 'error'); return; }
-    const trimmed = newProjectName.trim();
-    if (!trimmed) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
-
-    const addProject = (fullPath: string) => {
-      if (registerAsProject) {
-        const newPort: PortInfo = {
-          id: crypto.randomUUID(),
-          name: trimmed,
-          folderPath: fullPath,
-        };
-        setPorts(prev => [newPort, ...prev]);
-      }
-    };
-
-    if (isTauri()) {
-      if (!root.path.startsWith('/')) {
-        showToast('루트 폴더 경로가 절대경로가 아닙니다. 루트를 삭제 후 다시 추가해주세요.', 'error');
-        return;
-      }
-      const fullPath = `${root.path}/${trimmed}`;
-      try {
-        const result = await API.createFolder(fullPath);
-        if (result.success) {
-          addProject(fullPath);
-          showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
-          setNewProjectName('');
-          setShowNewProjectModal(false);
-        } else {
-          showToast((result as any).error || '폴더 생성 실패', 'error');
-        }
-      } catch (e: any) {
-        showToast('폴더 생성 실패: ' + e.message, 'error');
-      }
-    } else {
-      if (!root.path.startsWith('/')) {
-        showToast('루트 폴더 경로가 절대경로가 아닙니다. 루트를 삭제 후 다시 추가해주세요.', 'error');
-        return;
-      }
-      const fullPath = `${root.path}/${trimmed}`;
-      try {
-        const result = await API.createFolder(fullPath);
-        if (result.success) {
-          addProject(fullPath);
-          showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
-          setNewProjectName('');
-          setShowNewProjectModal(false);
-        } else {
-          showToast((result as any).error || '폴더 생성 실패', 'error');
-        }
-      } catch (e: any) {
-        showToast('폴더 생성 실패: ' + e.message, 'error');
-      }
-    }
-  };
 
   const handleInstallWindowsPrereqs = async () => {
     if (isBuilding) return;
@@ -2627,12 +2660,6 @@ function App() {
       }
     } catch (error) {
       showToast('파일 선택 실패: ' + error, 'error');
-    }
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      addPort();
     }
   };
 
@@ -3686,6 +3713,19 @@ function App() {
         {/* 포트 관리 탭 */}
         {activeTab === 'ports' && <>
 
+        {/* Vercel 배포본 안내 배너 — filesystem 기능 비활성 상태 */}
+        {isDeployedWeb() && (
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-4 flex items-start gap-3">
+            <Info className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1 text-sm text-amber-200">
+              <p className="font-medium mb-0.5">조회 전용 모드</p>
+              <p className="text-xs text-amber-300/80">
+                이 화면은 웹에 배포된 포털입니다. 프로젝트 추가·실행·빌드는 로컬 데스크톱 앱에서만 동작합니다. 포털(북마크) 탭은 정상 사용 가능합니다.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* 헤더 */}
         <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-6 mb-6">
           {/* 헤더 1행: 타이틀 + 주요 버튼 */}
@@ -3713,8 +3753,8 @@ function App() {
             </div>
           </div>
 
-          {/* 헤더 2행: 빌드 버튼 (웹 모드 전용) */}
-          {!isTauri() && (
+          {/* 헤더 2행: 빌드 버튼 (로컬 웹 모드 전용 — Vercel에서는 API 서버 없음) */}
+          {!isTauri() && !isDeployedWeb() && (
             <div className="flex items-center gap-2 justify-end mb-3">
               <button onClick={() => API.openBuildFolder()} className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-sm rounded-lg border border-zinc-700 hover:border-zinc-600 transition-all flex items-center gap-1.5">
                 <FolderOpen className="w-3.5 h-3.5" />
@@ -3739,134 +3779,22 @@ function App() {
             </div>
           )}
 
-          {/* 입력 폼 */}
-          <div className="space-y-2.5">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="프로젝트 이름"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
-              <input
-                type="number"
-                placeholder="포트"
-                value={port}
-                onChange={(e) => setPort(e.target.value)}
-                onKeyPress={handleKeyPress}
-                className="w-24 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-              />
+          {/* 단일 "+ 프로젝트 추가" 진입점 — 모달로 열림 (Vercel에서는 숨김) */}
+          {!isDeployedWeb() && (
+            <div className="flex justify-center">
               <button
-                onClick={addPort}
-                className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition-colors duration-200 flex items-center gap-1.5"
+                onClick={() => openAddProjectModal('connect')}
+                className="px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-blue-500/20"
               >
                 <Plus className="w-4 h-4" />
-                <span>추가</span>
+                <span>프로젝트 추가</span>
               </button>
             </div>
-            <div>
-              <button
-                type="button"
-                onClick={() => setShowOptionalFields(v => !v)}
-                className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors mb-2 select-none"
-              >
-                <span className={`transition-transform duration-200 ${showOptionalFields ? 'rotate-90' : ''}`}>▶</span>
-                <span>추가 정보 {showOptionalFields ? '접기' : '펼치기'}</span>
-              </button>
-              {showOptionalFields && (
-                <div className="space-y-2">
-                  <input
-                    type="text"
-                    placeholder={`${execFileExt()} 파일 경로 (선택사항)`}
-                    value={commandPath}
-                    onChange={(e) => setCommandPath(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                  />
-                  <input
-                    type="text"
-                    placeholder="터미널 명령어 (선택사항, 예: bunx cursor-talk-to-figma-socket)"
-                    value={terminalCommand}
-                    onChange={(e) => setTerminalCommand(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                  />
-                  <input
-                    type="text"
-                    placeholder="프로젝트 폴더 경로 (선택사항)"
-                    value={folderPath}
-                    onChange={(e) => setFolderPath(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                  />
-                  <input
-                    type="text"
-                    placeholder="배포 사이트 주소 (선택사항, 예: https://example.com)"
-                    value={deployUrl}
-                    onChange={(e) => setDeployUrl(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                  />
-                  <input
-                    type="text"
-                    placeholder="GitHub 주소 (선택사항, 예: https://github.com/user/repo)"
-                    value={githubUrl}
-                    onChange={(e) => setGithubUrl(e.target.value)}
-                    onKeyPress={handleKeyPress}
-                    className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                  />
-                  <input
-                    type="text"
-                    placeholder="워크트리 경로 (선택사항) — 입력 시 포트 자동 배정 (메인포트×10+n)"
-                    value={worktreePath}
-                    onChange={(e) => {
-                      setWorktreePath(e.target.value);
-                      // 워크트리 경로 입력 시 포트가 비어있으면 메인포트 기반 자동 배정
-                      if (!port && e.target.value.trim()) {
-                        const mainPort = folderPath
-                          ? ports.find(p => p.folderPath === folderPath)?.port
-                          : undefined;
-                        setPort(getNextWorktreePort(ports, mainPort).toString());
-                      }
-                    }}
-                    onKeyPress={handleKeyPress}
-                    className="w-full px-3 py-2 text-sm bg-black/30 border border-amber-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 focus:border-amber-500 transition-all"
-                  />
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="카테고리 (AI 자동)"
-                      value={category}
-                      onChange={(e) => setCategory(e.target.value)}
-                      onKeyPress={handleKeyPress}
-                      className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                    />
-                    <input
-                      type="text"
-                      placeholder="프로젝트 설명 (선택사항)"
-                      value={description}
-                      onChange={(e) => setDescription(e.target.value)}
-                      onKeyPress={handleKeyPress}
-                      className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                    />
-                  </div>
-                  <div className="flex items-start gap-2 px-1">
-                    <div className="text-base">💡</div>
-                    <p className="text-[11px] text-zinc-500 leading-relaxed">
-                      <span className="font-medium text-zinc-400">쉬운 추가 방법:</span> Finder에서
-                      <span className="font-mono text-zinc-400"> 포트에추가.command </span>
-                      파일 위로 {execFileExt()} 파일을 드래그하세요
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+          )}
         </div>
 
-        {/* 작업 루트 */}
+        {/* 작업 루트 (Vercel에서는 filesystem 없음 → 숨김) */}
+        {!isDeployedWeb() && (
         <div className="bg-[#18181b] rounded-xl border border-zinc-800 p-4 mb-6">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2 min-w-0">
@@ -3910,7 +3838,7 @@ function App() {
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
-                      onClick={() => { setActiveRootId(root.id); setNewProjectName(''); setShowNewProjectModal(true); }}
+                      onClick={() => { setActiveRootId(root.id); openAddProjectModal('create'); }}
                       className="px-2.5 py-1 bg-green-500/15 hover:bg-green-500/25 text-green-300 text-xs rounded-md border border-green-500/40 hover:border-green-500/60 transition-all flex items-center gap-1"
                     >
                       <FilePlus className="w-3 h-3" />
@@ -3929,54 +3857,173 @@ function App() {
             </div>
           )}
         </div>
+        )}
 
-        {/* 새 프로젝트 폴더 생성 모달 */}
-        {showNewProjectModal && (
-          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-[#18181b] rounded-xl border border-zinc-800 w-full max-w-md p-6">
-              <div className="flex items-center gap-3 mb-5">
-                <div className="bg-green-500/15 p-2 rounded-lg border border-green-500/30">
-                  <FilePlus className="w-5 h-5 text-green-400" />
+        {/* 통합 "+ 프로젝트 추가" 모달 — 기존 폴더 연결 / 새 폴더 생성 두 모드 */}
+        {showAddProjectModal && (
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setShowAddProjectModal(false)}>
+            <div className="bg-[#18181b] rounded-xl border border-zinc-800 w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="bg-blue-500/15 p-2 rounded-lg border border-blue-500/30">
+                    <Plus className="w-5 h-5 text-blue-400" />
+                  </div>
+                  <h2 className="text-base font-semibold text-white">프로젝트 추가</h2>
                 </div>
-                <div>
-                  <h2 className="text-base font-semibold text-white">새 프로젝트 폴더</h2>
-                  <p className="text-xs text-zinc-500 mt-0.5 font-mono truncate max-w-xs">
-                    {workspaceRoots.find(r => r.id === activeRootId)?.path}/
-                  </p>
-                </div>
+                <button onClick={() => setShowAddProjectModal(false)} className="p-1 text-zinc-500 hover:text-zinc-300 rounded-md"><XIcon className="w-5 h-5" /></button>
               </div>
-              <input
-                type="text"
-                placeholder="프로젝트 이름 (예: my-app)"
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateProjectFolder(); if (e.key === 'Escape') setShowNewProjectModal(false); }}
-                autoFocus
-                className="w-full px-3 py-2.5 text-sm bg-black/40 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500 transition-all mb-3 font-mono"
-              />
-              <label className="flex items-center gap-2 mb-4 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={registerAsProject}
-                  onChange={(e) => setRegisterAsProject(e.target.checked)}
-                  className="w-4 h-4 rounded border-zinc-600 bg-zinc-800 accent-green-500"
-                />
-                <span className="text-sm text-zinc-400">포트 목록에 프로젝트 등록</span>
-              </label>
-              <div className="flex gap-2 justify-end">
+
+              {/* 모드 선택 탭 */}
+              <div className="flex gap-1 mb-4 bg-zinc-900/60 p-1 rounded-lg border border-zinc-800">
                 <button
-                  onClick={() => setShowNewProjectModal(false)}
-                  className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors"
+                  onClick={() => setAddProjectMode('connect')}
+                  className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-colors ${addProjectMode === 'connect' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40' : 'text-zinc-400 hover:text-zinc-200'}`}
                 >
-                  취소
+                  기존 폴더 연결
                 </button>
                 <button
-                  onClick={handleCreateProjectFolder}
-                  disabled={!newProjectName.trim()}
-                  className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+                  onClick={() => {
+                    setAddProjectMode('create');
+                    if (!activeRootId && workspaceRoots.length > 0) setActiveRootId(workspaceRoots[0].id);
+                  }}
+                  className={`flex-1 px-3 py-1.5 text-xs rounded-md transition-colors ${addProjectMode === 'create' ? 'bg-green-500/20 text-green-300 border border-green-500/40' : 'text-zinc-400 hover:text-zinc-200'}`}
                 >
-                  생성
+                  새 폴더 만들기
                 </button>
+              </div>
+
+              {/* 모드별 고유 입력 */}
+              {addProjectMode === 'connect' && (
+                <div className="space-y-2 mb-3">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="폴더 경로 (또는 폴더 선택 버튼)"
+                      value={folderPath}
+                      onChange={(e) => setFolderPath(e.target.value)}
+                      className="flex-1 px-3 py-2 text-sm bg-black/40 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                    />
+                    <button
+                      onClick={async () => {
+                        const p = await pickFolder();
+                        if (p) await autofillFromFolder(p);
+                      }}
+                      className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs rounded-lg border border-zinc-700 flex items-center gap-1.5"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                      폴더 선택
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 pl-1">폴더를 선택하면 이름·포트·실행 파일을 자동으로 채웁니다.</p>
+                </div>
+              )}
+
+              {addProjectMode === 'create' && (
+                <div className="space-y-2 mb-3">
+                  {workspaceRoots.length === 0 ? (
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
+                      <p className="text-xs text-amber-300 mb-2">작업루트가 없습니다. 먼저 루트를 추가하세요.</p>
+                      <button
+                        onClick={async () => { await handleAddWorkspaceRoot(); }}
+                        className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs rounded-md border border-amber-500/40 flex items-center gap-1.5"
+                      >
+                        <Plus className="w-3 h-3" />
+                        작업루트 추가
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <label className="block text-[11px] text-zinc-400 mb-1">작업루트</label>
+                      <select
+                        value={activeRootId ?? ''}
+                        onChange={(e) => setActiveRootId(e.target.value || null)}
+                        className="w-full px-3 py-2 text-sm bg-black/40 border border-zinc-700 text-white rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 font-mono"
+                      >
+                        {workspaceRoots.map(r => (
+                          <option key={r.id} value={r.id}>{r.name} — {r.path}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="새 폴더 이름 (예: my-app)"
+                        value={newProjectName}
+                        onChange={(e) => setNewProjectName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && newProjectName.trim() && name.trim()) handleSubmitCreateProject(); }}
+                        autoFocus
+                        className="w-full px-3 py-2 text-sm bg-black/40 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-green-500 font-mono"
+                      />
+                      <p className="text-[11px] text-zinc-500 pl-1">
+                        생성 경로: <span className="font-mono text-zinc-400">{workspaceRoots.find(r => r.id === activeRootId)?.path}/{newProjectName || '...'}</span>
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* 공통 필드: 이름 + 포트 */}
+              <div className="space-y-2 border-t border-zinc-800 pt-3">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="프로젝트 이름"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <input
+                    type="number"
+                    placeholder="포트"
+                    value={port}
+                    onChange={(e) => setPort(e.target.value)}
+                    className="w-24 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowOptionalFields(v => !v)}
+                  className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors select-none"
+                >
+                  <span className={`transition-transform ${showOptionalFields ? 'rotate-90' : ''}`}>▶</span>
+                  <span>추가 정보 {showOptionalFields ? '접기' : '펼치기'}</span>
+                </button>
+
+                {showOptionalFields && (
+                  <div className="space-y-2 pt-1">
+                    <input type="text" placeholder={`${execFileExt()} 파일 경로`} value={commandPath} onChange={(e) => setCommandPath(e.target.value)} className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    <input type="text" placeholder="터미널 명령어 (예: bunx cursor-talk-to-figma-socket)" value={terminalCommand} onChange={(e) => setTerminalCommand(e.target.value)} className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    {addProjectMode === 'connect' && (
+                      <input type="text" placeholder="프로젝트 폴더 경로" value={folderPath} onChange={(e) => setFolderPath(e.target.value)} className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    )}
+                    <input type="text" placeholder="배포 사이트 (예: https://example.com)" value={deployUrl} onChange={(e) => setDeployUrl(e.target.value)} className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    <input type="text" placeholder="GitHub 주소" value={githubUrl} onChange={(e) => setGithubUrl(e.target.value)} className="w-full px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    <div className="flex gap-2">
+                      <input type="text" placeholder="카테고리" value={category} onChange={(e) => setCategory(e.target.value)} className="flex-1 px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      <input type="text" placeholder="설명" value={description} onChange={(e) => setDescription(e.target.value)} className="flex-[2] px-3 py-2 text-sm bg-black/30 border border-zinc-700 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-2 justify-end mt-5">
+                <button onClick={() => setShowAddProjectModal(false)} className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg transition-colors">취소</button>
+                {addProjectMode === 'connect' ? (
+                  <button
+                    onClick={handleSubmitConnectProject}
+                    disabled={!name.trim()}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+                  >
+                    등록
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSubmitCreateProject}
+                    disabled={!newProjectName.trim() || !name.trim() || !activeRootId}
+                    className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white text-sm rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed font-medium"
+                  >
+                    생성 + 등록
+                  </button>
+                )}
               </div>
             </div>
           </div>

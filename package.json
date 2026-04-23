@@ -3,6 +3,13 @@
   "module": "index.ts",
   "type": "module",
   "private": true,
+  "description": "로컬 개발 포트·프로젝트 관리 앱 (Tauri + React + Bun + Vercel Portal)",
+  "author": "CS & Company",
+  "homepage": "https://github.com/intenet1001-commits/portmanagement",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/intenet1001-commits/portmanagement.git"
+  },
   "scripts": {
     "dev": "bun --watch api-server.ts & vite",
     "api": "bun --watch api-server.ts",
@@ -16,7 +23,9 @@
     "fix-dmg": "bun fix-dmg.ts",
     "tauri:build": "bun update-version.ts && bun run build && tauri build",
     "tauri:build:dmg": "bun update-version.ts && bun run build && tauri build --bundles dmg; bun fix-dmg.ts",
-    "tauri:build:win": "bun build-win.ts"
+    "tauri:build:win": "bun build-win.ts",
+    "test:smoke": "node tests/smoke.mjs",
+    "test:smoke:vercel": "TARGET=vercel node tests/smoke.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.5",

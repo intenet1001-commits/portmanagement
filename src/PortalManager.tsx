@@ -9,6 +9,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { createClient } from '@supabase/supabase-js';
+import { isTauri, isDeployedWeb } from './lib/env';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -72,9 +73,8 @@ const DEFAULT_CATEGORIES: PortalCategory[] = [
 ];
 
 // ─── Tauri detection ──────────────────────────────────────────────────────────
+// isTauri / isDeployedWeb 는 ./lib/env 에서 import
 
-const isTauri = () => typeof window !== 'undefined' && ('__TAURI__' in window || '__TAURI_INTERNALS__' in window);
-const isDeployedWeb = () => typeof window !== 'undefined' && !isTauri() && !['localhost', '127.0.0.1'].includes(window.location.hostname);
 const PORTAL_WEB_KEY = 'portalData_v1';
 
 // ─── Portal API ───────────────────────────────────────────────────────────────
@@ -799,7 +799,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       return;
     }
     if (form.type === 'folder' && !form.path.startsWith('/')) {
-      showToast('절대 경로가 필요합니다 (예: /Users/gwanli/...)', 'error');
+      showToast('절대 경로가 필요합니다 (예: /Users/<name>/... 또는 C:\\\\Users\\\\<name>\\\\...)', 'error');
       return;
     }
     const resolvedCategory = form.category || data.categories[0]?.id || '';
@@ -951,7 +951,9 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   // ── Supabase Sync ─────────────────────────────────────────────────────────
 
   async function syncSupabase() {
-    if (!sbUrl || !sbKey) {
+    const trimmedUrl = sbUrl.trim();
+    const trimmedKey = sbKey.trim();
+    if (!trimmedUrl || !trimmedKey) {
       showToast('Supabase URL과 키를 먼저 설정하세요', 'error');
       setShowSettings(true);
       return;
@@ -959,7 +961,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     setIsSyncing(true);
     setSyncOk(null);
     try {
-      const supabase = createClient(sbUrl, sbKey);
+      const supabase = createClient(trimmedUrl, trimmedKey);
       const deviceId = data.deviceId ?? getOrCreateDeviceId();
 
       // Upsert items — folders are per-device, all others are shared
@@ -995,7 +997,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       if (itemsRes.error) throw new Error(itemsRes.error.message);
       if (catsRes.error) throw new Error(catsRes.error.message);
 
-      const nextData: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceId, deviceName: deviceName || data.deviceName, lastSynced: new Date().toISOString() };
+      const nextData: PortalData = { ...data, supabaseUrl: trimmedUrl, supabaseAnonKey: trimmedKey, deviceId, deviceName: deviceName || data.deviceName, lastSynced: new Date().toISOString() };
       await persist(nextData);
       setSyncOk(true);
       showToast(`Supabase 동기화 완료 (${data.items.length}개 항목)`, 'success');
@@ -1008,14 +1010,16 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   }
 
   async function pullFromSupabase() {
-    if (!sbUrl || !sbKey) {
+    const trimmedUrl = sbUrl.trim();
+    const trimmedKey = sbKey.trim();
+    if (!trimmedUrl || !trimmedKey) {
       showToast('Supabase URL과 키를 먼저 설정하세요', 'error');
       setShowSettings(true);
       return;
     }
     setIsRestoring(true);
     try {
-      const supabase = createClient(sbUrl, sbKey);
+      const supabase = createClient(trimmedUrl, trimmedKey);
       const ownDeviceId = data.deviceId ?? getOrCreateDeviceId();
       const targetDeviceId = viewingDeviceId || ownDeviceId;
       const [itemsRes, catsRes] = await Promise.all([
@@ -1068,10 +1072,10 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   }
 
   async function fetchKnownDevices() {
-    if (!sbUrl || !sbKey) { showToast('Supabase URL과 Key를 먼저 입력 후 저장하세요', 'error'); return; }
+    if (!sbUrl.trim() || !sbKey.trim()) { showToast('Supabase URL과 Key를 먼저 입력 후 저장하세요', 'error'); return; }
     setIsFetchingDevices(true);
     try {
-      const supabase = createClient(sbUrl, sbKey);
+      const supabase = createClient(sbUrl.trim(), sbKey.trim());
       const seen = new Set<string>();
       // device_id → device_name 맵 (여러 소스에서 보강)
       const nameMap = new Map<string, string>();
@@ -1140,7 +1144,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   }
 
   async function saveSettings() {
-    const next: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceName: deviceName || undefined, viewingDeviceId: viewingDeviceId || undefined };
+    const next: PortalData = { ...data, supabaseUrl: sbUrl.trim(), supabaseAnonKey: sbKey.trim(), deviceName: deviceName || undefined, viewingDeviceId: viewingDeviceId || undefined };
     await persist(next);
     setShowSettings(false);
     showToast('설정 저장됨', 'success');
