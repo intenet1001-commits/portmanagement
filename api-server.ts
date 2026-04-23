@@ -210,6 +210,14 @@ const executableProcesses = new Map<string, any>();
 let buildProcess: any = null;
 let buildStatus = { isBuilding: false, type: '', output: [] as string[], exitCode: null as number | null };
 
+let deployProcess: any = null;
+let deployStatus = {
+  isDeploying: false,
+  output: [] as string[],
+  exitCode: null as number | null,
+  url: null as string | null,
+};
+
 // GitHub Actions 설정
 const GITHUB_OWNER = 'intenet1001-commits';
 const GITHUB_REPO = 'portmanagement';
@@ -893,6 +901,94 @@ const server = Bun.serve({
       }
       buildStatus = { isBuilding: false, type: '', output: ['⚠️ 빌드가 강제 초기화되었습니다.'], exitCode: null };
       return new Response(JSON.stringify({ success: true }), { headers });
+    }
+
+    // ─── Vercel 포털 자동 배포 ──────────────────────────────────────────────
+    if (url.pathname === "/api/deploy-portal" && req.method === "POST") {
+      try {
+        if (deployStatus.isDeploying) {
+          return new Response(
+            JSON.stringify({ error: "배포가 이미 진행 중입니다" }),
+            { status: 400, headers }
+          );
+        }
+        deployStatus = { isDeploying: true, output: [], exitCode: null, url: null };
+        devLog(`[Deploy] Starting portal deployment...`);
+
+        // Windows에서는 cmd, 그 외는 bash
+        const isWin = process.platform === 'win32';
+        const cmd = isWin
+          ? ["cmd", "/c", `cd /d "${import.meta.dir}" && bun run build:portal && npx vercel --prod --yes`]
+          : ["bash", "-c", `cd "${import.meta.dir}" && bun run build:portal && npx vercel --prod --yes`];
+
+        deployProcess = spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+
+        const readStream = async (stream: any, isStderr = false) => {
+          const decoder = new TextDecoder();
+          for await (const chunk of stream) {
+            const text = decoder.decode(chunk);
+            deployStatus.output.push(text);
+            // URL 파싱: https://xxxxx.vercel.app
+            const m = text.match(/https:\/\/[a-zA-Z0-9-]+\.vercel\.app/);
+            if (m && !deployStatus.url) {
+              deployStatus.url = m[0];
+              devLog(`[Deploy] Detected URL: ${m[0]}`);
+            }
+            if (isStderr) console.error(`[Deploy] ${text}`);
+            else devLog(`[Deploy] ${text}`);
+          }
+        };
+
+        const stdoutDone = readStream(deployProcess.stdout, false);
+        const stderrDone = readStream(deployProcess.stderr, true);
+
+        deployProcess.exited.then(async (code: number) => {
+          await Promise.all([stdoutDone, stderrDone]);
+          deployStatus.exitCode = code;
+          deployStatus.isDeploying = false;
+          devLog(`[Deploy] Process exited with code: ${code}, url: ${deployStatus.url}`);
+        });
+
+        return new Response(
+          JSON.stringify({ success: true, message: "배포가 시작되었습니다" }),
+          { headers }
+        );
+      } catch (error: any) {
+        console.error(`[Deploy] Error:`, error);
+        deployStatus.isDeploying = false;
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/deploy-portal-status" && req.method === "GET") {
+      return new Response(JSON.stringify(deployStatus), { headers });
+    }
+
+    if (url.pathname === "/api/deploy-portal-reset" && req.method === "POST") {
+      if (deployProcess) {
+        try { deployProcess.kill(); } catch {}
+      }
+      deployStatus = { isDeploying: false, output: ['⚠️ 배포가 강제 초기화되었습니다.'], exitCode: null, url: null };
+      return new Response(JSON.stringify({ success: true }), { headers });
+    }
+
+    // Vercel 로그인 체크: whoami
+    if (url.pathname === "/api/vercel-whoami" && req.method === "GET") {
+      try {
+        const isWin = process.platform === 'win32';
+        const cmd = isWin ? ["cmd", "/c", "npx vercel whoami"] : ["bash", "-c", "npx vercel whoami"];
+        const proc = spawn({ cmd, stdout: "pipe", stderr: "pipe" });
+        const out = await new Response(proc.stdout).text();
+        const err = await new Response(proc.stderr).text();
+        const code = await proc.exited;
+        const loggedIn = code === 0 && out.trim().length > 0 && !err.includes('Error');
+        return new Response(
+          JSON.stringify({ loggedIn, user: loggedIn ? out.trim() : null, message: loggedIn ? out.trim() : err.trim() }),
+          { headers }
+        );
+      } catch (e: any) {
+        return new Response(JSON.stringify({ loggedIn: false, message: e.message }), { headers });
+      }
     }
 
     if (url.pathname === "/api/open-build-folder" && req.method === "POST") {

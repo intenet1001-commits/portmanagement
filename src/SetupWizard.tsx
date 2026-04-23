@@ -1232,6 +1232,66 @@ function PortalVercelWizard({ onBack, onClose }: { onBack: () => void; onClose: 
   const [passwordHash, setPasswordHash] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
+  // ── 자동 배포 상태 ────────────────────────────────────────────────
+  const [isDeploying, setIsDeploying] = useState(false);
+  const [deployLog, setDeployLog] = useState<string[]>([]);
+  const [deployUrl, setDeployUrl] = useState<string | null>(null);
+  const [deployExitCode, setDeployExitCode] = useState<number | null>(null);
+  const [showManualFallback, setShowManualFallback] = useState(false);
+  const [vercelUser, setVercelUser] = useState<string | null>(null);
+  const [vercelCheckingAuth, setVercelCheckingAuth] = useState(false);
+
+  async function checkVercelAuth() {
+    setVercelCheckingAuth(true);
+    try {
+      const r = await fetch('/api/vercel-whoami');
+      const j = await r.json();
+      setVercelUser(j.loggedIn ? (j.user || 'logged in') : null);
+    } catch { setVercelUser(null); }
+    finally { setVercelCheckingAuth(false); }
+  }
+
+  async function startAutoDeploy() {
+    setDeployLog([]); setDeployUrl(null); setDeployExitCode(null); setIsDeploying(true);
+    try {
+      const r = await fetch('/api/deploy-portal', { method: 'POST' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        setDeployLog(l => [...l, `❌ 배포 시작 실패: ${j.error ?? r.statusText}`]);
+        setIsDeploying(false);
+        return;
+      }
+    } catch (e: any) {
+      setDeployLog(l => [...l, `❌ 네트워크 오류: ${e.message}`]);
+      setIsDeploying(false);
+    }
+  }
+
+  // 배포 상태 폴링 (1초마다)
+  useEffect(() => {
+    if (!isDeploying) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const r = await fetch('/api/deploy-portal-status');
+        const j = await r.json();
+        if (cancelled) return;
+        setDeployLog(j.output ?? []);
+        if (j.url) setDeployUrl(j.url);
+        if (!j.isDeploying) {
+          setDeployExitCode(j.exitCode);
+          setIsDeploying(false);
+          if (j.exitCode === 0 && j.url) {
+            try { await navigator.clipboard.writeText(j.url); } catch {}
+          }
+        }
+      } catch {}
+    };
+    const id = setInterval(poll, 1000);
+    void poll();
+    return () => { cancelled = true; clearInterval(id); };
+  }, [isDeploying]);
+
   useEffect(() => {
     if (!password) { setPasswordHash(''); return; }
     crypto.subtle.digest('SHA-256', new TextEncoder().encode(password))
@@ -1377,29 +1437,100 @@ vercel --prod`;
     /* 3: Vercel deploy */
     <div key={3} className="space-y-4">
       <InfoBox color="blue">
-        Fork한 저장소 루트에서 아래 명령을 순서대로 실행합니다.<br />
-        <code className="text-violet-400">vercel env add</code> 실행 시 값 입력 후 Enter, <strong>Production</strong> 환경 선택.
+        🚀 <strong>자동 배포</strong>: 로컬 앱이 <code className="text-violet-400">bun run build:portal</code> + <code className="text-violet-400">vercel --prod</code>를 자동 실행합니다.<br />
+        <span className="text-zinc-400 text-[11px]">사전 조건: Vercel CLI 설치 + 로그인 완료 (Step 0 참고)</span>
       </InfoBox>
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <p className="text-xs text-zinc-400">터미널 — 저장소 루트에서 실행</p>
-          <button onClick={() => copy('vercel', vercelCmds)} className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1"><Copy className="w-3 h-3" />{copied['vercel'] ? '복사됨!' : '전체 복사'}</button>
-        </div>
-        <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 font-mono leading-loose">{vercelCmds}</pre>
+
+      {/* Vercel 로그인 상태 확인 */}
+      <div className="flex items-center gap-2 text-xs">
+        <button
+          onClick={checkVercelAuth}
+          disabled={vercelCheckingAuth}
+          className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg border border-zinc-700 disabled:opacity-50"
+        >
+          {vercelCheckingAuth ? '확인 중…' : 'Vercel 로그인 확인'}
+        </button>
+        {vercelUser === null && !vercelCheckingAuth && <span className="text-zinc-500">아직 확인 안 됨</span>}
+        {vercelUser && <span className="text-emerald-400">✓ 로그인됨: {vercelUser}</span>}
       </div>
-      <div className="rounded-xl border border-zinc-700 p-4 space-y-2 text-xs text-zinc-400">
-        <p className="font-medium text-zinc-300">입력 값 안내</p>
-        <div className="space-y-1">
-          <p><code className="text-violet-400">VITE_SUPABASE_URL</code> — Supabase 대시보드 → Project Settings → API → Project URL</p>
-          <p><code className="text-violet-400">VITE_SUPABASE_ANON_KEY</code> — 같은 페이지 anon/public key</p>
-          <p><code className="text-violet-400">VITE_PORTAL_PASSWORD_HASH</code> —{' '}
-            {passwordHash
-              ? <span className="text-emerald-400 font-mono break-all">{passwordHash.slice(0, 20)}…  (Step 3에서 생성됨 ✓)</span>
-              : <span>Step 3에서 생성한 해시 (비밀번호 없이 공개 시 빈 값)</span>
-            }
-          </p>
+
+      {/* 자동 배포 버튼 */}
+      {!isDeploying && deployExitCode === null && (
+        <button
+          onClick={startAutoDeploy}
+          className="w-full py-3 bg-violet-600 hover:bg-violet-500 text-white font-semibold rounded-xl transition-colors flex items-center justify-center gap-2"
+        >
+          <Zap className="w-4 h-4" />🚀 자동 배포 시작
+        </button>
+      )}
+
+      {/* 배포 진행 중 */}
+      {isDeploying && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm text-violet-300">
+            <RefreshCw className="w-4 h-4 animate-spin" />배포 중…
+          </div>
+          <pre className="bg-black/70 border border-zinc-700 rounded-xl p-3 text-[11px] text-zinc-300 font-mono max-h-64 overflow-y-auto whitespace-pre-wrap">{deployLog.join('') || '(대기)'}</pre>
         </div>
-      </div>
+      )}
+
+      {/* 배포 완료 */}
+      {deployExitCode === 0 && deployUrl && (
+        <div className="border border-emerald-500/40 bg-emerald-500/10 rounded-xl p-4 space-y-2">
+          <p className="text-sm font-semibold text-emerald-300">✓ 배포 완료</p>
+          <p className="text-xs text-zinc-400">이 URL을 2번째 기기 브라우저에서 열면 "새 기기" 버튼으로 설정 복사 가능 (URL은 클립보드에도 자동 복사됨)</p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 px-3 py-2 text-xs bg-black/40 rounded-lg text-emerald-300 font-mono break-all">{deployUrl}</code>
+            <button onClick={() => copy('deployUrl', deployUrl)} className="px-3 py-2 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg border border-zinc-700">
+              {copied['deployUrl'] ? '복사됨!' : '복사'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 배포 실패 */}
+      {deployExitCode !== null && deployExitCode !== 0 && (
+        <div className="border border-red-500/40 bg-red-500/10 rounded-xl p-3 space-y-2">
+          <p className="text-sm font-semibold text-red-300">❌ 배포 실패 (exit {deployExitCode})</p>
+          <p className="text-xs text-zinc-400">로그를 확인하고, 아래 수동 가이드로 다시 시도하거나 Vercel 로그인 상태를 확인하세요.</p>
+          <pre className="bg-black/70 border border-zinc-700 rounded-xl p-3 text-[10px] text-zinc-400 font-mono max-h-40 overflow-y-auto whitespace-pre-wrap">{deployLog.join('')}</pre>
+          <button onClick={() => { setDeployExitCode(null); setDeployLog([]); setDeployUrl(null); }} className="text-xs text-violet-400 hover:text-violet-300 underline">
+            다시 시도
+          </button>
+        </div>
+      )}
+
+      {/* 수동 배포 fallback (접힘) */}
+      <button
+        onClick={() => setShowManualFallback(s => !s)}
+        className="w-full text-[11px] text-zinc-500 hover:text-zinc-300 underline transition-colors"
+      >
+        {showManualFallback ? '▲ 수동 배포 가이드 닫기' : '▼ 수동 배포 가이드 (CLI가 없거나 실패 시)'}
+      </button>
+      {showManualFallback && (
+        <div className="space-y-3 pt-2">
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs text-zinc-400">터미널 — 저장소 루트에서 실행</p>
+              <button onClick={() => copy('vercel', vercelCmds)} className="text-[11px] text-violet-400 hover:text-violet-300 flex items-center gap-1"><Copy className="w-3 h-3" />{copied['vercel'] ? '복사됨!' : '전체 복사'}</button>
+            </div>
+            <pre className="bg-black/50 border border-zinc-700 rounded-xl p-4 text-xs text-emerald-300 font-mono leading-loose">{vercelCmds}</pre>
+          </div>
+          <div className="rounded-xl border border-zinc-700 p-4 space-y-2 text-xs text-zinc-400">
+            <p className="font-medium text-zinc-300">입력 값 안내</p>
+            <div className="space-y-1">
+              <p><code className="text-violet-400">VITE_SUPABASE_URL</code> — Supabase → Project Settings → API → Project URL</p>
+              <p><code className="text-violet-400">VITE_SUPABASE_ANON_KEY</code> — 같은 페이지 anon/public key</p>
+              <p><code className="text-violet-400">VITE_PORTAL_PASSWORD_HASH</code> —{' '}
+                {passwordHash
+                  ? <span className="text-emerald-400 font-mono break-all">{passwordHash.slice(0, 20)}…  (Step 2 생성값 ✓)</span>
+                  : <span>Step 2 해시</span>
+                }
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>,
 
     /* 4: Connect device */
