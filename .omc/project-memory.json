@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1776322888830,
-  "projectRoot": "/Users/gwanli/Documents/GitHub/myproduct_v4/portmanagement",
+  "lastScanned": 1776940452603,
+  "projectRoot": "/Users/gwanli/Library/CloudStorage/GoogleDrive-intenet1@gmail.com/My Drive/portmanagement",
   "techStack": {
     "languages": [
       {
@@ -33,6 +33,11 @@
         "category": "frontend"
       },
       {
+        "name": "playwright",
+        "version": "1.59.1",
+        "category": "testing"
+      },
+      {
         "name": "vite",
         "version": "7.2.6",
         "category": "build"
@@ -58,7 +63,8 @@
       "update-version": "bun update-version.ts",
       "fix-dmg": "bun fix-dmg.ts",
       "tauri:build": "bun update-version.ts && bun run build && tauri build",
-      "tauri:build:dmg": "bun update-version.ts && bun run build && tauri build --bundles dmg; bun fix-dmg.ts"
+      "tauri:build:dmg": "bun update-version.ts && bun run build && tauri build --bundles dmg; bun fix-dmg.ts",
+      "tauri:build:win": "bun build-win.ts"
     }
   },
   "conventions": {
@@ -86,7 +92,7 @@
       "path": "dist",
       "purpose": "Distribution/build output",
       "fileCount": 1,
-      "lastAccessed": 1776322888817,
+      "lastAccessed": 1776940452475,
       "keyFiles": [
         "index.html"
       ]
@@ -94,17 +100,18 @@
     "dist-portal": {
       "path": "dist-portal",
       "purpose": null,
-      "fileCount": 1,
-      "lastAccessed": 1776559149953,
+      "fileCount": 2,
+      "lastAccessed": 1776940452479,
       "keyFiles": [
-        "portal.html"
+        "portal.html",
+        "setup.html"
       ]
     },
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
       "fileCount": 5,
-      "lastAccessed": 1776322888818,
+      "lastAccessed": 1776940452480,
       "keyFiles": [
         "PLAN.md",
         "architecture.md",
@@ -116,21 +123,21 @@
     "src": {
       "path": "src",
       "purpose": "Source code",
-      "fileCount": 6,
-      "lastAccessed": 1776322888823,
+      "fileCount": 10,
+      "lastAccessed": 1776940452480,
       "keyFiles": [
         "App.tsx",
+        "ErrorBoundary.tsx",
         "PortalManager.tsx",
         "SetupWizard.tsx",
-        "index.css",
-        "main.tsx"
+        "index.css"
       ]
     },
     "src-tauri": {
       "path": "src-tauri",
       "purpose": null,
-      "fileCount": 6,
-      "lastAccessed": 1776322888823,
+      "fileCount": 5,
+      "lastAccessed": 1776940452481,
       "keyFiles": [
         "Cargo.lock",
         "Cargo.toml",
@@ -141,122 +148,84 @@
     "tests": {
       "path": "tests",
       "purpose": "Test files",
-      "fileCount": 5,
-      "lastAccessed": 1776322888823,
+      "fileCount": 8,
+      "lastAccessed": 1776940452482,
       "keyFiles": [
         "error-resilience-test.py",
         "functional-test.mjs",
         "perf-measure.mjs",
-        "touch-validate.mjs",
-        "touch-validate.py"
+        "title-verify-test.mjs",
+        "touch-validate.mjs"
       ]
     },
     "uploaded-commands": {
       "path": "uploaded-commands",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1776322888823,
+      "lastAccessed": 1776940452482,
       "keyFiles": [
-        "실행.command"
+        "실행.command"
       ]
     },
     "dist/assets": {
       "path": "dist/assets",
       "purpose": "Static assets",
-      "fileCount": 2,
-      "lastAccessed": 1776322888824,
+      "fileCount": 4,
+      "lastAccessed": 1776940452483,
       "keyFiles": [
-        "index-5nQB7HzF.js",
-        "index-Dl58Dat7.css"
+        "index-BtOi82Qd.css",
+        "index-CMsU8Ul2.js",
+        "index-DC7fjqfC.js"
+      ]
+    },
+    "dist-portal/assets": {
+      "path": "dist-portal/assets",
+      "purpose": "Static assets",
+      "fileCount": 5,
+      "lastAccessed": 1776940452484,
+      "keyFiles": [
+        "index-CGRnj5y0.js",
+        "index-CHsWdwW2.js",
+        "lucide-react-4Tr3yTSP.js"
       ]
     },
     "src/lib": {
       "path": "src/lib",
       "purpose": "Library code",
       "fileCount": 1,
-      "lastAccessed": 1776322888824,
+      "lastAccessed": 1776940452486,
       "keyFiles": [
         "utils.ts"
+      ]
+    },
+    "src-tauri/src": {
+      "path": "src-tauri/src",
+      "purpose": "Source code",
+      "fileCount": 2,
+      "lastAccessed": 1776940452487,
+      "keyFiles": [
+        "lib.rs",
+        "main.rs"
       ]
     }
   },
   "hotPaths": [
     {
-      "path": "src/PortalManager.tsx",
-      "accessCount": 64,
-      "lastAccessed": 1776326157989,
-      "type": "directory"
-    },
-    {
       "path": "src/App.tsx",
-      "accessCount": 56,
-      "lastAccessed": 1776332131983,
-      "type": "directory"
+      "accessCount": 17,
+      "lastAccessed": 1776941988275,
+      "type": "file"
     },
     {
       "path": "api-server.ts",
-      "accessCount": 18,
-      "lastAccessed": 1776348375895,
-      "type": "directory"
-    },
-    {
-      "path": "README.md",
-      "accessCount": 12,
-      "lastAccessed": 1776345676772,
+      "accessCount": 5,
+      "lastAccessed": 1776941995310,
       "type": "file"
     },
     {
-      "path": "src/SetupWizard.tsx",
-      "accessCount": 12,
-      "lastAccessed": 1776348251163,
-      "type": "file"
-    },
-    {
-      "path": "src-tauri/src/lib.rs",
-      "accessCount": 8,
-      "lastAccessed": 1776325229795,
-      "type": "directory"
-    },
-    {
-      "path": "src",
-      "accessCount": 4,
-      "lastAccessed": 1776325692607,
-      "type": "directory"
-    },
-    {
-      "path": "실행.bat",
+      "path": "src/PortalManager.tsx",
       "accessCount": 2,
-      "lastAccessed": 1776345572337,
-      "type": "file"
-    },
-    {
-      "path": "실행.command",
-      "accessCount": 1,
-      "lastAccessed": 1776343987960,
-      "type": "file"
-    },
-    {
-      "path": "start.bat",
-      "accessCount": 1,
-      "lastAccessed": 1776345578321,
-      "type": "file"
-    },
-    {
-      "path": "vite.config.ts",
-      "accessCount": 1,
-      "lastAccessed": 1776348250164,
-      "type": "file"
-    },
-    {
-      "path": "tests/windows-diagnostics.ps1",
-      "accessCount": 1,
-      "lastAccessed": 1776348607074,
-      "type": "file"
-    },
-    {
-      "path": "tests/windows-playwright-test.js",
-      "accessCount": 1,
-      "lastAccessed": 1776348644173,
+      "lastAccessed": 1776940892386,
       "type": "file"
     }
   ],
