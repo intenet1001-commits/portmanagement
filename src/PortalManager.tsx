@@ -319,9 +319,11 @@ interface AdvancedSettingsProps {
   onResetDevice: () => void;
   onCopyDeviceId: () => void;
   onChangeDeviceId: (id: string) => void;
+  onDeleteDevice: (id: string) => Promise<void>;
+  deletingDeviceId: string | null;
 }
 
-function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices, isFetchingDevices, onFetchDevices, onSelectDevice, onResetDevice, onCopyDeviceId, onChangeDeviceId }: AdvancedSettingsProps) {
+function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices, isFetchingDevices, onFetchDevices, onSelectDevice, onResetDevice, onCopyDeviceId, onChangeDeviceId, onDeleteDevice, deletingDeviceId }: AdvancedSettingsProps) {
   const [open, setOpen] = React.useState(false);
   const [editingId, setEditingId] = React.useState(false);
   const [editIdVal, setEditIdVal] = React.useState('');
@@ -417,6 +419,20 @@ function AdvancedSettings({ deviceId, deviceName, viewingDeviceId, knownDevices,
                         title="이 브라우저의 기기 ID를 선택한 기기의 ID로 변경합니다"
                       >
                         이 기기로 전환 (ID 변경)
+                      </button>
+                      <span className="text-[10px] text-zinc-700">|</span>
+                      <button
+                        onClick={async () => {
+                          const target = knownDevices.find(d => d.device_id === viewingDeviceId);
+                          const label = target?.device_name || viewingDeviceId.slice(0, 8) + '…';
+                          if (!confirm(`"${label}" 기기를 Supabase에서 삭제합니다.\n\n(로컬 데이터는 영향 없음. devices 테이블에서만 제거)\n\n계속하시겠습니까?`)) return;
+                          await onDeleteDevice(viewingDeviceId);
+                        }}
+                        disabled={deletingDeviceId === viewingDeviceId}
+                        className="text-[10px] text-red-400 hover:text-red-300 underline disabled:opacity-50"
+                        title="Supabase devices 테이블에서 이 기기 제거 (로컬은 영향 없음)"
+                      >
+                        {deletingDeviceId === viewingDeviceId ? '삭제 중…' : '이 기기 삭제'}
                       </button>
                     </div>
                   </div>
@@ -720,6 +736,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   );
   const [knownDevices, setKnownDevices] = useState<{device_id: string; device_name?: string}[]>([]);
   const [isFetchingDevices, setIsFetchingDevices] = useState(false);
+  const [deletingDeviceId, setDeletingDeviceId] = useState<string | null>(null);
 
   useEffect(() => {
     if (viewingDeviceId) {
@@ -1243,8 +1260,10 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         }
       }
 
+      // devices 테이블이 있으면 그것을 기준 (등록됐지만 아직 push 전인 기기도 포함)
+      // 없으면 데이터 흔적(seen)으로 fallback
       const allIds = registeredIds
-        ? Array.from(seen).filter(id => registeredIds.has(id))
+        ? Array.from(registeredIds)
         : Array.from(seen);
       const devices = allIds.map(id => ({
         device_id: id,
@@ -1252,10 +1271,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       }));
 
       setKnownDevices(devices);
-      // Auto-fill name input if current device found in results and name not set
+      // Supabase devices 테이블이 기기 이름의 source of truth — 다르면 로컬을 덮어씀
       const ownDevice = devices.find(d => d.device_id === data.deviceId);
-      if (ownDevice?.device_name && !deviceName) {
+      if (ownDevice?.device_name && ownDevice.device_name !== deviceName) {
         setDeviceName(ownDevice.device_name);
+        const next = { ...data, deviceName: ownDevice.device_name };
+        await persist(next);
+        setData(next);
+        showToast(`기기 이름 동기화: ${ownDevice.device_name}`, 'success');
       }
       if (devices.length === 0) {
         showToast('단말 없음 — 이 기기에서 먼저 Push를 실행하세요', 'error');
@@ -1266,6 +1289,24 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       showToast('단말 조회 오류: ' + e.message, 'error');
     } finally {
       setIsFetchingDevices(false);
+    }
+  }
+
+  async function deleteKnownDevice(id: string) {
+    if (!sbUrl || !sbKey) { showToast('Supabase 설정 필요', 'error'); return; }
+    if (id === data.deviceId) { showToast('내 기기는 삭제할 수 없습니다', 'error'); return; }
+    setDeletingDeviceId(id);
+    try {
+      const sb = createClient(sbUrl, sbKey);
+      const { error } = await sb.from('devices').delete().eq('id', id);
+      if (error) throw error;
+      setKnownDevices(prev => prev.filter(d => d.device_id !== id));
+      setViewingDeviceId('');
+      showToast('기기가 삭제되었습니다', 'success');
+    } catch (e: any) {
+      showToast('삭제 실패: ' + e.message, 'error');
+    } finally {
+      setDeletingDeviceId(null);
     }
   }
 
@@ -1749,6 +1790,8 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
               setData(next);
               showToast('Device ID 변경됨', 'success');
             }}
+            onDeleteDevice={deleteKnownDevice}
+            deletingDeviceId={deletingDeviceId}
           />
         </Modal>
       )}

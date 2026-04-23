@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Check, Copy, ChevronRight, Terminal, Database, Server,
   Globe, ArrowRight, ExternalLink, Laptop, Plus, RefreshCw, Monitor, Zap,
+  ClipboardPaste, Link2,
 } from 'lucide-react';
 
 interface SetupWizardProps {
@@ -9,7 +10,7 @@ interface SetupWizardProps {
   onSkip: () => void;
 }
 
-type Mode = 'choose' | 'first' | 'additional' | 'portal' | 'windows_env' | 'mac_env';
+type Mode = 'choose' | 'first' | 'additional' | 'portal' | 'windows_env' | 'mac_env' | 'dev_env';
 type OS = 'mac' | 'windows';
 
 // ─── CLI Auto-fill Component ──────────────────────────────────────────────────
@@ -506,13 +507,32 @@ npm install -g supabase`;
         {testing ? '연결 확인 중…' : testResult === 'ok' ? '✅ 연결 성공! 다음 단계로 진행하세요' : testResult === 'fail' ? '❌ 연결 실패 — URL/Key 재확인' : '연결 테스트'}
       </button>
       {testResult === 'fail' && (
-        <InfoBox color="amber">
-          <p className="text-xs space-y-1">
-            <span className="block">• URL 형식: <code>https://[ref].supabase.co</code></span>
-            <span className="block">• anon key 사용 여부 확인 (service_role 아님)</span>
-            <span className="block">• <code>supabase db push</code>가 완료됐는지 확인</span>
-          </p>
-        </InfoBox>
+        <>
+          <InfoBox color="amber">
+            <p className="text-xs space-y-1">
+              <span className="block">• URL 형식: <code>https://[ref].supabase.co</code></span>
+              <span className="block">• anon key 사용 여부 확인 (service_role 아님)</span>
+              <span className="block">• <code>supabase db push</code>가 완료됐는지 확인</span>
+            </p>
+          </InfoBox>
+          <button
+            onClick={async () => {
+              const debug = {
+                timestamp: new Date().toISOString(),
+                platform: navigator.platform,
+                userAgent: navigator.userAgent,
+                urlPrefix: supabaseUrl.slice(0, 40),
+                keyPrefix: supabaseAnonKey.slice(0, 20) + '...',
+                keyLength: supabaseAnonKey.length,
+              };
+              try { await navigator.clipboard.writeText(JSON.stringify(debug, null, 2)); }
+              catch {}
+            }}
+            className="w-full py-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors underline"
+          >
+            🛠 디버그 정보 복사 (에러 공유용)
+          </button>
+        </>
       )}
     </div>,
 
@@ -583,15 +603,52 @@ function AdditionalDeviceWizard({ onComplete, onBack }: { onComplete: SetupWizar
   const [deviceName, setDeviceName] = useState('');
   const [testResult, setTestResult] = useState<'idle' | 'ok' | 'fail'>('idle');
   const [testing, setTesting] = useState(false);
+  const [pasteStatus, setPasteStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [pasteMessage, setPasteMessage] = useState('');
+  const [pwHashFromPaste, setPwHashFromPaste] = useState('');
 
-  async function testConnection() {
-    if (!supabaseUrl || !supabaseAnonKey) return;
+  async function testConnection(url?: string, key?: string) {
+    const u = url ?? supabaseUrl;
+    const k = key ?? supabaseAnonKey;
+    if (!u || !k) return;
     setTesting(true); setTestResult('idle');
     try {
       const { createClient } = await import('@supabase/supabase-js');
-      const { error } = await createClient(supabaseUrl, supabaseAnonKey).from('ports').select('id').limit(1);
+      const { error } = await createClient(u, k).from('ports').select('id').limit(1);
       setTestResult(error ? 'fail' : 'ok');
     } catch { setTestResult('fail'); } finally { setTesting(false); }
+  }
+
+  async function handlePasteSetup() {
+    setPasteStatus('idle'); setPasteMessage('');
+    try {
+      const raw = await navigator.clipboard.readText();
+      if (!raw.trim()) throw new Error('클립보드가 비어있습니다');
+      let payload: any;
+      try { payload = JSON.parse(raw); }
+      catch { throw new Error('클립보드 내용이 JSON이 아닙니다'); }
+
+      if (payload.v !== 1 || payload.type !== 'portmanager-setup') {
+        throw new Error('portmanager-setup 형식이 아닙니다');
+      }
+      if (!payload.url || !/^https:\/\/[^.]+\.supabase\.co$/.test(payload.url)) {
+        throw new Error('URL 형식이 잘못되었습니다');
+      }
+      if (!payload.key || !payload.key.startsWith('eyJ')) {
+        throw new Error('Anon Key 형식이 잘못되었습니다');
+      }
+
+      setSupabaseUrl(payload.url);
+      setSupabaseAnonKey(payload.key);
+      if (payload.pwHash) setPwHashFromPaste(payload.pwHash);
+      setPasteStatus('success');
+      setPasteMessage('✓ URL/Key 자동 입력됨 — 연결 테스트 자동 실행');
+      // 자동 연결 테스트
+      void testConnection(payload.url, payload.key);
+    } catch (e: any) {
+      setPasteStatus('error');
+      setPasteMessage('❌ ' + (e?.message ?? e) + ' — 포털 웹에서 "새 기기" 버튼을 다시 누르세요');
+    }
   }
 
   const steps = [
@@ -647,9 +704,35 @@ bun run start`;
 
     <div key={1} className="space-y-4">
       <p className="text-zinc-400 text-sm">기존 기기와 동일한 Supabase URL + Anon Key를 입력하세요.</p>
+
+      {/* ★ Handoff: 포털 웹에서 복사한 설정 붙여넣기 (가장 쉬운 방법) */}
+      <div className="border-2 border-blue-500/40 bg-blue-500/5 rounded-xl p-4 space-y-2">
+        <div className="flex items-center gap-2">
+          <Link2 className="w-4 h-4 text-blue-400" />
+          <p className="text-sm font-semibold text-blue-300">1st 기기 설정 붙여넣기 (가장 쉬움)</p>
+        </div>
+        <p className="text-xs text-zinc-400">1st 기기의 포털 웹사이트에서 <span className="text-blue-300">"새 기기"</span> 버튼을 눌러 설정을 복사한 뒤, 아래 버튼을 누르세요.</p>
+        <button
+          onClick={handlePasteSetup}
+          className="w-full py-2.5 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 border border-blue-500/40"
+        >
+          <ClipboardPaste className="w-4 h-4" />클립보드에서 붙여넣기
+        </button>
+        {pasteStatus !== 'idle' && (
+          <p className={`text-xs mt-1 ${pasteStatus === 'success' ? 'text-emerald-400' : 'text-red-400'}`}>
+            {pasteMessage}
+          </p>
+        )}
+      </div>
+
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-zinc-800"></div></div>
+        <div className="relative flex justify-center"><span className="px-3 text-[10px] text-zinc-600 bg-[#0a0a0b]">또는 수동 입력</span></div>
+      </div>
+
       <CliAutoFill onFill={(url, key) => { setSupabaseUrl(url); setSupabaseAnonKey(key); }} />
       <InfoBox color="amber">
-        <p className="text-xs">💡 기존 기기에서: 상단 ⚙ → Project URL + Anon Key 복사 (CLI 없을 때)</p>
+        <p className="text-xs">💡 CLI가 없거나 1st 기기 포털에 접근할 수 없다면: 기존 기기의 상단 ⚙ → Project URL + Anon Key 복사</p>
       </InfoBox>
       <div>
         <label className="block text-xs text-zinc-400 mb-1">Project URL</label>
@@ -661,7 +744,7 @@ bun run start`;
         <input type="password" value={supabaseAnonKey} onChange={e => setSupabaseAnonKey(e.target.value)} placeholder="eyJ..."
           className="w-full px-3 py-2 text-sm bg-black/40 border border-zinc-700 text-white placeholder-zinc-600 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono" />
       </div>
-      <button onClick={testConnection} disabled={!supabaseUrl || !supabaseAnonKey || testing}
+      <button onClick={() => testConnection()} disabled={!supabaseUrl || !supabaseAnonKey || testing}
         className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 border ${
           testResult === 'ok' ? 'bg-green-500/10 text-green-400 border-green-500/30'
           : testResult === 'fail' ? 'bg-red-500/10 text-red-400 border-red-500/30'
@@ -670,6 +753,26 @@ bun run start`;
         {testing ? <RefreshCw className="w-4 h-4 animate-spin" /> : testResult === 'ok' ? <Check className="w-4 h-4" /> : <Database className="w-4 h-4" />}
         {testing ? '확인 중…' : testResult === 'ok' ? '✅ 연결 성공!' : testResult === 'fail' ? '❌ 연결 실패 — URL/Key 재확인' : '연결 테스트'}
       </button>
+      {testResult === 'fail' && (
+        <button
+          onClick={async () => {
+            const debug = {
+              timestamp: new Date().toISOString(),
+              platform: navigator.platform,
+              userAgent: navigator.userAgent,
+              urlPrefix: supabaseUrl.slice(0, 40),
+              keyPrefix: supabaseAnonKey.slice(0, 20) + '...',
+              keyLength: supabaseAnonKey.length,
+              wasPasted: pasteStatus === 'success',
+            };
+            try { await navigator.clipboard.writeText(JSON.stringify(debug, null, 2)); }
+            catch {}
+          }}
+          className="w-full py-1.5 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors underline"
+        >
+          🛠 디버그 정보 복사 (에러 공유용)
+        </button>
+      )}
     </div>,
 
     <div key={2} className="space-y-4">
@@ -1095,6 +1198,24 @@ function MacEnvWizard({ onBack }: { onBack: () => void }) {
   );
 }
 
+// ─── 통합 개발 환경 마법사 (Windows + macOS 토글) ─────────────────────────────
+function DevEnvWizard({ defaultOs, onBack }: { defaultOs: OS; onBack: () => void }) {
+  const [os, setOs] = useState<OS>(defaultOs);
+  return (
+    <div className="h-full flex flex-col">
+      <div className="px-4 pt-4 md:px-8 md:pt-6 shrink-0">
+        <div className="mb-3">
+          <p className="text-[11px] text-zinc-500 mb-2">먼저 운영체제를 선택하세요</p>
+          <OsToggle os={os} onChange={setOs} />
+        </div>
+      </div>
+      <div className="flex-1 overflow-hidden">
+        {os === 'windows' ? <WindowsEnvWizard onBack={onBack} /> : <MacEnvWizard onBack={onBack} />}
+      </div>
+    </div>
+  );
+}
+
 function PortalVercelWizard({ onBack, onClose }: { onBack: () => void; onClose: () => void }) {
   const [step, setStep] = useState(0);
   const [os, setOs] = useState<OS>('mac');
@@ -1465,74 +1586,58 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                   </p>
                 )}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 w-full max-w-3xl">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-3xl">
                 <button onClick={() => setMode('first')}
                   className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-blue-500/50 rounded-2xl p-5 sm:p-7 text-left transition-all duration-200">
                   <div className="w-10 h-10 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center mb-3 sm:mb-4 group-hover:bg-blue-500/20 transition-all">
                     <Plus className="w-5 h-5 text-blue-400" />
                   </div>
-                  <h3 className="text-base font-semibold text-white mb-1">처음 사용</h3>
+                  <h3 className="text-base font-semibold text-white mb-1">🆕 처음 사용</h3>
                   <p className="text-sm text-zinc-500 leading-relaxed">Supabase 가입부터<br />CLI로 모든 것을 설정</p>
                   <div className="flex items-center gap-1 text-blue-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
                 <button onClick={() => setMode('additional')}
-                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-emerald-500/50 rounded-2xl p-5 sm:p-7 text-left transition-all duration-200">
+                  className="group bg-zinc-900 hover:bg-zinc-800 border-2 border-emerald-500/40 hover:border-emerald-500/70 rounded-2xl p-5 sm:p-7 text-left transition-all duration-200 relative">
+                  <span className="absolute top-2 right-2 text-[9px] text-emerald-300 bg-emerald-500/20 border border-emerald-500/30 px-2 py-0.5 rounded-full">빠름</span>
                   <div className="w-10 h-10 bg-emerald-500/10 border border-emerald-500/20 rounded-xl flex items-center justify-center mb-3 sm:mb-4 group-hover:bg-emerald-500/20 transition-all">
                     <Laptop className="w-5 h-5 text-emerald-400" />
                   </div>
-                  <h3 className="text-base font-semibold text-white mb-1">추가 단말 등록</h3>
-                  <p className="text-sm text-zinc-500 leading-relaxed">다른 기기에서 이미 설정 완료,<br />이 기기만 추가로 연결</p>
+                  <h3 className="text-base font-semibold text-white mb-1">🔗 추가 기기 연결</h3>
+                  <p className="text-sm text-zinc-500 leading-relaxed">이미 1st 기기 설정 완료<br />포털 웹 → "새 기기" 복사 → 붙여넣기</p>
                   <div className="flex items-center gap-1 text-emerald-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
-                <button onClick={() => setMode('portal')}
-                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-violet-500/50 rounded-2xl p-5 sm:p-7 text-left transition-all duration-200">
-                  <div className="w-10 h-10 bg-violet-500/10 border border-violet-500/20 rounded-xl flex items-center justify-center mb-3 sm:mb-4 group-hover:bg-violet-500/20 transition-all">
-                    <Globe className="w-5 h-5 text-violet-400" />
-                  </div>
-                  <h3 className="text-base font-semibold text-white mb-1">북마크 포털 배포</h3>
-                  <p className="text-sm text-zinc-500 leading-relaxed">Vercel로 북마크를<br />외부에서도 접근 가능하게</p>
-                  <div className="flex items-center gap-1 text-violet-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
-                    시작하기 <ChevronRight className="w-3.5 h-3.5" />
-                  </div>
-                </button>
-                <button onClick={() => setMode('windows_env')}
-                  className={`group bg-zinc-900 hover:bg-zinc-800 border rounded-2xl p-5 sm:p-7 text-left transition-all duration-200 ${detectedOs === 'windows' ? 'border-sky-500/60 ring-1 ring-sky-500/30' : 'border-zinc-700 hover:border-sky-500/50'}`}>
+                <button onClick={() => setMode('dev_env')}
+                  className={`group bg-zinc-900 hover:bg-zinc-800 border rounded-2xl p-5 sm:p-7 text-left transition-all duration-200 ${detectedOs ? 'border-zinc-700 hover:border-sky-500/50' : 'border-zinc-700 hover:border-sky-500/50'}`}>
                   <div className="flex items-start justify-between mb-3 sm:mb-4">
                     <div className="w-10 h-10 bg-sky-500/10 border border-sky-500/20 rounded-xl flex items-center justify-center group-hover:bg-sky-500/20 transition-all">
                       <Monitor className="w-5 h-5 text-sky-400" />
                     </div>
-                    {detectedOs === 'windows' && <span className="text-[10px] text-sky-400 bg-sky-500/10 border border-sky-500/20 px-2 py-0.5 rounded-full">감지됨</span>}
+                    {detectedOs && <span className="text-[10px] text-sky-400 bg-sky-500/10 border border-sky-500/20 px-2 py-0.5 rounded-full">{detectedOs === 'mac' ? '🍎 Mac' : '🪟 Win'}</span>}
                   </div>
-                  <h3 className="text-base font-semibold text-white mb-1">Windows 개발 환경</h3>
-                  <p className="text-sm text-zinc-500 leading-relaxed">WSL2 · Claude Code · tmux<br />Windows 초기 설정 가이드</p>
+                  <h3 className="text-base font-semibold text-white mb-1">⚙️ 개발 환경 설정</h3>
+                  <p className="text-sm text-zinc-500 leading-relaxed">WSL2/Homebrew · Claude Code<br />tmux · 필수 도구 설치</p>
                   <div className="flex items-center gap-1 text-sky-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
-                <button onClick={() => setMode('mac_env')}
-                  className={`group bg-zinc-900 hover:bg-zinc-800 border rounded-2xl p-5 sm:p-7 text-left transition-all duration-200 ${detectedOs === 'mac' ? 'border-orange-500/60 ring-1 ring-orange-500/30' : 'border-zinc-700 hover:border-orange-500/50'}`}>
-                  <div className="flex items-start justify-between mb-3 sm:mb-4">
-                    <div className="w-10 h-10 bg-orange-500/10 border border-orange-500/20 rounded-xl flex items-center justify-center group-hover:bg-orange-500/20 transition-all">
-                      <Terminal className="w-5 h-5 text-orange-400" />
-                    </div>
-                    {detectedOs === 'mac' && <span className="text-[10px] text-orange-400 bg-orange-500/10 border border-orange-500/20 px-2 py-0.5 rounded-full">감지됨</span>}
-                  </div>
-                  <h3 className="text-base font-semibold text-white mb-1">macOS 개발 환경</h3>
-                  <p className="text-sm text-zinc-500 leading-relaxed">Homebrew · Claude Code · tmux<br />macOS 초기 설정 가이드</p>
-                  <div className="flex items-center gap-1 text-orange-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
-                    시작하기 <ChevronRight className="w-3.5 h-3.5" />
-                  </div>
-                </button>
               </div>
+              {/* Portal 배포는 1st 완료 후 "다음 액션"으로 안내 → choose에서는 제외 */}
+              <p className="text-[11px] text-zinc-600 mt-2">
+                💡 다른 기기 연결을 위한 <span className="text-violet-400">북마크 포털 배포</span>는 1st 기기 완료 후 안내됩니다
+              </p>
             </div>
           )}
           {mode === 'first' && <FirstSetupWizard onComplete={onComplete} onBack={() => setMode('choose')} />}
           {mode === 'additional' && <AdditionalDeviceWizard onComplete={onComplete} onBack={() => setMode('choose')} />}
           {mode === 'portal' && <PortalVercelWizard onBack={() => setMode('choose')} onClose={onSkip} />}
+          {mode === 'dev_env' && (
+            <DevEnvWizard defaultOs={detectedOs ?? 'mac'} onBack={() => setMode('choose')} />
+          )}
+          {/* Legacy direct entry (kept for backward compat) */}
           {mode === 'windows_env' && <WindowsEnvWizard onBack={() => setMode('choose')} />}
           {mode === 'mac_env' && <MacEnvWizard onBack={() => setMode('choose')} />}
         </div>

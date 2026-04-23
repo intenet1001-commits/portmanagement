@@ -6,7 +6,7 @@ import {
   BookMarked, Settings, CloudUpload, CloudDownload,
   ExternalLink, Github, RefreshCw, Clock, Monitor, Smartphone,
   Server, Pencil, Trash2,
-  ChevronDown, X, MoreHorizontal,
+  ChevronDown, X, MoreHorizontal, Link2,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
@@ -401,6 +401,29 @@ function App() {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3000);
   };
 
+  // ─── Handoff: "이 설정을 다른 기기에 전달" (1st → 2nd+ 기기) ─────────────────
+  async function handleCopySetup() {
+    if (!creds) {
+      showToast('Supabase 설정이 없습니다', 'error');
+      return;
+    }
+    const pwHash = localStorage.getItem(PW_VERIFIED_KEY) ?? '';
+    const payload = {
+      v: 1,
+      type: 'portmanager-setup',
+      url: creds.url,
+      key: creds.key,
+      pwHash,
+      copiedAt: new Date().toISOString(),
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload));
+      showToast('설정 복사됨 — 새 기기의 로컬 앱 → 설정 → 추가 기기 → 붙여넣기', 'success');
+    } catch (e: any) {
+      showToast('복사 실패: ' + (e?.message ?? e), 'error');
+    }
+  }
+
   async function loadDevices() {
     if (!creds) return;
     try {
@@ -682,6 +705,11 @@ function App() {
                     <button onClick={() => actionsRef.current?.history()} className="w-full text-left px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2">
                       <Clock className="w-3.5 h-3.5" />히스토리
                     </button>
+                    {creds && (
+                      <button onClick={handleCopySetup} className="w-full text-left px-3 py-2 text-xs text-blue-300 hover:bg-zinc-800 flex items-center gap-2 border-t border-zinc-800">
+                        <Link2 className="w-3.5 h-3.5" />새 기기 연결
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -691,6 +719,15 @@ function App() {
             <button onClick={cycleViewMode} className={`${btnCls} hidden sm:flex`} title={`레이아웃: ${viewMode}`}>
               {viewModeIcon}
             </button>
+            {creds && (
+              <button
+                onClick={handleCopySetup}
+                className={btnCls}
+                title="새 기기 연결 — 이 기기의 Supabase 설정을 클립보드에 복사 (새 기기의 로컬 앱에서 붙여넣기)"
+              >
+                <Link2 className="w-3.5 h-3.5" /><span className="hidden sm:inline">새 기기</span>
+              </button>
+            )}
             <button onClick={() => setOpenSettings(true)} className={btnCls}>
               <Settings className="w-3.5 h-3.5" /><span className="hidden sm:inline">설정</span>
             </button>
