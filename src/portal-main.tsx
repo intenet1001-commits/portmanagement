@@ -648,8 +648,8 @@ function App() {
           </div>
 
           <div className="flex items-center gap-1.5">
-            {/* Device picker — compact header */}
-            {!isFullLayout && devicePickerEl}
+            {/* Device picker — compact header, desktop only */}
+            {!isFullLayout && <div className="hidden sm:block">{devicePickerEl}</div>}
 
             {/* Bookmark actions — desktop: inline buttons / mobile: ... dropdown */}
             {(activeTab === 'bookmarks' || isFullLayout) && <>
@@ -696,6 +696,12 @@ function App() {
             </button>
           </div>
         </div>
+        {/* Mobile device picker row */}
+        {!isFullLayout && (
+          <div className="sm:hidden pt-2 flex items-center">
+            {devicePickerEl}
+          </div>
+        )}
       </header>
 
       {/* ── Body ── */}

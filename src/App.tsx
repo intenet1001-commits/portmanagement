@@ -981,6 +981,8 @@ function App() {
   const [newProjectName, setNewProjectName] = useState('');
   const [activeRootId, setActiveRootId] = useState<string | null>(null);
   const [registerAsProject, setRegisterAsProject] = useState(true);
+  const [projectModalTab, setProjectModalTab] = useState<'new' | 'existing'>('new');
+  const [existingFolderPath, setExistingFolderPath] = useState('');
   const portalConfigRef = useRef<any>(null);
   const portalActionsRef = useRef<PortalActions | null>(null);
   const autoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2658,6 +2660,53 @@ function App() {
         }
       } catch (e: any) {
         showToast('폴더 생성 실패: ' + e.message, 'error');
+      }
+    }
+  };
+
+  const handleRegisterExistingFolder = () => {
+    const trimmed = existingFolderPath.trim();
+    if (!trimmed) {
+      showToast('폴더 경로를 입력하세요', 'error');
+      return;
+    }
+    if (!trimmed.startsWith('/') && !trimmed.match(/^[A-Z]:\\/i)) {
+      showToast('절대 경로를 입력하세요', 'error');
+      return;
+    }
+    const name = trimmed.split(/[\\/]/).filter(Boolean).pop() || trimmed;
+    const newPort: PortInfo = {
+      id: crypto.randomUUID(),
+      name,
+      folderPath: trimmed,
+    };
+    setPorts(prev => [newPort, ...prev]);
+    showToast(`프로젝트 등록 완료: ${name}`, 'success');
+    setExistingFolderPath('');
+    setShowNewProjectModal(false);
+  };
+
+  const handlePickExistingFolder = async () => {
+    if (isTauri()) {
+      try {
+        const { open } = await import('@tauri-apps/plugin-dialog');
+        const selected = await open({ directory: true, multiple: false });
+        if (selected && typeof selected === 'string') {
+          setExistingFolderPath(selected);
+        }
+      } catch (e: any) {
+        showToast('폴더 선택 실패: ' + e.message, 'error');
+      }
+    } else {
+      try {
+        const res = await fetch('/api/pick-folder');
+        const data = await res.json();
+        if (res.ok && data.path) {
+          setExistingFolderPath(data.path);
+        }
+        // cancelled or error: silently ignore
+      } catch (e: any) {
+        if (e.name !== 'AbortError') showToast('폴더 선택 실패: ' + e.message, 'error');
       }
     }
   };
@@ -4524,68 +4573,139 @@ function App() {
       {/* New project 모달 */}
       {showNewProjectModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          onClick={() => setShowNewProjectModal(false)}>
+          onClick={() => { setShowNewProjectModal(false); setProjectModalTab('new'); setExistingFolderPath(''); }}>
           <div className="bg-[#1c1916] rounded-xl border border-stone-800/40 w-full max-w-sm p-6 space-y-4"
             onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
-              <h2 className="text-base font-semibold text-white">새 프로젝트 폴더 만들기</h2>
-              <button onClick={() => setShowNewProjectModal(false)}
+              <h2 className="text-base font-semibold text-white">프로젝트 추가</h2>
+              <button onClick={() => { setShowNewProjectModal(false); setProjectModalTab('new'); setExistingFolderPath(''); }}
                 className="p-1.5 hover:bg-stone-800 rounded-lg transition-colors text-zinc-500 hover:text-zinc-300">
                 <XIcon className="w-4 h-4" />
               </button>
             </div>
 
-            {workspaceRoots.length === 0 ? (
-              <div className="text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
-                먼저 작업 루트 폴더를 추가해주세요.<br />
-                <span className="text-xs text-zinc-400">사이드바 → Workspace Roots → + 버튼</span>
-              </div>
-            ) : (
+            {/* 탭 선택 */}
+            <div className="flex border-b border-stone-700">
+              <button
+                onClick={() => setProjectModalTab('new')}
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                  projectModalTab === 'new'
+                    ? 'text-amber-500 border-b-2 border-amber-500'
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                새 폴더 만들기
+              </button>
+              <button
+                onClick={() => setProjectModalTab('existing')}
+                className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                  projectModalTab === 'existing'
+                    ? 'text-amber-500 border-b-2 border-amber-500'
+                    : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                기존 폴더 등록
+              </button>
+            </div>
+
+            {/* 새 폴더 만들기 탭 */}
+            {projectModalTab === 'new' && (
               <>
-                {workspaceRoots.length > 1 && (
-                  <div>
-                    <label className="text-xs text-zinc-400 mb-1 block">위치</label>
-                    <select
-                      value={activeRootId ?? ''}
-                      onChange={e => setActiveRootId(e.target.value)}
-                      className="w-full px-3 py-2 bg-stone-900 border border-stone-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-amber-500/50">
-                      {workspaceRoots.map(r => (
-                        <option key={r.id} value={r.id}>{r.name || r.path}</option>
-                      ))}
-                    </select>
+                {workspaceRoots.length === 0 ? (
+                  <div className="text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                    먼저 작업 루트 폴더를 추가해주세요.<br />
+                    <span className="text-xs text-zinc-400">사이드바 → Workspace Roots → + 버튼</span>
                   </div>
+                ) : (
+                  <>
+                    {workspaceRoots.length > 1 && (
+                      <div>
+                        <label className="text-xs text-zinc-400 mb-1 block">위치</label>
+                        <select
+                          value={activeRootId ?? ''}
+                          onChange={e => setActiveRootId(e.target.value)}
+                          className="w-full px-3 py-2 bg-stone-900 border border-stone-700 rounded-lg text-sm text-zinc-200 focus:outline-none focus:border-amber-500/50">
+                          {workspaceRoots.map(r => (
+                            <option key={r.id} value={r.id}>{r.name || r.path}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <label className="text-xs text-zinc-400 mb-1 block">프로젝트 이름</label>
+                      <input
+                        autoFocus
+                        type="text"
+                        value={newProjectName}
+                        onChange={e => setNewProjectName(e.target.value)}
+                        onKeyDown={e => e.key === 'Enter' && handleCreateProjectFolder()}
+                        placeholder="my-project"
+                        className="w-full px-3 py-2 bg-stone-900 border border-stone-700 rounded-lg text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50"
+                      />
+                      {activeRootId && (
+                        <p className="text-[11px] text-zinc-600 mt-1 font-mono truncate">
+                          {workspaceRoots.find(r => r.id === activeRootId)?.path}/{newProjectName || '...'}
+                        </p>
+                      )}
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input type="checkbox" checked={registerAsProject} onChange={e => setRegisterAsProject(e.target.checked)}
+                        className="accent-amber-500 w-3.5 h-3.5" />
+                      <span className="text-xs text-zinc-400">포트 목록에 프로젝트로 등록</span>
+                    </label>
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={() => { setShowNewProjectModal(false); setProjectModalTab('new'); }}
+                        className="flex-1 py-2 text-sm text-zinc-400 border border-stone-700 rounded-lg hover:bg-stone-800 transition-colors">
+                        취소
+                      </button>
+                      <button onClick={handleCreateProjectFolder}
+                        disabled={!newProjectName.trim()}
+                        className="flex-1 py-2 text-sm font-semibold bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors">
+                        만들기
+                      </button>
+                    </div>
+                  </>
                 )}
+              </>
+            )}
+
+            {/* 기존 폴더 등록 탭 */}
+            {projectModalTab === 'existing' && (
+              <>
                 <div>
-                  <label className="text-xs text-zinc-400 mb-1 block">프로젝트 이름</label>
-                  <input
-                    autoFocus
-                    type="text"
-                    value={newProjectName}
-                    onChange={e => setNewProjectName(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleCreateProjectFolder()}
-                    placeholder="my-project"
-                    className="w-full px-3 py-2 bg-stone-900 border border-stone-700 rounded-lg text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50"
-                  />
-                  {activeRootId && (
-                    <p className="text-[11px] text-zinc-600 mt-1 font-mono truncate">
-                      {workspaceRoots.find(r => r.id === activeRootId)?.path}/{newProjectName || '…'}
+                  <label className="text-xs text-zinc-400 mb-1 block">폴더 경로</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={existingFolderPath}
+                      onChange={e => setExistingFolderPath(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleRegisterExistingFolder()}
+                      placeholder="/Users/..."
+                      className="flex-1 px-3 py-2 bg-stone-900 border border-stone-700 rounded-lg text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50 font-mono"
+                    />
+                    <button
+                      onClick={handlePickExistingFolder}
+                      className="px-3 py-2 bg-stone-800 hover:bg-stone-700 text-zinc-300 rounded-lg border border-stone-700 transition-colors"
+                      title="폴더 선택"
+                    >
+                      선택
+                    </button>
+                  </div>
+                  {existingFolderPath && (
+                    <p className="text-[11px] text-zinc-500 mt-1">
+                      프로젝트명: {existingFolderPath.split(/[\\/]/).filter(Boolean).pop() || '...'}
                     </p>
                   )}
                 </div>
-                <label className="flex items-center gap-2 cursor-pointer select-none">
-                  <input type="checkbox" checked={registerAsProject} onChange={e => setRegisterAsProject(e.target.checked)}
-                    className="accent-amber-500 w-3.5 h-3.5" />
-                  <span className="text-xs text-zinc-400">포트 목록에 프로젝트로 등록</span>
-                </label>
                 <div className="flex gap-2 pt-1">
-                  <button onClick={() => setShowNewProjectModal(false)}
+                  <button onClick={() => { setShowNewProjectModal(false); setProjectModalTab('new'); setExistingFolderPath(''); }}
                     className="flex-1 py-2 text-sm text-zinc-400 border border-stone-700 rounded-lg hover:bg-stone-800 transition-colors">
                     취소
                   </button>
-                  <button onClick={handleCreateProjectFolder}
-                    disabled={!newProjectName.trim()}
+                  <button onClick={handleRegisterExistingFolder}
+                    disabled={!existingFolderPath.trim()}
                     className="flex-1 py-2 text-sm font-semibold bg-amber-600 hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors">
-                    만들기
+                    등록
                   </button>
                 </div>
               </>

@@ -9,7 +9,7 @@ const escapeSq = (s: string): string => s.replace(/'/g, "'\\''");
 const IS_WIN = process.platform === 'win32';
 const DEV = process.env.NODE_ENV !== 'production';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const devLog = (...args: any[]) => { if (DEV) devLog(...args); };
+const devLog = (...args: any[]) => { if (DEV) console.log(...args); };
 
 /** Git 바이너리 절대경로 — Tauri sandbox·다른 머신 호환성을 위해 PATH 대신 절대경로 사용 */
 function resolveGitPath(): string {
