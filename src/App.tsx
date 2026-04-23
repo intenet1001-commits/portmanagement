@@ -931,6 +931,7 @@ function App() {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [sidebarSection, setSidebarSection] = useState<string>('all');
   const [v3MenuOpenId, setV3MenuOpenId] = useState<string|null>(null);
+  const [v3MenuRect, setV3MenuRect] = useState<{top:number;right:number}|null>(null);
   const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
   const [worktreePickerValue, setWorktreePickerValue] = useState('');
   // 머지 확인 모달
@@ -3029,7 +3030,7 @@ function App() {
           <button onClick={e=>{e.stopPropagation(); item.port && API.openInChrome(`http://localhost:${item.port}`).catch(()=>{});}} style={btnBase} title="Chrome에서 열기">
             <Globe style={{width:11,height:11}}/>
           </button>
-          <button onClick={e=>{e.stopPropagation(); setV3MenuOpenId(menuOpen ? null : item.id);}} style={{...btnBase, color: menuOpen?'#e8a557':'#ede7dd', borderColor: menuOpen?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}}>
+          <button onClick={e=>{e.stopPropagation(); if(menuOpen){setV3MenuOpenId(null);setV3MenuRect(null);}else{const r=e.currentTarget.getBoundingClientRect();setV3MenuOpenId(item.id);setV3MenuRect({top:r.bottom+4,right:window.innerWidth-r.right});}}} style={{...btnBase, color: menuOpen?'#e8a557':'#ede7dd', borderColor: menuOpen?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}}>
             <ChevronDown style={{width:11,height:11}}/>
           </button>
         </div>
@@ -3155,8 +3156,8 @@ function App() {
         )}
 
         {/* Secondary menu */}
-        {menuOpen && (
-          <div style={{position:'absolute',bottom:42,right:8,zIndex:200,background:'#221f1b',border:'1px solid rgba(255,240,220,0.12)',borderRadius:8,padding:'4px 0',boxShadow:'0 12px 32px rgba(0,0,0,0.7)',minWidth:150}}>
+        {menuOpen && v3MenuRect && (
+          <div style={{position:'fixed',top:v3MenuRect.top,right:v3MenuRect.right,zIndex:9999,background:'#221f1b',border:'1px solid rgba(255,240,220,0.12)',borderRadius:8,padding:'4px 0',boxShadow:'0 12px 32px rgba(0,0,0,0.7)',minWidth:150}}>
             {[
               {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item)},
               {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath)},

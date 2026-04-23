@@ -29,7 +29,16 @@ const SELECTED_DEVICE_KEY = 'portalSelectedDevice';
     localStorage.setItem(PORTAL_WEB_KEY, JSON.stringify(existing));
     // Only set the *viewing* selection, never overwrite this browser's own identity
     const device = params.get('device');
-    if (device) localStorage.setItem(SELECTED_DEVICE_KEY, device);
+    const nameParam = params.get('name');
+    if (device) {
+      localStorage.setItem(SELECTED_DEVICE_KEY, device);
+      if (nameParam) {
+        const withName = JSON.parse(localStorage.getItem(PORTAL_WEB_KEY) ?? '{}');
+        withName.deviceId = device;
+        withName.deviceName = nameParam;
+        localStorage.setItem(PORTAL_WEB_KEY, JSON.stringify(withName));
+      }
+    }
   } catch {}
   window.history.replaceState({}, '', window.location.pathname);
 })();
@@ -450,6 +459,18 @@ function App() {
       })).sort((a, b) => (b.last_push_at ?? '').localeCompare(a.last_push_at ?? ''));
 
       setDevices(list);
+      // Heal missing deviceName in localStorage using Supabase devices list
+      const storedId = localStorage.getItem(SELECTED_DEVICE_KEY);
+      if (storedId) {
+        const matched = list.find(d => d.id === storedId);
+        if (matched?.name) {
+          const existing = JSON.parse(localStorage.getItem(PORTAL_WEB_KEY) ?? '{}');
+          if (!existing.deviceName) {
+            existing.deviceName = matched.name;
+            localStorage.setItem(PORTAL_WEB_KEY, JSON.stringify(existing));
+          }
+        }
+      }
       // Auto-open picker if no device selected OR selected device not in list
       const knownInList = list.some(d => d.id === selectedDeviceId);
       if ((!selectedDeviceId || !knownInList) && list.length > 0) {
@@ -478,7 +499,7 @@ function App() {
       if (error) throw error;
       const newDev: DeviceRow = { id: newId, name: registerName.trim(), last_push_at: new Date().toISOString() };
       setDevices(prev => [newDev, ...prev]);
-      selectDevice(newId);
+      selectDevice(newId, trimmed);
       setShowRegisterForm(false);
       setRegisterName('');
       showToast('이 기기가 등록되었습니다', 'success');
