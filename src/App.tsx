@@ -1329,7 +1329,7 @@ function App() {
     if (!await checkWslReady()) return;
     const sessionName = getSessionName(item);
     try {
-      await api.openTmuxClaudeFresh(sessionName, item.folderPath, undefined, bypassPermissions);
+      await API.openTmuxClaudeFresh(sessionName, item.folderPath, undefined, bypassPermissions);
       showToast(`tmux 새창${bypassPermissions ? ' ⚡' : ''} 시작 ↺`, 'success');
     } catch (e) {
       showToast(`tmux 새창 실패: ${e}`, 'error');
