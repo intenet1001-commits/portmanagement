@@ -1258,15 +1258,21 @@ end try`;
         if (appExists) Bun.spawn(['open', '-a', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
 
         // 이미 실행 중이면 짧게, 새로 시작이면 길게 대기
-        await new Promise(r => setTimeout(r, alreadyRunning ? 400 : 1500));
+        await new Promise(r => setTimeout(r, alreadyRunning ? 400 : 3000));
 
-        // cmux CLI로 명령 전송
+        // cmux CLI로 명령 전송 (Broken pipe 시 1회 재시도)
         const cmuxCli = cliPath ?? 'cmux';
-        const sendProc = Bun.spawnSync([cmuxCli, 'send', cmd + '\n'], { stdout: 'pipe', stderr: 'pipe' });
+        let sendProc = Bun.spawnSync([cmuxCli, 'send', cmd + '\n'], { stdout: 'pipe', stderr: 'pipe' });
         if (sendProc.exitCode !== 0) {
-          const err = new TextDecoder().decode(sendProc.stderr).trim();
-          devLog('cmux send error:', err);
-          return new Response(JSON.stringify({ success: false, error: `cmux 명령 전송 실패: ${err || 'unknown error'}` }), { status: 500, headers });
+          const errMsg = new TextDecoder().decode(sendProc.stderr).trim();
+          devLog('cmux send error (1st try):', errMsg);
+          // Broken pipe — 소켓 초기화 대기 후 재시도
+          await new Promise(r => setTimeout(r, 1500));
+          sendProc = Bun.spawnSync([cmuxCli, 'send', cmd + '\n'], { stdout: 'pipe', stderr: 'pipe' });
+          if (sendProc.exitCode !== 0) {
+            const err = new TextDecoder().decode(sendProc.stderr).trim();
+            return new Response(JSON.stringify({ success: false, error: `cmux 명령 전송 실패: ${err || 'unknown error'}` }), { status: 500, headers });
+          }
         }
 
         return new Response(JSON.stringify({ success: true, message: `cmux Claude${bypass ? ' bypass' : ''} 실행 중` }), { headers });
@@ -1289,12 +1295,17 @@ end try`;
         const runningCheck = Bun.spawnSync(['pgrep', '-x', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
         const alreadyRunning = runningCheck.exitCode === 0;
         if (appExists) Bun.spawn(['open', '-a', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
-        await new Promise(r => setTimeout(r, alreadyRunning ? 400 : 1500));
+        await new Promise(r => setTimeout(r, alreadyRunning ? 400 : 3000));
         const cmuxCli = cliPath ?? 'cmux';
-        const clearProc = Bun.spawnSync([cmuxCli, 'send', '/clear\n'], { stdout: 'pipe', stderr: 'pipe' });
+        let clearProc = Bun.spawnSync([cmuxCli, 'send', '/clear\n'], { stdout: 'pipe', stderr: 'pipe' });
         if (clearProc.exitCode !== 0) {
-          const err = new TextDecoder().decode(clearProc.stderr).trim();
-          return new Response(JSON.stringify({ success: false, error: `cmux /clear 실패: ${err || 'unknown error'}` }), { status: 500, headers });
+          devLog('cmux clear error (1st try):', new TextDecoder().decode(clearProc.stderr).trim());
+          await new Promise(r => setTimeout(r, 1500));
+          clearProc = Bun.spawnSync([cmuxCli, 'send', '/clear\n'], { stdout: 'pipe', stderr: 'pipe' });
+          if (clearProc.exitCode !== 0) {
+            const err = new TextDecoder().decode(clearProc.stderr).trim();
+            return new Response(JSON.stringify({ success: false, error: `cmux /clear 실패: ${err || 'unknown error'}` }), { status: 500, headers });
+          }
         }
         return new Response(JSON.stringify({ success: true, message: 'cmux /clear 전송 완료' }), { headers });
       } catch (error: any) {
