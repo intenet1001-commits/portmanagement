@@ -1042,18 +1042,14 @@ const server = Bun.serve({
           picked = (await new Response(ps.stdout).text()).trim();
         } else {
           const appleScript = `
-use framework "AppKit"
-use scripting additions
-set panel to current application's NSOpenPanel's openPanel()
-panel's setShowsHiddenFiles_(true)
-panel's setCanChooseDirectories_(true)
-panel's setCanChooseFiles_(false)
-panel's setAllowsMultipleSelection_(false)
-panel's setPrompt_("선택")
-if panel's runModal() is 1 then
-  return (panel's URL()'s |path|()) as string
-end if
-return ""`;
+tell application "Finder" to activate
+delay 0.2
+try
+  set chosen to choose folder with prompt "폴더를 선택하세요"
+  return POSIX path of chosen
+on error
+  return ""
+end try`;
           const proc = Bun.spawn({
             cmd: ['osascript', '-'],
             stdin: new Blob([appleScript]),

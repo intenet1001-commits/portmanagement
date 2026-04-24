@@ -212,20 +212,32 @@
   "hotPaths": [
     {
       "path": "src/App.tsx",
-      "accessCount": 17,
-      "lastAccessed": 1776941988275,
+      "accessCount": 22,
+      "lastAccessed": 1777010390837,
       "type": "file"
     },
     {
       "path": "api-server.ts",
-      "accessCount": 5,
-      "lastAccessed": 1776941995310,
+      "accessCount": 10,
+      "lastAccessed": 1777010388781,
+      "type": "file"
+    },
+    {
+      "path": "src-tauri/src/lib.rs",
+      "accessCount": 3,
+      "lastAccessed": 1776988907086,
       "type": "file"
     },
     {
       "path": "src/PortalManager.tsx",
       "accessCount": 2,
       "lastAccessed": 1776940892386,
+      "type": "file"
+    },
+    {
+      "path": "src/lib/env.ts",
+      "accessCount": 1,
+      "lastAccessed": 1777010326491,
       "type": "file"
     }
   ],

@@ -2749,8 +2749,9 @@ function App() {
         const data = await res.json();
         if (res.ok && data.path) {
           setExistingFolderPath(data.path);
+        } else {
+          showToast('폴더 선택 창이 열리지 않았습니다. 경로를 직접 입력하세요.', 'error');
         }
-        // cancelled or error: silently ignore
       } catch (e: any) {
         if (e.name !== 'AbortError') showToast('폴더 선택 실패: ' + e.message, 'error');
       }
