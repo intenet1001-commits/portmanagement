@@ -8,7 +8,7 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from './lib/supabaseClient';
 import { savePushSnapshot, fetchPushHistory, fetchSnapshotRows, type PushSnapshot } from './pushHistory';
 import { isTauri, isDeployedWeb } from './lib/env';
 
@@ -774,7 +774,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       // Auto-recognize device name from Supabase devices table if not set locally
       if (!loaded.deviceName && resolvedUrl && resolvedKey && loaded.deviceId) {
         try {
-          const sb = createClient(resolvedUrl, resolvedKey);
+          const sb = getSupabaseClient(resolvedUrl, resolvedKey);
           const { data: dev } = await sb.from('devices').select('name').eq('id', loaded.deviceId).maybeSingle();
           if (dev?.name) {
             loaded.deviceName = dev.name;
@@ -1027,7 +1027,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     if (!sbUrl || !sbKey) { showToast('Supabase 설정이 없습니다', 'error'); return; }
     setPortalHistoryLoading(true);
     setShowPortalHistory(true);
-    const supabase = createClient(sbUrl, sbKey);
+    const supabase = getSupabaseClient(sbUrl, sbKey);
     const deviceId = data.deviceId ?? null;
     const list = await fetchPushHistory(supabase, 'portal_items', deviceId);
     setPortalHistoryList(list);
@@ -1038,7 +1038,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     if (!sbUrl || !sbKey) return;
     setPortalHistoryRestoring(snapshotId);
     try {
-      const supabase = createClient(sbUrl, sbKey);
+      const supabase = getSupabaseClient(sbUrl, sbKey);
       const rows = await fetchSnapshotRows(supabase, snapshotId) as any[];
       if (rows.length === 0) { showToast('스냅샷이 비어있습니다', 'error'); return; }
       const { error: uErr } = await supabase.from('portal_items').upsert(rows, { onConflict: 'id' });
@@ -1069,7 +1069,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     setIsSyncing(true);
     setSyncOk(null);
     try {
-      const supabase = createClient(sbUrl, sbKey);
+      const supabase = getSupabaseClient(sbUrl, sbKey);
       const deviceId = data.deviceId ?? getOrCreateDeviceId();
 
       // Upsert items — URL 북마크는 전 기기 공유. folder 타입은 '프로젝트·폴더' 탭으로 이전됨 → push 제외.
@@ -1437,6 +1437,13 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0">
+        {/* Vercel 배포: 조회 전용 모드 배너 */}
+        {isDeployedWeb() && (
+          <div style={{background:'rgba(99,102,241,0.12)',border:'1px solid rgba(99,102,241,0.25)',borderRadius:8,padding:'8px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8,fontSize:12,color:'#a5b4fc'}}>
+            <span style={{fontSize:14}}>👁</span>
+            <span><strong>조회 전용 모드</strong> — Vercel 배포 환경입니다. 북마크 수정은 로컬 앱에서 진행하세요.</span>
+          </div>
+        )}
         {/* Search row */}
         <div style={{padding:'14px 0 14px',display:'flex',flexWrap:'wrap',gap:8,borderBottom:'1px solid rgba(255,240,220,0.07)',marginBottom:14}}>
           <div style={{flex:'1 1 200px',position:'relative',minWidth:0}}>
@@ -1498,9 +1505,11 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
                   <span style={{fontWeight:500,color:'#ede7dd'}}>{cat.name}</span>
                   <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:'#6b6459'}}>{catItems.length}</span>
                   <div style={{flex:1}}/>
-                  <button onClick={() => openAddModal(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#6b6459',padding:4,display:'flex',alignItems:'center'}}>
-                    <Plus className="w-3 h-3" />
-                  </button>
+                  {!isDeployedWeb() && (
+                    <button onClick={() => openAddModal(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#6b6459',padding:4,display:'flex',alignItems:'center'}}>
+                      <Plus className="w-3 h-3" />
+                    </button>
+                  )}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                   {catItems.map(item => (

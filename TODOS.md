@@ -1,5 +1,18 @@
 # TODOS
 
+## P2i — Extract cmux detection helper (DRY)
+
+**What:** `/api/open-cmux-claude` and `/api/open-cmux-clear` both contain the same ~8-line cmux detection block (appExists, which, pgrep, open -a, wait). Extract to a shared helper when a 3rd cmux endpoint is added.
+
+**Why:** Currently 2 copies. If wait timing or install paths change, both endpoints need updating.
+
+**Where to start:** Extract `async function detectAndLaunchCmux(): Promise<{cliPath: string|null, alreadyRunning: boolean}>` from the shared pattern.
+
+**Effort:** S (human: ~30min / CC: ~5min)
+**Blocked by:** nothing — defer until a 3rd cmux endpoint is added
+
+---
+
 ## P2 — Supabase push never deletes removed rows
 
 **What:** After upsert in `handlePushToSupabase`, run a delete pass — remove Supabase rows whose IDs are no longer in the local port list.
@@ -25,29 +38,15 @@ if (staleIds.length > 0) {
 
 ---
 
-## P2b — Multiple Supabase client instances (GoTrueClient warning)
+## P2b — Multiple Supabase client instances (GoTrueClient warning) ✅ FIXED (2026-04-25)
 
-**What:** Each call to `handlePushToSupabase`, `handleRestoreFromSupabase`, auto-push timer, and auto-pull creates a new `createClient()` instance. Supabase logs "Multiple GoTrueClient instances detected" warning.
-
-**Why:** Not a bug, but wastes memory and pollutes the console. A single shared client per session would be cleaner.
-
-**Where to start:** Create a module-level `getSupabaseClient(url, key)` that caches and reuses the same instance.
-
-**Effort:** S (human: ~30min / CC: ~3min)
-**Blocked by:** nothing
+**Fix:** `src/lib/supabaseClient.ts` — singleton `getSupabaseClient(url, key)` with globalThis cache. Imported in `App.tsx:5`, all createClient() calls replaced.
 
 ---
 
-## P2c — hasInitiallyLoaded set before auto-pull completes (premature push risk)
+## P2c — hasInitiallyLoaded set before auto-pull completes (premature push risk) ✅ FIXED (2026-04-25)
 
-**What:** `hasInitiallyLoaded.current = true` (App.tsx:660) is set synchronously at component init, before the async auto-pull at line 695 finishes. If the 3-second auto-push debounce fires before pull completes (e.g., slow Supabase response), it could push stale local data and overwrite a newer remote state.
-
-**Why:** The flag is intended to gate auto-push from running on initial load, but it's set too early — should be set only after `setPorts(merged)` on line 695.
-
-**Where to start:** Move `hasInitiallyLoaded.current = true` to after `setPorts(merged)` inside the auto-pull useEffect.
-
-**Effort:** S (human: ~30min / CC: ~3min)
-**Blocked by:** nothing
+**Fix:** `App.tsx` — `hasInitiallyLoaded.current = true` now set only after pull completes (lines 1459, 1479, 1483, 1487). Covers success, pull failure, and no-credentials paths.
 
 ---
 

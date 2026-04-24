@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock, Zap } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { createClient } from '@supabase/supabase-js';
+import { getSupabaseClient } from './lib/supabaseClient';
 import PortalManager, { type PortalActions } from './PortalManager';
 import SetupWizard from './SetupWizard';
 import { savePushSnapshot, fetchPushHistory, fetchSnapshotRows, type PushSnapshot } from './pushHistory';
@@ -278,7 +278,9 @@ const API = {
     if (isTauri()) {
       return invoke('open_log', { portId });
     } else {
-      throw new Error('로그 보기는 Tauri 앱에서만 사용 가능합니다');
+      const res = await fetch(`/api/open-log/${encodeURIComponent(portId)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? '로그 열기 실패');
     }
   },
 
@@ -297,14 +299,14 @@ const API = {
     }
   },
 
-  async openTmuxClaudeFresh(sessionName: string, folderPath?: string, worktreePath?: string): Promise<string> {
+  async openTmuxClaudeFresh(sessionName: string, folderPath?: string, worktreePath?: string, bypass?: boolean): Promise<string> {
     if (isTauri()) {
-      return invoke<string>('open_tmux_claude_fresh', { sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null });
+      return invoke<string>('open_tmux_claude_fresh', { sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null, bypass: bypass ?? false });
     } else {
       const response = await fetch('/api/open-tmux-claude-fresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null })
+        body: JSON.stringify({ sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null, bypass: bypass ?? false })
       });
       const data = await response.json();
       if (!data.success) throw new Error(data.error);
@@ -714,15 +716,7 @@ const mergePortsFromOtherDevice = (local: PortInfo[], remote: PortInfo[]): PortI
   return Array.from(result.values());
 };
 
-// Supabase client cache — one instance per credential pair (Fix P2b)
-const _supabaseCache = new Map<string, ReturnType<typeof createClient>>();
-const getSupabaseClient = (url: string, key: string): ReturnType<typeof createClient> => {
-  const cacheKey = `${url}::${key}`;
-  if (!_supabaseCache.has(cacheKey)) {
-    _supabaseCache.set(cacheKey, createClient(url, key));
-  }
-  return _supabaseCache.get(cacheKey)!;
-};
+
 
 // localStorage credential fallback helper — works even when API server is offline
 const getPortalCredentials = async (): Promise<{ supabaseUrl?: string; supabaseAnonKey?: string; deviceId?: string; deviceName?: string }> => {
@@ -974,6 +968,7 @@ function App() {
   const [registerAsProject, setRegisterAsProject] = useState(true);
   const [projectModalTab, setProjectModalTab] = useState<'new' | 'existing'>('new');
   const [existingFolderPath, setExistingFolderPath] = useState('');
+  const [existingDetectedPort, setExistingDetectedPort] = useState<number | undefined>(undefined);
   const portalConfigRef = useRef<any>(null);
   const portalActionsRef = useRef<PortalActions | null>(null);
   const autoPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1039,7 +1034,11 @@ function App() {
   }, []);
 
   const handleCopyLog = async () => {
-    const text = appLogRef.current.length ? appLogRef.current.join('\n') : '(로그 없음)';
+    const text = appLogRef.current.join('\n');
+    if (!text) {
+      showToast('캡처된 앱 오류 없음', 'success');
+      return;
+    }
     await navigator.clipboard.writeText(text);
     setLogCopied(true);
     setTimeout(() => setLogCopied(false), 2000);
@@ -1257,8 +1256,19 @@ function App() {
     if (!await checkWslReady()) return;
     const sessionName = getSessionName(item);
     try {
-      await API.openTmuxClaudeBypass(sessionName, item.folderPath, undefined);
-      showToast(`tmux 새 세션 시작 ↺ ⚡`, 'success');
+      if (isTauri()) {
+        if (bypassPermissions) {
+          await invoke<string>('open_tmux_claude_bypass', { sessionName, folderPath: item.folderPath ?? null, worktreePath: null });
+        } else {
+          await invoke<string>('open_tmux_claude', { sessionName, folderPath: item.folderPath ?? null, worktreePath: null });
+        }
+      } else {
+        await fetch('/api/open-tmux-claude-bypass', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionName, folderPath: item.folderPath, bypass: bypassPermissions }),
+        });
+      }
+      showToast(`tmux 새 세션${bypassPermissions ? ' ⚡' : ''} 시작 ↺`, 'success');
     } catch (e) {
       showToast(`tmux 새 세션 실패: ${e}`, 'error');
     }
@@ -1270,8 +1280,19 @@ function App() {
     const wtSuffix = worktreePath ? `-${worktreePath.replace(/\/$/, '').split('/').pop()}` : '';
     const sessionName = baseName + wtSuffix;
     try {
-      await API.openTmuxClaudeBypass(sessionName, item.folderPath, worktreePath);
-      showToast(`tmux + Claude ⚡ 실행 중 (세션: ${sessionName})`, 'success');
+      if (isTauri()) {
+        if (bypassPermissions) {
+          await invoke<string>('open_tmux_claude_bypass', { sessionName, folderPath: item.folderPath ?? null, worktreePath: worktreePath ?? null });
+        } else {
+          await invoke<string>('open_tmux_claude', { sessionName, folderPath: item.folderPath ?? null, worktreePath: worktreePath ?? null });
+        }
+      } else {
+        await fetch('/api/open-tmux-claude-bypass', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionName, folderPath: item.folderPath, worktreePath, bypass: bypassPermissions }),
+        });
+      }
+      showToast(`tmux + Claude${bypassPermissions ? ' ⚡' : ''} 실행 중 (${sessionName})`, 'success');
     } catch (e) {
       showToast(`tmux 실행 실패: ${e}`, 'error');
     }
@@ -1285,10 +1306,66 @@ function App() {
   const _executeTerminalClaude = async (item: PortInfo, worktreePath: string | undefined) => {
     try {
       const displayName = item.aiName || item.name;
-      await API.openTerminalClaudeBypass(item.folderPath, displayName, worktreePath);
-      showToast(`Terminal에서 Claude ⚡ 실행 중`, 'success');
+      if (isTauri()) {
+        if (bypassPermissions) {
+          await invoke<string>('open_terminal_claude_bypass', { folderPath: item.folderPath ?? null, name: displayName, worktreePath: worktreePath ?? null });
+        } else {
+          await invoke<string>('open_terminal_claude', { folderPath: item.folderPath ?? null, name: displayName, worktreePath: worktreePath ?? null });
+        }
+      } else {
+        await fetch('/api/open-terminal-claude-bypass', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath: item.folderPath, name: displayName, worktreePath, bypass: bypassPermissions }),
+        });
+      }
+      showToast(`Terminal Claude${bypassPermissions ? ' ⚡' : ''} 실행 중`, 'success');
     } catch (e) {
       showToast(`Claude 실행 실패: ${e}`, 'error');
+    }
+  };
+
+
+  const openTmuxClaudeNew = async (item: PortInfo) => {
+    if (!await checkWslReady()) return;
+    const sessionName = getSessionName(item);
+    try {
+      await api.openTmuxClaudeFresh(sessionName, item.folderPath, undefined, bypassPermissions);
+      showToast(`tmux 새창${bypassPermissions ? ' ⚡' : ''} 시작 ↺`, 'success');
+    } catch (e) {
+      showToast(`tmux 새창 실패: ${e}`, 'error');
+    }
+  };
+
+  const openCmuxClaudeClear = async () => {
+    if (isWindows()) { showToast('cmux는 맥에서만 가능합니다', 'error'); return; }
+    try {
+      const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+      const res = await fetch(`${baseUrl}/api/open-cmux-clear`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await res.json();
+      if (res.ok) showToast('cmux /clear 전송 완료', 'success');
+      else showToast(`cmux clear 실패: ${data.error ?? '알 수 없는 오류'}`, 'error');
+    } catch (e) {
+      showToast(`cmux clear 실패: ${e}`, 'error');
+    }
+  };
+
+  const openCmuxClaude = async (item: PortInfo, worktreePath?: string) => {
+    if (isWindows()) { showToast('cmux는 맥에서만 가능합니다', 'error'); return; }
+    recordVisit(item.id);
+    try {
+      const displayName = item.aiName || item.name;
+      const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+      const res = await fetch(`${baseUrl}/api/open-cmux-claude`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath: item.folderPath, name: displayName, worktreePath, bypass: bypassPermissions }),
+      });
+      const data = await res.json();
+      if (res.ok) showToast(`cmux Claude${bypassPermissions ? ' ⚡' : ''} 실행 중`, 'success');
+      else showToast(`cmux 실행 실패: ${data.error ?? '알 수 없는 오류'}`, 'error');
+    } catch (e) {
+      showToast(`cmux 실행 실패: ${e}`, 'error');
     }
   };
 
@@ -2590,56 +2667,49 @@ function App() {
     const trimmed = newProjectName.trim();
     if (!trimmed) { showToast('프로젝트 이름을 입력하세요', 'error'); return; }
 
-    const addProject = (fullPath: string) => {
-      if (registerAsProject) {
-        const newPort: PortInfo = {
-          id: crypto.randomUUID(),
-          name: trimmed,
-          folderPath: fullPath,
-        };
-        setPorts(prev => [newPort, ...prev]);
-      }
-    };
-
-    if (isTauri()) {
-      if (!root.path.startsWith('/')) {
-        showToast('루트 폴더 경로가 절대경로가 아닙니다. 루트를 삭제 후 다시 추가해주세요.', 'error');
-        return;
-      }
-      const fullPath = `${root.path}/${trimmed}`;
-      try {
-        const result = await API.createFolder(fullPath);
-        if (result.success) {
-          addProject(fullPath);
-          showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
-          setNewProjectName('');
-          setShowNewProjectModal(false);
-        } else {
-          showToast((result as any).error || '폴더 생성 실패', 'error');
-        }
-      } catch (e: any) {
-        showToast('폴더 생성 실패: ' + e.message, 'error');
-      }
-    } else {
-      if (!root.path.startsWith('/')) {
-        showToast('루트 폴더 경로가 절대경로가 아닙니다. 루트를 삭제 후 다시 추가해주세요.', 'error');
-        return;
-      }
-      const fullPath = `${root.path}/${trimmed}`;
-      try {
-        const result = await API.createFolder(fullPath);
-        if (result.success) {
-          addProject(fullPath);
-          showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
-          setNewProjectName('');
-          setShowNewProjectModal(false);
-        } else {
-          showToast((result as any).error || '폴더 생성 실패', 'error');
-        }
-      } catch (e: any) {
-        showToast('폴더 생성 실패: ' + e.message, 'error');
-      }
+    const isAbsPath = root.path.startsWith('/') || /^[A-Z]:\\/i.test(root.path);
+    if (!isAbsPath) {
+      showToast('루트 폴더 경로가 절대경로가 아닙니다. 루트를 삭제 후 다시 추가해주세요.', 'error');
+      return;
     }
+    const sep = root.path.includes('\\') ? '\\' : '/';
+    const fullPath = `${root.path}${sep}${trimmed}`;
+
+    try {
+      const result = await API.createFolder(fullPath);
+      if (result.success) {
+        if (registerAsProject) {
+          setPorts(prev => [{ id: crypto.randomUUID(), name: trimmed, folderPath: fullPath }, ...prev]);
+        }
+        showToast(`폴더 생성${registerAsProject ? ' + 프로젝트 등록' : ''} 완료: ${trimmed}`, 'success');
+        setNewProjectName('');
+        setShowNewProjectModal(false);
+      } else {
+        showToast((result as any).error || '폴더 생성 실패', 'error');
+      }
+    } catch (e: any) {
+      showToast('폴더 생성 실패: ' + e.message, 'error');
+    }
+  };
+
+  const autoDetectPortFromFolder = async (folderPath: string) => {
+    setExistingDetectedPort(undefined);
+    try {
+      const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+      const scanRes = await fetch(`${baseUrl}/api/scan-command-files`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folderPath }),
+      });
+      const scanData = await scanRes.json();
+      if (scanData.files?.length > 0) {
+        const detectRes = await fetch(`${baseUrl}/api/detect-port`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filePath: scanData.files[0] }),
+        });
+        const detectData = await detectRes.json();
+        if (detectData.detectedPort) setExistingDetectedPort(detectData.detectedPort);
+      }
+    } catch { /* ignore */ }
   };
 
   const handleRegisterExistingFolder = () => {
@@ -2657,10 +2727,13 @@ function App() {
       id: crypto.randomUUID(),
       name,
       folderPath: trimmed,
+      ...(existingDetectedPort ? { port: existingDetectedPort } : {}),
     };
     setPorts(prev => [newPort, ...prev]);
-    showToast(`프로젝트 등록 완료: ${name}`, 'success');
+    const portHint = existingDetectedPort ? ` (포트 ${existingDetectedPort} 감지됨)` : '';
+    showToast(`프로젝트 등록 완료: ${name}${portHint}`, 'success');
     setExistingFolderPath('');
+    setExistingDetectedPort(undefined);
     setShowNewProjectModal(false);
   };
 
@@ -2671,6 +2744,7 @@ function App() {
         const selected = await open({ directory: true, multiple: false });
         if (selected && typeof selected === 'string') {
           setExistingFolderPath(selected);
+          autoDetectPortFromFolder(selected);
         }
       } catch (e: any) {
         showToast('폴더 선택 실패: ' + e.message, 'error');
@@ -2681,6 +2755,7 @@ function App() {
         const data = await res.json();
         if (res.ok && data.path) {
           setExistingFolderPath(data.path);
+          autoDetectPortFromFolder(data.path);
         } else {
           showToast('폴더 선택 창이 열리지 않았습니다. 경로를 직접 입력하세요.', 'error');
         }
@@ -3072,7 +3147,7 @@ function App() {
               폴더 열기
             </button>
           )}
-          <button onClick={e=>{e.stopPropagation(); openTerminalClaude(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}><Zap style={{width:9,height:9}}/>Claude</button>
+          <button onClick={e=>{e.stopPropagation(); openTerminalClaude(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`Terminal Claude${bypassPermissions?' (bypass)':''}`}><Zap style={{width:9,height:9}}/>{bypassPermissions?'Claude ⚡':'Claude'}</button>
           <button onClick={e=>{e.stopPropagation(); toggleWorktreePanel(item.id, item.folderPath);}} style={{...btnBase, color:expandedWorktreeIds.has(item.id)?'#e8a557':'#ede7dd', borderColor:expandedWorktreeIds.has(item.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title="워크트리 관리">
             <GitBranch style={{width:11,height:11}}/>
           </button>
@@ -3124,9 +3199,9 @@ function App() {
                   fetch(`${baseUrl}/api/open-tmux-claude-bypass`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sessionName, folderPath: item.folderPath, worktreePath: wt.path, branch: branchName }),
+                    body: JSON.stringify({ sessionName, folderPath: item.folderPath, worktreePath: wt.path, branch: branchName, bypass: bypassPermissions }),
                   })
-                    .then(() => showToast(`Claude(bypass) 실행: ${displayName}`, 'success'))
+                    .then(() => showToast(`Claude${bypassPermissions ? ' ⚡' : ''} 실행: ${displayName}`, 'success'))
                     .catch(err => showToast(`Claude 실행 실패: ${err}`, 'error'));
                 };
                 return (
@@ -3152,7 +3227,7 @@ function App() {
                       <button onClick={e=>{e.stopPropagation(); item.port && window.open(`http://localhost:${item.port}`, '_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
                       <button onClick={e=>{e.stopPropagation(); wt.path && API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
                       <button onClick={e=>{e.stopPropagation(); forceRestartCommand(item);}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
-                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>Claude</button>
+                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`tmux Claude${bypassPermissions?' (bypass)':''}`}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>{bypassPermissions?'Claude ⚡':'Claude'}</button>
                       <button onClick={e=>{e.stopPropagation(); setCommitModal({item,wt,msg:''});}} style={miniBtn}>커밋</button>
                       <button onClick={e=>{e.stopPropagation();
                         const baseUrl = isTauri() ? 'http://localhost:3001' : '';
@@ -3173,7 +3248,7 @@ function App() {
                         else forceRestartCommand({...item, id:`${item.id}_wt_${wtName}`, port:wtPort, worktreePath:wt.path});
                       }} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
                       <button onClick={e=>{e.stopPropagation(); API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
-                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>Claude</button>
+                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`tmux Claude${bypassPermissions?' (bypass)':''}`}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>{bypassPermissions?'Claude ⚡':'Claude'}</button>
                       <button onClick={e=>{e.stopPropagation(); setCommitModal({item,wt,msg:''});}} style={miniBtn}>커밋</button>
                       <button onClick={e=>{e.stopPropagation();
                         const baseUrl = isTauri() ? 'http://localhost:3001' : '';
@@ -3208,12 +3283,46 @@ function App() {
 
         {/* Secondary menu */}
         {menuOpen && v3MenuRect && (
-          <div style={{position:'fixed',top:v3MenuRect.top,right:v3MenuRect.right,zIndex:9999,background:'#221f1b',border:'1px solid rgba(255,240,220,0.12)',borderRadius:8,padding:'4px 0',boxShadow:'0 12px 32px rgba(0,0,0,0.7)',minWidth:150}}>
+          <>
+          <div style={{position:'fixed',inset:0,zIndex:9998}} onClick={()=>{setV3MenuOpenId(null);setV3MenuRect(null);}}/>
+          <div style={{position:'fixed',top:v3MenuRect.top,right:v3MenuRect.right,zIndex:9999,background:'#221f1b',border:'1px solid rgba(255,240,220,0.12)',borderRadius:8,padding:'4px 0',boxShadow:'0 12px 32px rgba(0,0,0,0.7)',minWidth:165}}>
             {[
-              {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item)},
-              {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath)},
-              {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>API.openLog(item.id)},
-              {label:'Claude tmux ⚡', icon:<SquareTerminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item)},
+              {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item), title:'프로세스 강제 종료 후 재실행'},
+              {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath), title:'Finder에서 프로젝트 폴더 열기'},
+              {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>{ API.openLog(item.id).catch(e=>showToast(`로그 열기 실패: ${e}`, 'error')); }, title:'tail -f 로그 보기 (iTerm)'},
+            ].map(({label,icon,action,title}:{label:string;icon:React.ReactNode;action:()=>void;title?:string}) => (
+              <button key={label} title={title} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
+                display:'flex',alignItems:'center',gap:8,padding:'6px 12px',width:'100%',
+                background:'transparent',border:'none',cursor:'pointer',
+                fontSize:12,color:'#ede7dd',fontFamily:'inherit',textAlign:'left',
+              }}
+                onMouseEnter={e=>(e.currentTarget.style.background='rgba(255,240,220,0.05)')}
+                onMouseLeave={e=>(e.currentTarget.style.background='transparent')}
+              >{icon}{label}</button>
+            ))}
+            {/* Claude 실행 섹션 */}
+            <div style={{margin:'3px 8px',borderTop:'1px solid rgba(255,240,220,0.08)'}}/>
+            <div style={{padding:'3px 12px 2px',fontSize:10,color:'rgba(200,168,240,0.5)',fontWeight:600,letterSpacing:0.5,textTransform:'uppercase'}}>
+              Claude {bypassPermissions ? '⚡bypass' : ''}
+            </div>
+            {[
+              {label:'tmux', icon:<SquareTerminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item), title:`tmux 세션으로 Claude 실행 (Mac·Windows)${bypassPermissions ? ' — bypass 모드' : ''}`},
+              {label:'tmux ↺ 새창', icon:<SquareTerminal style={{width:11,height:11}}/>, action:()=>openTmuxClaudeNew(item), title:`기존 tmux 세션 삭제 후 새창으로 시작${bypassPermissions ? ' — bypass 모드' : ''}`},
+              {label:'cmux (Mac 전용)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxClaude(item), title:`cmux 앱으로 Claude 실행 (macOS 전용)${bypassPermissions ? ' — bypass 모드' : ''}`},
+              {label:'cmux ↺ 새창 (Mac 전용)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxClaudeClear(), title:'cmux에 /clear 전송으로 대화 초기화'},
+            ].map(({label,icon,action,title}) => (
+              <button key={label} title={title} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
+                display:'flex',alignItems:'center',gap:8,padding:'6px 12px',width:'100%',
+                background:'transparent',border:'none',cursor:'pointer',
+                fontSize:12,color:bypassPermissions?'#c8a8f0':'#ede7dd',fontFamily:'inherit',textAlign:'left',
+              }}
+                onMouseEnter={e=>(e.currentTarget.style.background='rgba(200,168,240,0.07)')}
+                onMouseLeave={e=>(e.currentTarget.style.background='transparent')}
+              >{icon}{label}</button>
+            ))}
+            {/* 편집/삭제 섹션 */}
+            <div style={{margin:'3px 8px',borderTop:'1px solid rgba(255,240,220,0.08)'}}/>
+            {[
               {label:'수정', icon:<Pencil style={{width:11,height:11}}/>, action:()=>startEdit(item)},
               {label:'삭제', icon:<Trash2 style={{width:11,height:11}}/>, action:()=>setDeleteConfirmId(item.id), danger:true},
             ].map(({label,icon,action,danger}:{label:string;icon:React.ReactNode;action:()=>void;danger?:boolean}) => (
@@ -3222,13 +3331,12 @@ function App() {
                 background:'transparent',border:'none',cursor:'pointer',
                 fontSize:12,color:danger?'#c96a5a':'#ede7dd',fontFamily:'inherit',textAlign:'left',
               }}
-                onMouseEnter={e=>(e.currentTarget.style.background='rgba(255,240,220,0.05)')}
+                onMouseEnter={e=>(e.currentTarget.style.background=danger?'rgba(201,106,90,0.08)':'rgba(255,240,220,0.05)')}
                 onMouseLeave={e=>(e.currentTarget.style.background='transparent')}
-              >
-                {icon}{label}
-              </button>
+              >{icon}{label}</button>
             ))}
           </div>
+          </>
         )}
       </div>
     );
@@ -3846,6 +3954,20 @@ function App() {
               </>
             )}
 
+            {/* bypass 토글 */}
+            <button
+              onClick={() => { const v = !bypassPermissions; setBypassPermissions(v); localStorage.setItem('portmanager-bypassPermissions', String(v)); }}
+              title={bypassPermissions ? 'Claude bypass 모드 ON — 클릭하여 일반 모드로 전환' : 'Claude 일반 모드 — 클릭하여 bypass 모드로 전환'}
+              className={`px-2.5 py-1.5 text-xs rounded-xl border transition-all flex items-center gap-1.5 font-medium ${
+                bypassPermissions
+                  ? 'bg-purple-500/20 text-purple-200 border-purple-400/40 hover:bg-purple-500/30 shadow-[0_0_8px_rgba(168,85,247,0.15)]'
+                  : 'bg-[#1c1916] text-zinc-500 border-stone-800/40 hover:bg-[#221f1b] hover:text-zinc-400'
+              }`}
+            >
+              <Zap className={`w-3 h-3 ${bypassPermissions ? 'text-purple-300' : ''}`} />
+              <span>bypass {bypassPermissions ? 'ON' : 'OFF'}</span>
+            </button>
+
             {/* 설정 마법사 버튼 */}
             <button
               onClick={() => setShowSetupWizard(true)}
@@ -4278,8 +4400,8 @@ function App() {
                 );
               })()}
 
-              {/* Workspace Roots Panel */}
-              <div style={{marginTop:'auto',borderTop:'1px solid rgba(255,240,220,0.07)'}}>
+              {/* Workspace Roots Panel — Vercel 배포에서는 숨김 */}
+              {!isDeployedWeb() && <div style={{marginTop:'auto',borderTop:'1px solid rgba(255,240,220,0.07)'}}>
                 <button
                   onClick={() => setWorkspaceRootsOpen(v => !v)}
                   style={{
@@ -4352,7 +4474,7 @@ function App() {
                     </button>
                   </div>
                 )}
-              </div>
+              </div>}
             </div>
 
             {/* MAIN AREA */}
@@ -4393,7 +4515,7 @@ function App() {
                 <button onClick={() => setOpenPortalSettings(true)} title="설정" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
                   <Settings style={{width:13,height:13}} />
                 </button>
-                {!isTauri() && (
+                {!isTauri() && !isDeployedWeb() && (
                   <>
                     <button onClick={handleBuildApp} disabled={isBuilding} title="앱 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
                       <Terminal style={{width:13,height:13}} className={isBuilding && buildType==='app' ? 'animate-spin' : ''} />
@@ -4403,18 +4525,20 @@ function App() {
                     </button>
                   </>
                 )}
-                <button
-                  onClick={() => { setActiveRootId(workspaceRoots[0]?.id ?? null); setShowNewProjectModal(true); }}
-                  style={{
-                    padding:'5px 12px',background:'#e8a557',border:'none',borderRadius:5,
-                    fontSize:11.5,fontWeight:600,cursor:'pointer',color:'#15120f',
-                    display:'flex',alignItems:'center',gap:4,
-                    fontFamily:'Inter Tight, system-ui, sans-serif',
-                  }}
-                >
-                  <Plus style={{width:11,height:11}} />
-                  New project
-                </button>
+                {!isDeployedWeb() && (
+                  <button
+                    onClick={() => { setActiveRootId(workspaceRoots[0]?.id ?? null); setShowNewProjectModal(true); }}
+                    style={{
+                      padding:'5px 12px',background:'#e8a557',border:'none',borderRadius:5,
+                      fontSize:11.5,fontWeight:600,cursor:'pointer',color:'#15120f',
+                      display:'flex',alignItems:'center',gap:4,
+                      fontFamily:'Inter Tight, system-ui, sans-serif',
+                    }}
+                  >
+                    <Plus style={{width:11,height:11}} />
+                    New project
+                  </button>
+                )}
               </div>
 
               {/* Card grid */}
@@ -4511,9 +4635,17 @@ function App() {
             {projectModalTab === 'new' && (
               <>
                 {workspaceRoots.length === 0 ? (
-                  <div className="text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
-                    먼저 작업 루트 폴더를 추가해주세요.<br />
-                    <span className="text-xs text-zinc-400">사이드바 → Workspace Roots → + 버튼</span>
+                  <div className="space-y-3">
+                    <div className="text-sm text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                      작업 루트 폴더가 없습니다. 새 프로젝트를 만들 위치를 먼저 지정해주세요.
+                    </div>
+                    <button
+                      onClick={handleAddWorkspaceRoot}
+                      className="w-full py-2 text-sm font-medium bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-lg transition-colors flex items-center justify-center gap-2"
+                    >
+                      <Folder className="w-4 h-4" />
+                      루트 폴더 추가하기
+                    </button>
                   </div>
                 ) : (
                   <>
@@ -4591,13 +4723,20 @@ function App() {
                     </button>
                   </div>
                   {existingFolderPath && (
-                    <p className="text-[11px] text-zinc-500 mt-1">
-                      프로젝트명: {existingFolderPath.split(/[\\/]/).filter(Boolean).pop() || '...'}
-                    </p>
+                    <div className="mt-1 space-y-0.5">
+                      <p className="text-[11px] text-zinc-500">
+                        프로젝트명: <span className="text-zinc-300">{existingFolderPath.split(/[\\/]/).filter(Boolean).pop() || '...'}</span>
+                      </p>
+                      {existingDetectedPort && (
+                        <p className="text-[11px] text-emerald-500">
+                          ✓ 포트 감지됨: {existingDetectedPort}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div className="flex gap-2 pt-1">
-                  <button onClick={() => { setShowNewProjectModal(false); setProjectModalTab('new'); setExistingFolderPath(''); }}
+                  <button onClick={() => { setShowNewProjectModal(false); setProjectModalTab('new'); setExistingFolderPath(''); setExistingDetectedPort(undefined); }}
                     className="flex-1 py-2 text-sm text-zinc-400 border border-stone-700 rounded-lg hover:bg-stone-800 transition-colors">
                     취소
                   </button>

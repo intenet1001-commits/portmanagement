@@ -864,23 +864,46 @@ fn open_log(port_id: String, app_handle: tauri::AppHandle) -> Result<String, Str
 
     #[cfg(target_os = "macos")]
     {
-        // Terminal에서 tail -f로 로그 팔로우
         let log_path_str = log_file.to_string_lossy().to_string();
+        // `create window with default profile command` 방식: write text와 달리 클립보드 미사용
+        let sq_escaped = log_path_str.replace('\'', "'\\''");
         let script = format!(
-            "tell application \"Terminal\"\n  do script \"tail -f '{}'\"\n  activate\nend tell",
-            log_path_str
+            "tell application \"iTerm\"\n  activate\n  create window with default profile command \"tail -f '{}'\"\nend tell",
+            sq_escaped
         );
-
-        Command::new("osascript")
+        let result = Command::new("osascript")
             .arg("-e")
             .arg(&script)
-            .spawn()
-            .map_err(|e| format!("Failed to open Terminal: {}", e))?;
+            .output();
+        match result {
+            Ok(out) if !out.status.success() => {
+                // iTerm 실패 시 Terminal.app으로 폴백
+                let fallback = format!(
+                    "tell application \"Terminal\"\n  do script \"tail -f '{}'\"\n  activate\nend tell",
+                    sq_escaped
+                );
+                Command::new("osascript")
+                    .arg("-e")
+                    .arg(&fallback)
+                    .spawn()
+                    .map_err(|e| format!("Failed to open Terminal: {}", e))?;
+            }
+            Err(e) => return Err(format!("Failed to open iTerm: {}", e)),
+            _ => {}
+        }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
     {
-        // 다른 OS에서는 기본 텍스트 에디터로 열기
+        // Windows: WSL bash로 tail -f (Windows Terminal 사용)
+        let log_path_str = log_file.to_string_lossy().to_string();
+        let wsl_path = win_to_wsl_path(&log_path_str);
+        let bash_cmd = format!("tail -f '{}'", escape_sq(&wsl_path));
+        spawn_wt_wsl(&bash_cmd, Some("Log Viewer"))?;
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
         Command::new("xdg-open")
             .arg(log_file.to_string_lossy().to_string())
             .spawn()
@@ -1092,12 +1115,14 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
 }
 
 #[tauri::command]
-fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
+fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, worktree_path: Option<String>, bypass: Option<bool>) -> Result<String, String> {
+    let bypass = bypass.unwrap_or(false);
+    let claude_cli = if bypass { "claude --dangerously-skip-permissions" } else { "claude" };
     #[cfg(target_os = "macos")]
     {
         let esc_session = escape_sq(&session_name);
         let esc_display = escape_sq(&session_name);
-        let title = build_window_title(&session_name, worktree_path.as_deref(), true, false, true);
+        let title = build_window_title(&session_name, worktree_path.as_deref(), true, bypass, true);
         let esc_title_sq = escape_sq(&title);
         let escaped_title = title.replace('\\', "\\\\").replace('"', "\\\"");
         let kill_cmd = format!("tmux kill-session -t '{}' 2>/dev/null || true", esc_session);
@@ -1106,9 +1131,9 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
             .filter(|p| p.starts_with('/'))
             .or_else(|| folder_path.clone());
         let new_cmd = if let Some(ref cd) = cd_target {
-            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -d -s '{}' -n '{}' \"claude\"; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}' automatic-rename off 2>/dev/null; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux attach-session -t '{}'", escape_sq(cd), esc_title_sq, esc_session, esc_display, esc_session, esc_session, esc_display, esc_session)
+            format!("cd '{}' && printf '\\033]0;{}\\007'; tmux new-session -d -s '{}' -n '{}' \"zsh -l -c '{}'\"; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}' automatic-rename off 2>/dev/null; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux attach-session -t '{}'", escape_sq(cd), esc_title_sq, esc_session, esc_display, claude_cli, esc_session, esc_session, esc_display, esc_session)
         } else {
-            format!("printf '\\033]0;{}\\007'; tmux new-session -d -s '{}' -n '{}' \"claude\"; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}' automatic-rename off 2>/dev/null; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux attach-session -t '{}'", esc_title_sq, esc_session, esc_display, esc_session, esc_session, esc_display, esc_session)
+            format!("printf '\\033]0;{}\\007'; tmux new-session -d -s '{}' -n '{}' \"zsh -l -c '{}'\"; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}' automatic-rename off 2>/dev/null; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux attach-session -t '{}'", esc_title_sq, esc_session, esc_display, claude_cli, esc_session, esc_session, esc_display, esc_session)
         };
         let cmd = format!("{}; {}", kill_cmd, new_cmd);
         let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
@@ -1130,12 +1155,12 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
             .or_else(|| folder_path.clone())
             .map(|p| win_to_wsl_path(&p));
         let cd_part = cd_path.map(|p| format!("cd '{}' && ", escape_sq(&p))).unwrap_or_default();
-        // kill-session 실패해도(세션 없음) 계속 진행 — wt.exe 세미콜론 이슈 회피 위해 `|| :`
+        let claude_arg = if bypass { "claude --dangerously-skip-permissions || bash -l" } else { "claude || bash -l" };
         let bash_cmd = format!(
-            "{}(tmux kill-session -t '{}' 2>/dev/null || :) && tmux new-session -s '{}' 'claude || bash -l'",
-            cd_part, escape_sq(&session_name), escape_sq(&session_name)
+            "{}(tmux kill-session -t '{}' 2>/dev/null || :) && tmux new-session -s '{}' '{}'",
+            cd_part, escape_sq(&session_name), escape_sq(&session_name), claude_arg
         );
-        let title = build_window_title(&session_name, worktree_path.as_deref(), true, false, true);
+        let title = build_window_title(&session_name, worktree_path.as_deref(), true, bypass, true);
         spawn_wt_wsl(&bash_cmd, Some(&title))?;
     }
 

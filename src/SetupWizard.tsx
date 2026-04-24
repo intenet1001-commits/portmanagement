@@ -18,7 +18,7 @@ const REPO_CLONE_URL = REPO_URL.endsWith('.git') ? REPO_URL : `${REPO_URL}.git`;
 const REPO_FORK_URL = `${REPO_URL}/fork`;
 const REPO_DIR_NAME = REPO_URL.split('/').filter(Boolean).pop()?.replace(/\.git$/, '') ?? 'portmanagement';
 
-type Mode = 'choose' | 'first' | 'additional' | 'portal' | 'windows_env' | 'mac_env' | 'dev_env';
+type Mode = 'choose' | 'first' | 'additional' | 'portal' | 'windows_env' | 'mac_env' | 'dev_env' | 'terminal_tools';
 type OS = 'mac' | 'windows';
 
 // ─── CLI Auto-fill Component ──────────────────────────────────────────────────
@@ -1725,7 +1725,7 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                   </p>
                 )}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-3xl">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full max-w-4xl">
                 <button onClick={() => setMode('first')}
                   className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-blue-500/50 rounded-2xl p-5 sm:p-7 text-left transition-all duration-200">
                   <div className="w-10 h-10 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center mb-3 sm:mb-4 group-hover:bg-blue-500/20 transition-all">
@@ -1763,6 +1763,17 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                     시작하기 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
+                <button onClick={() => setMode('terminal_tools')}
+                  className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-purple-500/50 rounded-2xl p-5 sm:p-7 text-left transition-all duration-200">
+                  <div className="w-10 h-10 bg-purple-500/10 border border-purple-500/20 rounded-xl flex items-center justify-center mb-3 sm:mb-4 group-hover:bg-purple-500/20 transition-all">
+                    <Terminal className="w-5 h-5 text-purple-400" />
+                  </div>
+                  <h3 className="text-base font-semibold text-white mb-1">⚡ tmux / cmux 설치</h3>
+                  <p className="text-sm text-zinc-500 leading-relaxed">터미널 멀티플렉서 설정<br />AI 에이전트 전용 터미널</p>
+                  <div className="flex items-center gap-1 text-purple-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
+                    시작하기 <ChevronRight className="w-3.5 h-3.5" />
+                  </div>
+                </button>
               </div>
               {/* Portal 배포는 1st 완료 후 "다음 액션"으로 안내 → choose에서는 제외 */}
               <p className="text-[11px] text-zinc-600 mt-2">
@@ -1779,7 +1790,127 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
           {/* Legacy direct entry (kept for backward compat) */}
           {mode === 'windows_env' && <WindowsEnvWizard onBack={() => setMode('choose')} />}
           {mode === 'mac_env' && <MacEnvWizard onBack={() => setMode('choose')} />}
+          {mode === 'terminal_tools' && <TerminalToolsWizard onBack={() => setMode('choose')} />}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Terminal Tools Wizard (tmux + cmux) ─────────────────────────────────────
+
+function TerminalToolsWizard({ onBack }: { onBack: () => void }) {
+  const [tab, setTab] = useState<'tmux' | 'cmux'>('tmux');
+  const [os, setOs] = useState<OS>(() => /Win/.test(navigator.platform ?? '') ? 'windows' : 'mac');
+
+  return (
+    <div className="h-full flex flex-col p-4 sm:p-8 overflow-y-auto">
+      <button onClick={onBack} className="flex items-center gap-1.5 text-zinc-500 hover:text-zinc-300 text-sm mb-6 transition-colors w-fit">
+        ← 돌아가기
+      </button>
+
+      <div className="max-w-2xl w-full mx-auto space-y-6">
+        <div>
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <Terminal className="w-5 h-5 text-purple-400" />
+            터미널 도구 설치 가이드
+          </h2>
+          <p className="text-zinc-500 text-sm mt-1">Claude 버튼에서 사용하는 tmux · cmux 터미널 설정</p>
+        </div>
+
+        {/* 탭 */}
+        <div className="flex gap-1 bg-zinc-800 border border-zinc-700 rounded-lg p-1 w-fit">
+          <button onClick={() => setTab('tmux')} className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${tab === 'tmux' ? 'bg-zinc-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>
+            tmux (Mac · Windows)
+          </button>
+          <button onClick={() => setTab('cmux')} className={`px-4 py-1.5 rounded-md text-xs font-medium transition-all ${tab === 'cmux' ? 'bg-purple-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>
+            cmux (Mac 전용)
+          </button>
+        </div>
+
+        {tab === 'tmux' && (
+          <div className="space-y-5">
+            <InfoBox color="blue">
+              <strong>tmux</strong>는 터미널 세션을 분리·유지하는 멀티플렉서입니다. 포트 관리기에서 "tmux" 버튼을 클릭하면 별도 tmux 세션에서 Claude가 실행됩니다.
+            </InfoBox>
+
+            <OsToggle os={os} onChange={setOs} />
+
+            {os === 'mac' && (
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-zinc-300">macOS 설치</h3>
+                <CodeBlock code="brew install tmux" label="① Homebrew로 설치" />
+                <CodeBlock code="tmux -V" label="② 설치 확인" comment="tmux 3.x 이상 권장" />
+                <CodeBlock code="tmux new-session -s test" label="③ 테스트 세션 생성" comment="Ctrl+B, D 로 세션 분리 / tmux attach -t test 로 재접속" />
+              </div>
+            )}
+
+            {os === 'windows' && (
+              <div className="space-y-4">
+                <h3 className="text-sm font-semibold text-zinc-300">Windows (WSL2) 설치</h3>
+                <InfoBox color="amber">
+                  Windows에서 tmux는 WSL2 내에서 실행됩니다. WSL2가 먼저 설치되어 있어야 합니다.
+                </InfoBox>
+                <CodeBlock code="wsl --install" label="① WSL2 설치 (PowerShell 관리자 권한)" comment="재부팅 후 Ubuntu 배포판 설정" />
+                <CodeBlock code="sudo apt update && sudo apt install -y tmux" label="② WSL2 터미널에서 tmux 설치" />
+                <CodeBlock code="tmux -V" label="③ 설치 확인" />
+              </div>
+            )}
+
+            <InfoBox color="green">
+              설치 완료 후 포트 관리기 카드의 더보기 메뉴 → <strong>tmux ⚡</strong> 버튼으로 Claude를 tmux 세션에서 실행합니다.
+            </InfoBox>
+          </div>
+        )}
+
+        {tab === 'cmux' && (
+          <div className="space-y-5">
+            <InfoBox color="blue">
+              <strong>cmux</strong>는 AI 코딩 에이전트 전용 macOS 네이티브 터미널입니다. Ghostty 렌더링 엔진 기반으로 내장 WebKit 브라우저, Unix Socket API를 제공합니다.
+            </InfoBox>
+
+            <InfoBox color="amber">
+              🍎 cmux는 <strong>macOS 전용</strong>입니다. Windows에서는 tmux(WSL2)를 사용하세요.
+            </InfoBox>
+
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-zinc-300">설치</h3>
+              <CodeBlock code="brew tap manaflow-ai/cmux" label="① tap 등록" />
+              <CodeBlock code="brew install --cask cmux" label="② cmux 설치" />
+              <CodeBlock code="cmux identify" label="③ 설치 확인" comment="cmux가 실행 중이면 현재 컨텍스트 정보 출력" />
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-zinc-300">주요 CLI 명령어</h3>
+              <CodeBlock code="cmux send 'claude --dangerously-skip-permissions'" label="Claude 실행 명령 전송" />
+              <CodeBlock code="cmux read-screen" label="현재 패인 출력 읽기" />
+              <CodeBlock code="cmux browser open https://localhost:3000" label="내장 브라우저 열기" />
+            </div>
+
+            <InfoBox color="green">
+              설치 완료 후 포트 관리기 카드의 더보기 메뉴 → <strong>cmux ⚡ (Mac)</strong> 버튼으로 cmux에서 Claude를 실행합니다.
+            </InfoBox>
+
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-zinc-300">Claude Code에 지시할 프롬프트</h3>
+              <p className="text-xs text-zinc-500">cmux 안에서 Claude를 실행할 때, 아래 내용을 프로젝트 <strong className="text-zinc-300">CLAUDE.md</strong>에 추가하세요. Claude가 tmux 대신 cmux CLI를 사용하게 됩니다.</p>
+              <CodeBlock
+                label="CLAUDE.md에 추가"
+                code={`# cmux 환경\n이 환경은 cmux입니다. tmux가 아닌 cmux CLI를 사용하세요.\n\n## 계층 구조\nWindow > Workspace > Pane > Surface\n\n## 환경변수 (자동 설정)\n- CMUX_WORKSPACE_ID\n- CMUX_SURFACE_ID\n- CMUX_SOCKET_PATH\n\n## 핵심 명령어\ncmux identify              # 현재 컨텍스트 확인\ncmux tree --all            # 전체 구조 확인\ncmux read-screen --lines 50       # 현재 패인 출력 읽기\ncmux send --surface S "cmd\\n"    # 다른 패인에 명령 전송\ncmux browser snapshot -i          # DOM 스냅샷 (Playwright 불필요)\ncmux notify --title "완료" --body "작업 완료"  # 알림\n\n## tmux → cmux 치환\n- tmux send-keys  →  cmux send\n- tmux capture-pane  →  cmux read-screen`}
+              />
+              <p className="text-xs text-zinc-500">
+                <span className="text-zinc-400">예시 지시:</span> "오른쪽 패인(surface:4)에서 서버가 돌아가고 있어. cmux read-screen으로 서버 로그를 읽어서 상태를 알려줘."
+              </p>
+            </div>
+
+            <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-4 text-xs text-zinc-500 space-y-1">
+              <p className="text-zinc-400 font-medium">참고 자료</p>
+              <p>• <a href="https://goddaehee.tistory.com/557" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">cmux 설치 가이드 (goddaehee.tistory.com)</a></p>
+              <p>• brew install --cask cmux 후 Spotlight에서 'cmux' 검색하여 앱 실행</p>
+              <p>• macOS Gatekeeper 차단 시: <code className="bg-zinc-800 px-1 rounded">xattr -cr /Applications/cmux.app</code></p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

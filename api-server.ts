@@ -1187,14 +1187,16 @@ end try`;
 
     if (url.pathname === "/api/open-tmux-claude-fresh" && req.method === "POST") {
       try {
-        const { sessionName, folderPath, worktreePath, branch } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'fresh'], branch ?? null);
+        const { sessionName, folderPath, worktreePath, branch, bypass = false } = await req.json();
+        const claudeCli = bypass ? 'claude --dangerously-skip-permissions' : 'claude';
+        const tags: string[] = bypass ? ['tmux', 'fresh', 'bypass'] : ['tmux', 'fresh'];
+        const title = buildWindowTitle(sessionName, worktreePath, tags, branch ?? null);
         if (IS_WIN) {
-          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, true, false), title);
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, true, bypass), title);
         } else {
           const esc = escapeSq(sessionName);
           const winName = escapeSq(title);
-          const claudeCmd = `tmux kill-session -t '${esc}' 2>/dev/null; tmux new-session -d -s '${esc}' -n '${winName}' 'claude'; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '${esc}' automatic-rename off 2>/dev/null; tmux rename-window -t '${esc}' '${winName}' 2>/dev/null; tmux attach-session -t '${esc}'`;
+          const claudeCmd = `tmux kill-session -t '${esc}' 2>/dev/null; tmux new-session -d -s '${esc}' -n '${winName}' 'zsh -l -c "${claudeCli}"'; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '${esc}' automatic-rename off 2>/dev/null; tmux rename-window -t '${esc}' '${winName}' 2>/dev/null; tmux attach-session -t '${esc}'`;
           const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
           openTerminalWithCmd(claudeCmd, cdPath, title);
         }
@@ -1206,22 +1208,143 @@ end try`;
 
     if (url.pathname === "/api/open-tmux-claude-bypass" && req.method === "POST") {
       try {
-        const { sessionName, folderPath, worktreePath, branch } = await req.json();
-        const title = buildWindowTitle(sessionName, worktreePath, ['tmux', 'bypass'], branch ?? null);
+        const { sessionName, folderPath, worktreePath, branch, bypass = true } = await req.json();
+        const claudeCli = bypass ? 'claude --dangerously-skip-permissions' : 'claude';
+        const title = buildWindowTitle(sessionName, worktreePath, bypass ? ['tmux', 'bypass'] : ['tmux'], branch ?? null);
         if (IS_WIN) {
-          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, true), title);
+          spawnWslTmux(buildWslTmuxBashCmd(sessionName, folderPath ?? null, worktreePath ?? null, false, bypass), title);
         } else {
           const esc = escapeSq(sessionName);
-          const bypassSess = `${esc}-bypass`;
+          const bypassSess = bypass ? `${esc}-bypass` : esc;
           const winName = escapeSq(title);
-          const claudeCmd = `tmux new-session -d -s '${bypassSess}' -n '${winName}' 'claude --dangerously-skip-permissions' 2>/dev/null; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '${bypassSess}' automatic-rename off 2>/dev/null; tmux rename-window -t '${bypassSess}' '${winName}' 2>/dev/null; tmux attach-session -t '${bypassSess}'`;
+          const claudeCmd = `tmux new-session -d -s '${bypassSess}' -n '${winName}' 'zsh -l -c "${claudeCli}"' 2>/dev/null || true; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '${bypassSess}' automatic-rename off 2>/dev/null; tmux rename-window -t '${bypassSess}' '${winName}' 2>/dev/null; tmux attach-session -t '${bypassSess}'`;
           const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
           openTerminalWithCmd(claudeCmd, cdPath, title);
         }
-        return new Response(JSON.stringify({ success: true, message: `Claude bypass 실행 중 (${sessionName})` }), { headers });
+        return new Response(JSON.stringify({ success: true, message: `Claude${bypass ? ' bypass' : ''} 실행 중 (${sessionName})` }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
+    }
+
+    if (url.pathname === "/api/open-cmux-claude" && req.method === "POST") {
+      if (IS_WIN) return new Response(JSON.stringify({ error: 'cmux는 맥에서만 가능합니다' }), { status: 400, headers });
+      try {
+        const { folderPath, name, worktreePath, bypass = true } = await req.json();
+        const cdPath = (worktreePath ? worktreePath.split(',')[0].trim() : null) || folderPath;
+        const claudeCli = bypass ? 'claude --dangerously-skip-permissions' : 'claude';
+        const cmd = cdPath ? `cd '${escapeSq(cdPath)}' && ${claudeCli}` : claudeCli;
+
+        // cmux 설치 확인: 앱 또는 CLI 중 하나라도 있으면 설치된 것으로 판단
+        const appExists = existsSync('/Applications/cmux.app') || existsSync(`${homedir()}/Applications/cmux.app`);
+        const cmuxCliWhich = Bun.spawnSync(['which', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
+        const cliPath = cmuxCliWhich.exitCode === 0
+          ? new TextDecoder().decode(cmuxCliWhich.stdout).trim()
+          : (existsSync('/opt/homebrew/bin/cmux') ? '/opt/homebrew/bin/cmux' : null);
+        if (!appExists && !cliPath) {
+          return new Response(JSON.stringify({ error: 'cmux가 설치되지 않았습니다.\n설치: brew tap manaflow-ai/cmux && brew install --cask cmux' }), { status: 400, headers });
+        }
+
+        // cmux가 이미 실행 중인지 확인
+        const runningCheck = Bun.spawnSync(['pgrep', '-x', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
+        const alreadyRunning = runningCheck.exitCode === 0;
+
+        // 앱이 있으면 open -a로 포커스, 없으면 CLI만으로 진행
+        if (appExists) Bun.spawn(['open', '-a', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
+
+        // 이미 실행 중이면 짧게, 새로 시작이면 길게 대기
+        await new Promise(r => setTimeout(r, alreadyRunning ? 400 : 1500));
+
+        // cmux CLI로 명령 전송
+        const cmuxCli = cliPath ?? 'cmux';
+        const sendProc = Bun.spawnSync([cmuxCli, 'send', cmd + '\n'], { stdout: 'pipe', stderr: 'pipe' });
+        if (sendProc.exitCode !== 0) {
+          const err = new TextDecoder().decode(sendProc.stderr).trim();
+          devLog('cmux send error:', err);
+          return new Response(JSON.stringify({ success: false, error: `cmux 명령 전송 실패: ${err || 'unknown error'}` }), { status: 500, headers });
+        }
+
+        return new Response(JSON.stringify({ success: true, message: `cmux Claude${bypass ? ' bypass' : ''} 실행 중` }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-cmux-clear" && req.method === "POST") {
+      if (IS_WIN) return new Response(JSON.stringify({ error: 'cmux는 맥에서만 가능합니다' }), { status: 400, headers });
+      try {
+        const appExists = existsSync('/Applications/cmux.app') || existsSync(`${homedir()}/Applications/cmux.app`);
+        const cmuxCliWhich = Bun.spawnSync(['which', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
+        const cliPath = cmuxCliWhich.exitCode === 0
+          ? new TextDecoder().decode(cmuxCliWhich.stdout).trim()
+          : (existsSync('/opt/homebrew/bin/cmux') ? '/opt/homebrew/bin/cmux' : null);
+        if (!appExists && !cliPath) {
+          return new Response(JSON.stringify({ error: 'cmux가 설치되지 않았습니다.\n설치: brew tap manaflow-ai/cmux && brew install --cask cmux' }), { status: 400, headers });
+        }
+        const runningCheck = Bun.spawnSync(['pgrep', '-x', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
+        const alreadyRunning = runningCheck.exitCode === 0;
+        if (appExists) Bun.spawn(['open', '-a', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
+        await new Promise(r => setTimeout(r, alreadyRunning ? 400 : 1500));
+        const cmuxCli = cliPath ?? 'cmux';
+        const clearProc = Bun.spawnSync([cmuxCli, 'send', '/clear\n'], { stdout: 'pipe', stderr: 'pipe' });
+        if (clearProc.exitCode !== 0) {
+          const err = new TextDecoder().decode(clearProc.stderr).trim();
+          return new Response(JSON.stringify({ success: false, error: `cmux /clear 실패: ${err || 'unknown error'}` }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true, message: 'cmux /clear 전송 완료' }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname.startsWith("/api/open-log/") && req.method === "GET") {
+      const portId = decodeURIComponent(url.pathname.slice("/api/open-log/".length));
+      if (!portId) return new Response(JSON.stringify({ error: 'portId 필요' }), { status: 400, headers });
+      try {
+        const logsDir = join(APP_DATA_DIR, "logs");
+        const logFile = join(logsDir, `${portId}.log`);
+        if (!existsSync(logFile)) {
+          await Bun.write(logFile, "로그가 아직 생성되지 않았습니다.\n");
+        }
+        const sqEscaped = logFile.replace(/'/g, "'\\''");
+        if (!IS_WIN) {
+          // `create window ... command` 방식은 클립보드를 사용하지 않음 (write text 클립보드 오염 방지)
+          const script = `tell application "iTerm"\n  activate\n  create window with default profile command "tail -f '${sqEscaped}'"\nend tell`;
+          spawn({ cmd: ['osascript', '-e', script], stdout: 'inherit', stderr: 'inherit' });
+        } else {
+          openTerminalWithCmd(`tail -f '${sqEscaped}'`, null, `Log: ${portId}`);
+        }
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/send-tmux-keys" && req.method === "POST") {
+      try {
+        const { sessionName, text } = await req.json();
+        if (IS_WIN) {
+          const wslCmd = `tmux send-keys -t '${escapeSq(sessionName)}' '${escapeSq(text)}' Enter`;
+          Bun.spawnSync(['wsl', '--', 'bash', '-c', wslCmd], { stdout: 'pipe', stderr: 'pipe' });
+        } else {
+          const result = Bun.spawnSync(['tmux', 'send-keys', '-t', sessionName, text, 'Enter'], { stdout: 'pipe', stderr: 'pipe' });
+          if (result.exitCode !== 0) {
+            const err = new TextDecoder().decode(result.stderr).trim();
+            throw new Error(`tmux send-keys 실패: ${err}`);
+          }
+        }
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/check-cmux" && req.method === "GET") {
+      if (IS_WIN) return new Response(JSON.stringify({ installed: false, reason: 'windows' }), { headers });
+      const appExists = existsSync('/Applications/cmux.app') || existsSync(`${homedir()}/Applications/cmux.app`);
+      const cliExists = Bun.spawnSync(['which', 'cmux'], { stdout: 'pipe', stderr: 'pipe' }).exitCode === 0
+        || existsSync('/opt/homebrew/bin/cmux');
+      return new Response(JSON.stringify({ installed: appExists || cliExists, app: appExists, cli: cliExists }), { headers });
     }
 
     if (url.pathname === "/api/check-wsl" && req.method === "GET") {
@@ -1305,12 +1428,12 @@ end try`;
 
     if (url.pathname === "/api/open-terminal-claude-bypass" && req.method === "POST") {
       try {
-        const { folderPath, name, worktreePath } = await req.json();
-        const claudeCmd = 'claude --dangerously-skip-permissions';
+        const { folderPath, name, worktreePath, bypass = true } = await req.json();
+        const claudeCmd = bypass ? 'claude --dangerously-skip-permissions' : 'claude';
         const cdPath = worktreePath ? worktreePath.split(',')[0].trim() : (folderPath ?? null);
-        const title = buildWindowTitle(name || 'Claude', worktreePath, 'bypass');
+        const title = buildWindowTitle(name || 'Claude', worktreePath, bypass ? 'bypass' : undefined);
         openTerminalWithCmd(claudeCmd, cdPath, title);
-        return new Response(JSON.stringify({ success: true, message: 'Terminal에서 Claude (bypass) 실행' }), { headers });
+        return new Response(JSON.stringify({ success: true, message: `Terminal에서 Claude${bypass ? ' (bypass)' : ''} 실행` }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
