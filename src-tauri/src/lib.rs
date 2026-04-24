@@ -1067,6 +1067,28 @@ fn install_wsl_tmux() -> Result<String, String> {
     Ok("".to_string())
 }
 
+/// macOS: 임시 스크립트 파일로 iTerm을 열어 클립보드 오염 없이 명령 실행
+#[cfg(target_os = "macos")]
+fn open_iterm_with_script(cmd: &str) -> Result<(), String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+    let script_path = format!("/tmp/portmanager_{}.sh", ts);
+    fs::write(&script_path, format!("#!/bin/zsh -l\n{}\n", cmd))
+        .map_err(|e| format!("Failed to write script: {}", e))?;
+    let _ = Command::new("chmod").args(["+x", &script_path]).output();
+    let sq_path = script_path.replace('\'', "'\\''");
+    let applescript = format!(
+        "tell application \"iTerm\"\n  activate\n  create window with default profile command \"/bin/zsh -l '{}'\"\nend tell",
+        sq_path
+    );
+    Command::new("osascript")
+        .arg("-e")
+        .arg(&applescript)
+        .spawn()
+        .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+    Ok(())
+}
+
 #[tauri::command]
 fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_path: Option<String>) -> Result<String, String> {
     #[cfg(target_os = "macos")]
@@ -1086,16 +1108,7 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
             format!("printf '\\033]0;{}\\007'; tmux new-session -d -s '{}' -n '{}' \"claude\" 2>/dev/null || true; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}' automatic-rename off 2>/dev/null; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux attach-session -t '{}'", esc_title_sq, esc_session, esc_display, esc_session, esc_session, esc_display, esc_session)
         };
 
-        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
-        let script = format!(
-            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 2.0\n    set name to \"{}\"\n  end tell\nend tell",
-            escaped, escaped_title
-        );
-        Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .spawn()
-            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+        open_iterm_with_script(&cmd)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -1105,7 +1118,6 @@ fn open_tmux_claude(session_name: String, folder_path: Option<String>, worktree_
             .or_else(|| folder_path.clone())
             .map(|p| win_to_wsl_path(&p));
         let cd_part = cd_path.map(|p| format!("cd '{}' && ", escape_sq(&p))).unwrap_or_default();
-        // claude 실행 실패 시 login shell로 fallback → 에러 진단 가능
         let bash_cmd = format!("{}tmux new-session -A -s '{}' 'claude || bash -l'", cd_part, escape_sq(&session_name));
         let title = build_window_title(&session_name, worktree_path.as_deref(), true, false, false);
         spawn_wt_wsl(&bash_cmd, Some(&title))?;
@@ -1136,16 +1148,7 @@ fn open_tmux_claude_fresh(session_name: String, folder_path: Option<String>, wor
             format!("printf '\\033]0;{}\\007'; tmux new-session -d -s '{}' -n '{}' \"zsh -l -c '{}'\"; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}' automatic-rename off 2>/dev/null; tmux rename-window -t '{}' '{}' 2>/dev/null; tmux attach-session -t '{}'", esc_title_sq, esc_session, esc_display, claude_cli, esc_session, esc_session, esc_display, esc_session)
         };
         let cmd = format!("{}; {}", kill_cmd, new_cmd);
-        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
-        let script = format!(
-            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 2.0\n    set name to \"{}\"\n  end tell\nend tell",
-            escaped, escaped_title
-        );
-        Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .spawn()
-            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+        open_iterm_with_script(&cmd)?;
     }
 
     #[cfg(target_os = "windows")]
