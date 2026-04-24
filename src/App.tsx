@@ -4173,7 +4173,7 @@ function App() {
                 </div>
                 <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
                   {[
-                    '브라우저: localhost:9000 접속 또는 포트관리기.app 실행',
+                    '브라우저: localhost:9000 접속 또는 CS_Manager.app 실행',
                     'Finder에서 .command 파일을 앱 창으로 끌어다 놓기 → 포트·폴더 자동 감지',
                     '프로젝트 카드의 ▶ 실행 버튼 클릭 → 우측 상단 초록 Toast 확인',
                     '카드의 🟢 열기 버튼 → Chrome에서 localhost:포트 자동 오픈',

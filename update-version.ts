@@ -27,7 +27,7 @@ async function updateVersion() {
       newVersion = `${y}.${m}.${d}`;
       console.log(`[UpdateVersion] fallback - 오늘 날짜 사용: ${newVersion}`);
     }
-    const newProductName = `포트관리기`;
+    const newProductName = `CS_Manager`;
 
     console.log(`[UpdateVersion] 새 버전: ${newVersion}`);
 

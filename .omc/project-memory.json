@@ -212,14 +212,14 @@
   "hotPaths": [
     {
       "path": "src/App.tsx",
-      "accessCount": 22,
-      "lastAccessed": 1777010390837,
+      "accessCount": 24,
+      "lastAccessed": 1777025242155,
       "type": "file"
     },
     {
       "path": "api-server.ts",
-      "accessCount": 10,
-      "lastAccessed": 1777010388781,
+      "accessCount": 20,
+      "lastAccessed": 1777023772728,
       "type": "file"
     },
     {
@@ -229,15 +229,39 @@
       "type": "file"
     },
     {
+      "path": "src-tauri/tauri.conf.json",
+      "accessCount": 3,
+      "lastAccessed": 1777025210794,
+      "type": "file"
+    },
+    {
       "path": "src/PortalManager.tsx",
       "accessCount": 2,
       "lastAccessed": 1776940892386,
       "type": "file"
     },
     {
+      "path": "update-version.ts",
+      "accessCount": 2,
+      "lastAccessed": 1777025211695,
+      "type": "file"
+    },
+    {
       "path": "src/lib/env.ts",
       "accessCount": 1,
       "lastAccessed": 1777010326491,
+      "type": "file"
+    },
+    {
+      "path": "fix-dmg.ts",
+      "accessCount": 1,
+      "lastAccessed": 1777024976710,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 1,
+      "lastAccessed": 1777025220631,
       "type": "file"
     }
   ],

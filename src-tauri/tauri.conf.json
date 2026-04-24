@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "포트관리기",
-  "version": "2026.4.19",
+  "productName": "CS_Manager",
+  "version": "2026.4.24",
   "identifier": "com.portmanager.portmanager",
   "build": {
     "frontendDist": "../dist",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "프로젝트 관리기",
+        "title": "CS_Manager",
         "width": 1000,
         "height": 1050,
         "resizable": true,

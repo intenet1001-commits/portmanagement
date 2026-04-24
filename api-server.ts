@@ -492,7 +492,7 @@ const server = Bun.serve({
           ? (isFilePath
               ? ['cmd', '/c', commandPath]
               : ['cmd', '/c', commandPath])
-          : (isFilePath ? ['bash', commandPath] : ['bash', '-c', commandPath]);
+          : (isFilePath ? ['/bin/bash', commandPath] : ['/bin/bash', '-c', commandPath]);
         devLog(`[Execute] Starting process: ${cmd.join(' ')}`);
 
         const proc = spawn({
@@ -659,7 +659,7 @@ const server = Bun.serve({
           : commandPath.startsWith('/') || commandPath.startsWith('~');
         const restartCmd = IS_WIN
           ? ['cmd', '/c', commandPath]
-          : (isFilePath ? ['bash', commandPath] : ['bash', '-c', commandPath]);
+          : (isFilePath ? ['/bin/bash', commandPath] : ['/bin/bash', '-c', commandPath]);
         devLog(`[ForceRestart] Starting new process: ${restartCmd.join(' ')}`);
 
         const newProc = spawn({
@@ -844,7 +844,7 @@ const server = Bun.serve({
 
         // bash를 통해 cargo 환경을 설정하고 실행
         buildProcess = spawn({
-          cmd: ["bash", "-c", `source "$HOME/.cargo/env" && cd "${import.meta.dir}" && bun run ${buildCommand}`],
+          cmd: ["/bin/bash", "-c", `source "$HOME/.cargo/env" && cd "${import.meta.dir}" && bun run ${buildCommand}`],
           stdout: "pipe",
           stderr: "pipe",
         });
@@ -919,7 +919,7 @@ const server = Bun.serve({
         const isWin = process.platform === 'win32';
         const cmd = isWin
           ? ["cmd", "/c", `cd /d "${import.meta.dir}" && bun run build:portal && npx vercel --prod --yes`]
-          : ["bash", "-c", `cd "${import.meta.dir}" && bun run build:portal && npx vercel --prod --yes`];
+          : ["/bin/bash", "-c", `cd "${import.meta.dir}" && bun run build:portal && npx vercel --prod --yes`];
 
         deployProcess = spawn({ cmd, stdout: "pipe", stderr: "pipe" });
 
@@ -976,7 +976,7 @@ const server = Bun.serve({
     if (url.pathname === "/api/vercel-whoami" && req.method === "GET") {
       try {
         const isWin = process.platform === 'win32';
-        const cmd = isWin ? ["cmd", "/c", "npx vercel whoami"] : ["bash", "-c", "npx vercel whoami"];
+        const cmd = isWin ? ["cmd", "/c", "npx vercel whoami"] : ["/bin/bash", "-c", "npx vercel whoami"];
         const proc = spawn({ cmd, stdout: "pipe", stderr: "pipe" });
         const out = await new Response(proc.stdout).text();
         const err = await new Response(proc.stderr).text();
