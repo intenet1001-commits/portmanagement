@@ -1045,7 +1045,7 @@ const server = Bun.serve({
 tell application "Finder" to activate
 delay 0.2
 try
-  set chosen to choose folder with prompt "폴더를 선택하세요"
+  set chosen to choose folder with prompt "폴더를 선택하세요" invisibles shown true
   return POSIX path of chosen
 on error
   return ""
@@ -1080,7 +1080,7 @@ end try`;
 
     if (url.pathname === "/api/open-folder" && req.method === "POST") {
       try {
-        const { folderPath } = await req.json();
+        let { folderPath } = await req.json();
 
         devLog(`[OpenFolder] Attempting to open: ${folderPath}`);
 
@@ -1089,6 +1089,15 @@ end try`;
             JSON.stringify({ error: "Missing folderPath" }),
             { status: 400, headers }
           );
+        }
+
+        // ~ 확장 및 상대 경로(. 또는 .claude 등) → 홈 디렉토리 기준으로 변환
+        const HOME = process.env.HOME || '';
+        if (folderPath.startsWith('~/') || folderPath === '~') {
+          folderPath = HOME + folderPath.slice(1);
+        } else if (!IS_WIN && !folderPath.startsWith('/')) {
+          // 상대 경로: 홈 디렉토리 기준으로 확장
+          folderPath = `${HOME}/${folderPath}`;
         }
 
         // 절대 경로 확인 (Windows: C:\... or \\..., macOS: /...)
@@ -1978,8 +1987,14 @@ end try`;
           worktrees.push({ path: currentPath, branch: currentBranch ?? undefined, is_main: isFirst });
         }
 
-        // Filter out worktrees whose directory no longer exists (deleted but not pruned)
-        const validWorktrees = worktrees.filter(wt => existsSync(wt.path));
+        // main 워크트리 OR {folderPath}/worktrees/ 하위에 있는 것만 표시
+        // → 구 ~/worktrees/ 경로 잔재가 패널에 노출되지 않도록 필터
+        const normPath = (p: string) => p.replace(/\\/g, '/');
+        const projWtDir = normPath(join(folderPath, 'worktrees')) + '/';
+        const validWorktrees = worktrees.filter(wt =>
+          existsSync(wt.path) &&
+          (wt.is_main || normPath(wt.path).startsWith(projWtDir))
+        );
 
         return new Response(JSON.stringify({ success: true, worktrees: validWorktrees }), { headers });
       } catch (e: any) {
@@ -2004,7 +2019,8 @@ end try`;
         const home = homedir();
         // 플랫폼 공통 basename: / 와 \ 둘 다 처리
         const baseName = (folderPath as string).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || 'project';
-        const targetPath = worktreePath || join(home, 'worktrees', `${baseName}-${dirSafeBranch}`);
+        // 워크트리 기본 위치: {folderPath}/worktrees/{dirSafeBranch}
+        const targetPath = worktreePath || join(folderPath as string, 'worktrees', dirSafeBranch);
         // Check if worktree for this branch already exists
         const listProc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
         await listProc.exited;
@@ -2020,11 +2036,13 @@ end try`;
           return null;
         })();
         if (existingPath) {
-          // 이미 ~/worktrees/ 안이고 ASCII 경로면 바로 반환
           const isAscii = (s: string) => /^[\x00-\x7F]*$/.test(s);
           const normSlashes = (s: string) => s.replace(/\\/g, '/');
+          // worktrees/ 또는 기존 ~/worktrees/ 경로 모두 ASCII면 바로 반환
+          const projWtPrefix = normSlashes(join(folderPath as string, 'worktrees')) + '/';
           const homeWtPrefix = normSlashes(join(home, 'worktrees')) + '/';
-          if (normSlashes(existingPath).startsWith(homeWtPrefix) && isAscii(existingPath)) {
+          const isExpected = normSlashes(existingPath).startsWith(projWtPrefix) || normSlashes(existingPath).startsWith(homeWtPrefix);
+          if (isExpected && isAscii(existingPath)) {
             return new Response(JSON.stringify({ success: true, path: existingPath, existing: true }), { headers });
           }
           // 파일이 있으면 반환, 없으면(no-checkout 잔재) 제거 후 ~/worktrees/ 재생성
@@ -2071,6 +2089,16 @@ end try`;
           await coProc.exited;
           // non-fatal: proceed even if checkout fails
         }
+        // worktrees를 .gitignore에 자동 추가
+        try {
+          const gitignorePath = join(folderPath as string, '.gitignore');
+          let gitignoreContent = '';
+          try { gitignoreContent = await Bun.file(gitignorePath).text(); } catch {}
+          if (!gitignoreContent.split('\n').some(l => l.trim() === 'worktrees')) {
+            const newContent = gitignoreContent ? gitignoreContent.trimEnd() + '\nworktrees\n' : 'worktrees\n';
+            await Bun.write(gitignorePath, newContent);
+          }
+        } catch {}
         return new Response(JSON.stringify({ success: true, path: targetPath }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
@@ -2168,6 +2196,45 @@ end try`;
         return new Response(JSON.stringify({ success: true, attempts }), { headers });
       } catch (e: any) {
         return new Response(JSON.stringify({ error: e.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/cleanup-stale-worktrees" && req.method === "POST") {
+      try {
+        const { folderPath } = await req.json();
+        if (!folderPath || !existsSync(folderPath as string)) {
+          return new Response(JSON.stringify({ success: true, skipped: true }), { headers });
+        }
+        // git worktree prune으로 삭제된 워크트리 메타 정리
+        const pruneProc = Bun.spawn([GIT_PATH, "worktree", "prune"], {
+          cwd: folderPath, stdout: "pipe", stderr: "pipe",
+        });
+        await pruneProc.exited;
+        // worktrees/ 하위 폴더 중 git 목록에 없는 것 물리 삭제
+        const wtDir = join(folderPath as string, 'worktrees');
+        if (existsSync(wtDir)) {
+          const listProc = Bun.spawn([GIT_PATH, "worktree", "list", "--porcelain"], {
+            cwd: folderPath, stdout: "pipe", stderr: "pipe",
+          });
+          await listProc.exited;
+          const listOut = await new Response(listProc.stdout).text();
+          const registeredPaths = new Set(
+            listOut.split('\n').filter(l => l.startsWith('worktree ')).map(l => l.slice('worktree '.length).trim())
+          );
+          const { readdirSync, rmSync } = await import('fs');
+          try {
+            const entries = readdirSync(wtDir);
+            for (const entry of entries) {
+              const full = join(wtDir, entry);
+              if (!registeredPaths.has(full)) {
+                try { rmSync(full, { recursive: true, force: true }); } catch {}
+              }
+            }
+          } catch {}
+        }
+        return new Response(JSON.stringify({ success: true }), { headers });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ success: true, error: e.message }), { headers });
       }
     }
 

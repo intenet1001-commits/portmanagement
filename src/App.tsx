@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock, Zap } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { createClient } from '@supabase/supabase-js';
@@ -926,8 +926,6 @@ function App() {
   const [sidebarSection, setSidebarSection] = useState<string>('all');
   const [v3MenuOpenId, setV3MenuOpenId] = useState<string|null>(null);
   const [v3MenuRect, setV3MenuRect] = useState<{top:number;right:number}|null>(null);
-  const [worktreePickerState, setWorktreePickerState] = useState<{ item: PortInfo; mode: 'tmux' | 'claude' } | null>(null);
-  const [worktreePickerValue, setWorktreePickerValue] = useState('');
   // 머지 확인 모달
   const [mergeConfirm, setMergeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo; mainBranch: string; commits: string; stat: string; isDirty: boolean } | null>(null);
   const [mergeError, setMergeError] = useState<{ message: string; hasConflict: boolean; folderPath: string; item?: PortInfo; wt?: WorktreeInfo } | null>(null);
@@ -936,7 +934,6 @@ function App() {
   const [mergeLoading, setMergeLoading] = useState(false);
   const [deleteWorktreeConfirm, setDeleteWorktreeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo } | null>(null);
   const [commitModal, setCommitModal] = useState<{ item: PortInfo; wt: WorktreeInfo; msg: string } | null>(null);
-  const [detectedWorktrees, setDetectedWorktrees] = useState<WorktreeInfo[]>([]);
   const [expandedWorktreeIds, setExpandedWorktreeIds] = useState<Set<string>>(new Set());
   const [worktreeLists, setWorktreeLists] = useState<Record<string, WorktreeInfo[]>>({});
   const [worktreeNewBranch, setWorktreeNewBranch] = useState<Record<string, string>>({});
@@ -1231,22 +1228,7 @@ function App() {
 
   const openTmuxClaude = (item: PortInfo) => {
     recordVisit(item.id);
-    setWorktreePickerState({ item, mode: 'tmux' });
-    // Only pre-fill if saved path is absolute — relative names (e.g. '합산') are invalid for -w
-    // Windows: C:\... / POSIX: /... 둘 다 인정
-    setWorktreePickerValue((item.worktreePath && isAbsolutePath(item.worktreePath)) ? item.worktreePath : '');
-    setDetectedWorktrees([]);
-    if (item.folderPath) {
-      API.listGitWorktrees(item.folderPath)
-        .then(list => {
-          setDetectedWorktrees(list);
-          const savedPath = item.worktreePath?.startsWith('/') ? item.worktreePath : '';
-          if (savedPath && !list.some(wt => wt.path === savedPath)) {
-            setWorktreePickerValue('');
-          }
-        })
-        .catch(e => { if (import.meta.env.DEV) console.warn('[worktreePicker] listGitWorktrees failed:', e); });
-    }
+    _executeTmuxClaude(item, undefined);
   };
 
   const checkWslReady = async (): Promise<boolean> => {
@@ -1273,17 +1255,10 @@ function App() {
 
   const openTmuxClaudeFresh = async (item: PortInfo) => {
     if (!await checkWslReady()) return;
-    const baseName = getSessionName(item);
-    const wtSuffix = item.worktreePath ? `-${item.worktreePath.replace(/\/$/, '').split('/').pop()}` : '';
-    const sessionName = baseName + wtSuffix;
+    const sessionName = getSessionName(item);
     try {
-      if (bypassPermissions) {
-        await API.openTmuxClaudeBypass(sessionName, item.folderPath, item.worktreePath);
-        showToast(`tmux 새 세션 시작 (↺ ⚡ bypass)`, 'success');
-      } else {
-        await API.openTmuxClaudeFresh(sessionName, item.folderPath, item.worktreePath);
-        showToast(`tmux 새 세션 시작 (기록 초기화) ↺`, 'success');
-      }
+      await API.openTmuxClaudeBypass(sessionName, item.folderPath, undefined);
+      showToast(`tmux 새 세션 시작 ↺ ⚡`, 'success');
     } catch (e) {
       showToast(`tmux 새 세션 실패: ${e}`, 'error');
     }
@@ -1295,13 +1270,8 @@ function App() {
     const wtSuffix = worktreePath ? `-${worktreePath.replace(/\/$/, '').split('/').pop()}` : '';
     const sessionName = baseName + wtSuffix;
     try {
-      if (bypassPermissions) {
-        await API.openTmuxClaudeBypass(sessionName, item.folderPath, worktreePath);
-        showToast(`tmux + Claude (bypass) 실행 중 (세션: ${sessionName}-bypass)`, 'success');
-      } else {
-        await API.openTmuxClaude(sessionName, item.folderPath, worktreePath);
-        showToast(`tmux + Claude 실행 중 (세션: ${sessionName})`, 'success');
-      }
+      await API.openTmuxClaudeBypass(sessionName, item.folderPath, worktreePath);
+      showToast(`tmux + Claude ⚡ 실행 중 (세션: ${sessionName})`, 'success');
     } catch (e) {
       showToast(`tmux 실행 실패: ${e}`, 'error');
     }
@@ -1309,74 +1279,19 @@ function App() {
 
   const openTerminalClaude = (item: PortInfo) => {
     recordVisit(item.id);
-    setWorktreePickerState({ item, mode: 'claude' });
-    setWorktreePickerValue((item.worktreePath && isAbsolutePath(item.worktreePath)) ? item.worktreePath : '');
-    setDetectedWorktrees([]);
-    if (item.folderPath) {
-      API.listGitWorktrees(item.folderPath)
-        .then(list => {
-          setDetectedWorktrees(list);
-          const savedPath = item.worktreePath?.startsWith('/') ? item.worktreePath : '';
-          if (savedPath && !list.some(wt => wt.path === savedPath)) {
-            setWorktreePickerValue('');
-          }
-        })
-        .catch(e => { if (import.meta.env.DEV) console.warn('[worktreePicker] listGitWorktrees failed:', e); });
-    }
+    _executeTerminalClaude(item, undefined);
   };
 
   const _executeTerminalClaude = async (item: PortInfo, worktreePath: string | undefined) => {
     try {
       const displayName = item.aiName || item.name;
-      if (bypassPermissions) {
-        await API.openTerminalClaudeBypass(item.folderPath, displayName, worktreePath);
-        showToast(`Terminal에서 Claude (bypass) 실행 중`, 'success');
-      } else {
-        await API.openTerminalClaude(item.folderPath, displayName, worktreePath);
-        showToast(`Terminal에서 Claude 실행 중`, 'success');
-      }
+      await API.openTerminalClaudeBypass(item.folderPath, displayName, worktreePath);
+      showToast(`Terminal에서 Claude ⚡ 실행 중`, 'success');
     } catch (e) {
       showToast(`Claude 실행 실패: ${e}`, 'error');
     }
   };
 
-  const executeWithWorktree = async (worktreePath: string | undefined) => {
-    if (!worktreePickerState) return;
-    const { item, mode } = worktreePickerState;
-
-    setWorktreePickerState(null);
-    setDetectedWorktrees([]);
-
-    let resolvedPath = worktreePath;
-
-    // 브랜치명(상대경로)을 입력한 경우 → git worktree 자동 생성
-    // Windows(C:\...) / POSIX(/...) 절대경로는 제외
-    if (worktreePath && !isAbsolutePath(worktreePath) && item.folderPath) {
-      try {
-        showToast(`워크트리 생성 중: ${worktreePath}...`, 'success');
-        const result = await API.gitWorktreeAdd(item.folderPath, worktreePath);
-        resolvedPath = result.path;
-        // 워크트리 목록 갱신
-        loadWorktrees(item.id, item.folderPath);
-        showToast(`워크트리 생성 완료: ${resolvedPath}`, 'success');
-      } catch (e) {
-        showToast(`워크트리 생성 실패: ${e}`, 'error');
-        return;
-      }
-    }
-
-    // save the resolved absolute path back to the item
-    if (resolvedPath !== undefined) {
-      setPorts(prev => prev.map(p => p.id === item.id ? { ...p, worktreePath: resolvedPath || undefined } : p));
-    }
-
-    const updatedItem = { ...item, worktreePath: resolvedPath };
-    if (mode === 'tmux') {
-      await _executeTmuxClaude(updatedItem, resolvedPath);
-    } else {
-      await _executeTerminalClaude(updatedItem, resolvedPath);
-    }
-  };
 
   // 초기 데이터 로드
   useEffect(() => {
@@ -1529,6 +1444,23 @@ function App() {
     };
     loadPortsData();
   }, []);
+
+  // 앱 시작 시 스테일 워크트리 자동 prune (1회)
+  const cleanupRanRef = useRef(false);
+  useEffect(() => {
+    if (cleanupRanRef.current || ports.length === 0) return;
+    cleanupRanRef.current = true;
+    const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+    ports.forEach(p => {
+      if (p.folderPath) {
+        fetch(`${baseUrl}/api/cleanup-stale-worktrees`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ folderPath: p.folderPath }),
+        }).catch(() => {});
+      }
+    });
+  }, [ports]);
 
   // 작업 루트 초기 로드
   useEffect(() => {
@@ -3109,8 +3041,15 @@ function App() {
           </div>
         )}
 
+        {/* MAIN 섹션 구분선 */}
+        <div style={{display:'flex',alignItems:'center',gap:6,marginTop:6,marginBottom:2}}>
+          <div style={{flex:1,height:'1px',background:'rgba(255,240,220,0.05)'}}/>
+          <span style={{fontSize:9,color:'#3d3830',fontWeight:700,letterSpacing:1,textTransform:'uppercase'}}>main</span>
+          <div style={{flex:1,height:'1px',background:'rgba(255,240,220,0.05)'}}/>
+        </div>
+
         {/* Primary action strip — visible on hover */}
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity" style={{marginTop:'auto',display:'flex',gap:4}}>
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity" style={{marginTop:2,display:'flex',gap:4}}>
           {item.port ? (
             <button onClick={e=>{e.stopPropagation(); item.isRunning ? stopCommand(item) : executeCommand(item);}} style={{
               flex:1,padding:'5px 0',borderRadius:5,
@@ -3133,7 +3072,7 @@ function App() {
               폴더 열기
             </button>
           )}
-          <button onClick={e=>{e.stopPropagation(); setWorktreePickerState({item,mode:'claude'});}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}>Claude</button>
+          <button onClick={e=>{e.stopPropagation(); openTerminalClaude(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}><Zap style={{width:9,height:9}}/>Claude</button>
           <button onClick={e=>{e.stopPropagation(); toggleWorktreePanel(item.id, item.folderPath);}} style={{...btnBase, color:expandedWorktreeIds.has(item.id)?'#e8a557':'#ede7dd', borderColor:expandedWorktreeIds.has(item.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title="워크트리 관리">
             <GitBranch style={{width:11,height:11}}/>
           </button>
@@ -3149,10 +3088,10 @@ function App() {
 
         {/* Worktree panel */}
         {expandedWorktreeIds.has(item.id) && (
-          <div style={{marginTop:4,background:'#221f1b',borderRadius:6,border:'1px solid rgba(255,240,220,0.07)',padding:'8px 8px 6px',display:'flex',flexDirection:'column',gap:4}}>
+          <div style={{marginTop:4,background:'#1a1814',borderRadius:6,border:'1px solid rgba(232,165,87,0.15)',borderLeft:'2px solid rgba(232,165,87,0.35)',padding:'8px 8px 6px',display:'flex',flexDirection:'column',gap:4}}>
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:2}}>
-              <div style={{display:'flex',alignItems:'center',gap:4,fontSize:10,color:'#6b6459',fontWeight:600,letterSpacing:0.5,textTransform:'uppercase'}}>
-                <GitBranch style={{width:9,height:9}}/> Git Worktrees
+              <div style={{display:'flex',alignItems:'center',gap:4,fontSize:10,color:'#e8a557',fontWeight:700,letterSpacing:0.8,textTransform:'uppercase',opacity:0.7}}>
+                <GitBranch style={{width:9,height:9}}/> Worktrees
               </div>
               <button onClick={e=>{e.stopPropagation(); item.folderPath && loadWorktrees(item.id, item.folderPath);}} style={{padding:'2px 5px',background:'transparent',border:'none',cursor:'pointer',color:'#6b6459',display:'flex',alignItems:'center'}} title="새로고침">
                 <RotateCw style={{width:10,height:10}}/>
@@ -3213,7 +3152,7 @@ function App() {
                       <button onClick={e=>{e.stopPropagation(); item.port && window.open(`http://localhost:${item.port}`, '_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
                       <button onClick={e=>{e.stopPropagation(); wt.path && API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
                       <button onClick={e=>{e.stopPropagation(); forceRestartCommand(item);}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
-                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}>Claude</button>
+                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>Claude</button>
                       <button onClick={e=>{e.stopPropagation(); setCommitModal({item,wt,msg:''});}} style={miniBtn}>커밋</button>
                       <button onClick={e=>{e.stopPropagation();
                         const baseUrl = isTauri() ? 'http://localhost:3001' : '';
@@ -3234,7 +3173,7 @@ function App() {
                         else forceRestartCommand({...item, id:`${item.id}_wt_${wtName}`, port:wtPort, worktreePath:wt.path});
                       }} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
                       <button onClick={e=>{e.stopPropagation(); API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
-                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}>Claude</button>
+                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>Claude</button>
                       <button onClick={e=>{e.stopPropagation(); setCommitModal({item,wt,msg:''});}} style={miniBtn}>커밋</button>
                       <button onClick={e=>{e.stopPropagation();
                         const baseUrl = isTauri() ? 'http://localhost:3001' : '';
@@ -3274,7 +3213,7 @@ function App() {
               {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item)},
               {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath)},
               {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>API.openLog(item.id)},
-              {label:'Claude (bypass)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item)},
+              {label:'Claude tmux ⚡', icon:<SquareTerminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item)},
               {label:'수정', icon:<Pencil style={{width:11,height:11}}/>, action:()=>startEdit(item)},
               {label:'삭제', icon:<Trash2 style={{width:11,height:11}}/>, action:()=>setDeleteConfirmId(item.id), danger:true},
             ].map(({label,icon,action,danger}:{label:string;icon:React.ReactNode;action:()=>void;danger?:boolean}) => (
@@ -3618,109 +3557,6 @@ function App() {
               <button onClick={() => setMergePushConfirm(null)} className="px-4 py-2 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-sm rounded-lg transition-colors">
                 나중에
               </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 워크트리 경로 피커 모달 */}
-      {worktreePickerState && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-[#1c1916] rounded-xl border border-stone-700/50 p-5 w-[460px] shadow-2xl">
-            {/* 헤더: 프로젝트명 + 모드 */}
-            <div className="mb-3">
-              <div className="flex items-center gap-2 mb-0.5">
-                <span className="text-[10px] font-medium text-violet-400 uppercase tracking-wider">
-                  {worktreePickerState.mode === 'tmux' ? 'tmux' : 'Claude'}
-                </span>
-                <span className="text-[#6b6459] text-[10px]">·</span>
-                <span className="text-xs font-semibold text-[#ede7dd] truncate">
-                  {worktreePickerState.item.aiName || worktreePickerState.item.name}
-                </span>
-              </div>
-              <p className="text-[11px] text-zinc-500">워크트리를 선택하거나 직접 경로를 입력하세요</p>
-            </div>
-
-            {/* 감지된 워크트리 목록 */}
-            {detectedWorktrees.length > 0 && (
-              <div className="mb-3 border border-stone-700/50 rounded-lg overflow-hidden">
-                {detectedWorktrees.map((wt) => {
-                  const wtBasename = wt.path.replace(/\/$/, '').split('/').pop() ?? wt.path;
-                  const displayName = wt.branch || wtBasename;
-                  const isSelected = worktreePickerValue === wt.path;
-                  return (
-                    <button
-                      key={wt.path}
-                      onClick={() => setWorktreePickerValue(wt.path)}
-                      className={`w-full text-left px-3 py-2 text-xs flex items-center justify-between hover:bg-[#2a2520]/50 transition-colors border-b border-stone-700/50 last:border-0 ${
-                        isSelected ? 'bg-violet-600/20' : ''
-                      }`}
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1 flex-wrap">
-                          <span className="text-zinc-400 text-[10px]">{worktreePickerState.item.aiName || worktreePickerState.item.name}</span>
-                          <span className="text-[#6b6459] text-[10px]">/</span>
-                          <span className={`font-semibold text-xs ${isSelected ? 'text-violet-300' : wt.is_main ? 'text-[#ede7dd]/90' : 'text-teal-300'}`}>{displayName}</span>
-                          {wt.is_main && <span className="text-[10px] text-zinc-500">(main)</span>}
-                        </div>
-                        <span className="text-[#6b6459] font-mono text-[10px] truncate block">{wtBasename}</span>
-                      </div>
-                      {wt.branch && wt.branch !== displayName && (
-                        <span className="text-zinc-500 ml-2 shrink-0 text-[10px] bg-[#221f1b] px-1.5 py-0.5 rounded">{wt.branch}</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* 직접 입력 */}
-            <input
-              autoFocus
-              type="text"
-              value={worktreePickerValue}
-              onChange={(e) => setWorktreePickerValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && worktreePickerValue.trim()) executeWithWorktree(worktreePickerValue.trim());
-                if (e.key === 'Escape') { setWorktreePickerState(null); setDetectedWorktrees([]); }
-              }}
-              placeholder="직접 경로 입력..."
-              className="w-full px-3 py-2 text-sm bg-black/30 border border-stone-700/50 text-white placeholder-zinc-500 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-500 mb-3"
-            />
-
-            {/* 워크트리 제거 가이드 */}
-            <div className="mb-4 px-3 py-2.5 bg-[#221f1b]/60 rounded-lg border border-stone-800/40">
-              <p className="text-[10px] text-zinc-500 font-medium mb-1.5">워크트리 제거 방법</p>
-              <div className="space-y-1">
-                <div className="flex items-start gap-1.5">
-                  <span className="text-[#6b6459] text-[10px] mt-0.5">·</span>
-                  <code className="text-[10px] text-violet-400 font-mono">git worktree remove &lt;path&gt;</code>
-                </div>
-                <div className="flex items-start gap-1.5">
-                  <span className="text-[#6b6459] text-[10px] mt-0.5">·</span>
-                  <span className="text-[10px] text-zinc-500"><code className="text-zinc-400 font-mono">git worktree prune</code> — 삭제된 폴더 정리</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-2 justify-end items-center">
-              <button
-                onClick={() => { setWorktreePickerState(null); setDetectedWorktrees([]); }}
-                className="px-3 py-1.5 text-xs text-zinc-500 hover:text-[#ede7dd]/90 transition-colors"
-              >취소</button>
-              <button
-                onClick={() => { executeWithWorktree(undefined); }}
-                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-[#ede7dd] border border-stone-700/50 rounded-lg transition-colors"
-              >워크트리 없이 실행</button>
-              <button
-                disabled={!worktreePickerValue.trim()}
-                onClick={() => { executeWithWorktree(worktreePickerValue.trim()); }}
-                className={`px-3 py-1.5 text-xs rounded-lg transition-colors text-white ${
-                  worktreePickerValue.trim()
-                    ? 'bg-violet-600 hover:bg-violet-500'
-                    : 'bg-violet-600/30 opacity-40 cursor-not-allowed'
-                }`}
-              >실행 →</button>
             </div>
           </div>
         </div>
