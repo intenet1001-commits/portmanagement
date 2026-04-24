@@ -1141,7 +1141,7 @@ end try`;
     }
 
     // ── Terminal/tmux helper (Windows: wt.exe or cmd, macOS: iTerm) ─────────
-    function openTerminalWithCmd(shellCmd: string, folderPath: string | null, title: string): void {
+    async function openTerminalWithCmd(shellCmd: string, folderPath: string | null, title: string): Promise<void> {
       if (IS_WIN) {
         // Windows Terminal 우선, 없으면 cmd 폴백
         // wt.exe는 Windows App 앨리어스라 직접 spawn 불가 → cmd /c start wt로 우회
@@ -1158,10 +1158,15 @@ end try`;
             stdout: 'inherit', stderr: 'inherit' });
         }
       } else {
-        const escCmd = shellCmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const escTitle = title.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const cdPart = folderPath ? `write text "cd '${escapeSq(folderPath)}'"\n    ` : '';
-        const script = `tell application "iTerm"\n  activate\n  set w to create window with default profile\n  tell current session of w\n    ${cdPart}write text "${escCmd}"\n    delay 2.0\n    set name to "${escTitle}"\n  end tell\nend tell`;
+        // 임시 스크립트 파일 방식: write text 클립보드 오염 없이 명령 실행
+        const fullCmd = folderPath
+          ? `cd '${escapeSq(folderPath)}' && ${shellCmd}`
+          : shellCmd;
+        const scriptPath = `/tmp/portmanager_${Date.now()}.sh`;
+        await Bun.write(scriptPath, `#!/bin/zsh -l\n${fullCmd}\n`);
+        Bun.spawnSync(['chmod', '+x', scriptPath]);
+        const sqPath = scriptPath.replace(/'/g, "'\\''");
+        const script = `tell application "iTerm"\n  activate\n  create window with default profile command "/bin/zsh -l '${sqPath}'"\nend tell`;
         spawn({ cmd: ['osascript', '-e', script], stdout: 'inherit', stderr: 'inherit' });
       }
     }
