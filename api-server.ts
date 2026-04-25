@@ -1123,22 +1123,20 @@ const server = Bun.serve({
           await ps.exited;
           picked = (await new Response(ps.stdout).text()).trim();
         } else {
-          const appleScript = `
-tell application "Finder" to activate
-delay 0.2
-try
-  set chosen to choose folder with prompt "폴더를 선택하세요" invisibles shown true
+          const scriptPath = `/tmp/pick-folder-${Date.now()}.applescript`;
+          await Bun.write(scriptPath, `try
+  set chosen to choose folder with prompt "폴더를 선택하세요"
   return POSIX path of chosen
 on error
   return ""
-end try`;
+end try`);
           const proc = Bun.spawn({
-            cmd: ['osascript', '-'],
-            stdin: new Blob([appleScript]),
+            cmd: ['osascript', scriptPath],
             stdout: 'pipe', stderr: 'pipe',
           });
           await proc.exited;
           picked = (await new Response(proc.stdout).text()).trim();
+          Bun.file(scriptPath).exists().then(() => Bun.spawn({ cmd: ['rm', scriptPath] })).catch(() => {});
         }
         if (!picked) {
           return new Response(JSON.stringify({ error: 'cancelled' }), { status: 400, headers });

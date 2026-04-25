@@ -1065,15 +1065,19 @@ function App() {
   };
 
   // 토스트 배너 표시 함수
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+  const showToast = (message: string, type: 'success' | 'error' = 'success', duration = 3000): number => {
     const id = Date.now();
     setToasts(prev => [...prev, { id, message, type }]);
-
-    // 3초 후 자동으로 제거
-    setTimeout(() => {
-      setToasts(prev => prev.filter(toast => toast.id !== id));
-    }, 3000);
+    if (duration > 0) {
+      setTimeout(() => {
+        setToasts(prev => prev.filter(toast => toast.id !== id));
+      }, duration);
+    }
+    return id;
   };
+
+  const removeToast = (id: number) =>
+    setToasts(prev => prev.filter(t => t.id !== id));
 
   // AI이름 적용 프롬프트 — ports.json 경로와 함께 클립보드에 복사
   const handleCopyAiNamePrompt = useCallback(async () => {
@@ -2830,8 +2834,10 @@ function App() {
         showToast('폴더 선택 실패: ' + e.message, 'error');
       }
     } else {
+      const hintId = showToast('폴더 선택 창이 열립니다. 화면 앞쪽을 확인하세요.', 'success', 0);
       try {
         const res = await fetch('/api/pick-folder');
+        removeToast(hintId);
         const data = await res.json();
         if (res.ok && data.path) {
           setExistingFolderPath(data.path);
@@ -2840,6 +2846,7 @@ function App() {
           showToast('폴더 선택 창이 열리지 않았습니다. 경로를 직접 입력하세요.', 'error');
         }
       } catch (e: any) {
+        removeToast(hintId);
         if (e.name !== 'AbortError') showToast('폴더 선택 실패: ' + e.message, 'error');
       }
     }
