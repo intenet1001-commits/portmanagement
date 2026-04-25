@@ -7,7 +7,7 @@
 자주 쓰는 링크와 폴더를 **북마크로 정리해 Vercel에 배포**하여 맥, 윈도우, 스마트폰 어디서든 꺼내 씁니다.  
 여러 대 기기를 쓰더라도 Supabase 한 번 연결로 **자동 동기화** — 세팅은 한 번, 편의는 영원히.
 
-![초기 설정 마법사](.github/images/setup-wizard.png)
+![포트 관리 화면](.github/images/app-overview.png)
 
 ---
 
@@ -51,7 +51,32 @@ bun run build:portal
 | 다른 기기 데이터 보기 | 설정 → 고급 설정 → 단말 조회 → 선택 → Pull |
 | AI 추천 이름 | Claude Code로 프로젝트명 자동 생성 |
 | 북마크 포털 | 자주 쓰는 링크·폴더 카테고리 관리 + Vercel 외부 배포 |
+| **cmux 통합 (macOS)** | 메인 로우·점3개 메뉴·헤더 툴바 3곳에서 cmux 1-click 실행 |
 | 검색 | 이름, AI 별칭, URL, 경로 통합 검색 |
+
+---
+
+## cmux 통합 (macOS 전용)
+
+가장 자주 쓰는 cmux 워크플로를 3개 진입점에서 1-click으로 호출합니다.
+
+| 위치 | 동작 |
+|---|---|
+| 포트 카드 메인 로우 `[⚡cmux]` | 기존 cmux 워크스페이스에서 Claude 실행 |
+| 포트 카드 메인 로우 `[⚡cmux ↺]` | 새 cmux 워크스페이스 생성 후 Claude 실행 |
+| 포트 카드 `▼` → `cmux 터미널` | 폴더만 cmux로 열기 (Claude 미실행) |
+| 헤더 툴바 `[>_ cmux]` | HOME(`~`) 디렉토리에서 cmux 워크스페이스 |
+| `▼` → `cmux (Mac 전용)` / `cmux ↺ 새창 (Mac 전용)` | bypass/일반 모드 모두 지원 |
+
+bypass 모드 토글(`bypass ON`) 활성화 시 모든 cmux 항목이 `--dangerously-skip-permissions` 옵션으로 Claude를 실행합니다.
+
+cmux 미설치 시 자동 안내:
+```bash
+brew tap manaflow-ai/cmux && brew install --cask cmux
+```
+
+> cmux Socket Control이 `cmuxOnly`로 설정되어 있으면 외부 앱 호출이 차단됩니다.
+> cmux 메뉴 → Settings → Socket Control → **Allow All** 로 변경해 주세요.
 
 ---
 
@@ -114,6 +139,8 @@ API 서버(3001) + 개발 서버(9000)가 동시 시작됩니다.
 ### Step 4. 초기 설정 마법사
 
 앱을 처음 실행하면 **초기 설정 마법사**가 자동으로 시작됩니다.
+
+![초기 설정 마법사](.github/images/setup-wizard.png)
 
 ```
 🚀 세팅 버튼 → 처음 사용 / 추가 단말 중 선택 → 단계별 안내
