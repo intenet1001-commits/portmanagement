@@ -7,6 +7,7 @@ import PortalManager, { type PortalActions } from './PortalManager';
 import SetupWizard from './SetupWizard';
 import { savePushSnapshot, fetchPushHistory, fetchSnapshotRows, type PushSnapshot } from './pushHistory';
 import { isTauri, isDeployedWeb } from './lib/env';
+import { GuideOverlay } from './guide/GuideMode';
 
 // OS 감지
 const isWindows = () => typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('win');
@@ -887,7 +888,14 @@ function App() {
   );
   const [openPortalSettings, setOpenPortalSettings] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
-  const [showGuideModal, setShowGuideModal] = useState(false);
+  const [guideMode, setGuideMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('pm-guide-mode') === '1';
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem('pm-guide-mode', guideMode ? '1' : '0');
+  }, [guideMode]);
   const [wslSetupStatus, setWslSetupStatus] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [memos, setMemos] = useState<Record<string, { content: string; updatedAt: string }>>({});
@@ -920,6 +928,18 @@ function App() {
   const [sidebarSection, setSidebarSection] = useState<string>('all');
   const [v3MenuOpenId, setV3MenuOpenId] = useState<string|null>(null);
   const [v3MenuRect, setV3MenuRect] = useState<{top:number;right:number}|null>(null);
+  // 포트별 마지막 접속 시각(ms) — localStorage 영속화. Stale(2주+) 사이드바 필터용.
+  const [lastVisits, setLastVisits] = useState<Record<string, number>>(() => {
+    try { return JSON.parse(localStorage.getItem('portmanager-last-visits') || '{}'); }
+    catch { return {}; }
+  });
+  // 메뉴 열린 상태에서 스크롤 시 자동 닫기 — position:fixed 메뉴가 트리거에서 떨어지는 문제 방지
+  useEffect(() => {
+    if (!v3MenuOpenId) return;
+    const close = () => { setV3MenuOpenId(null); setV3MenuRect(null); };
+    window.addEventListener('scroll', close, { capture: true, passive: true });
+    return () => window.removeEventListener('scroll', close, true);
+  }, [v3MenuOpenId]);
   // 머지 확인 모달
   const [mergeConfirm, setMergeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo; mainBranch: string; commits: string; stat: string; isDirty: boolean } | null>(null);
   const [mergeError, setMergeError] = useState<{ message: string; hasConflict: boolean; folderPath: string; item?: PortInfo; wt?: WorktreeInfo } | null>(null);
@@ -2658,6 +2678,12 @@ function App() {
   };
 
   const recordVisit = async (portId: string) => {
+    // 항상 로컬 lastVisits 업데이트 — Supabase 미설정 환경에서도 Stale 필터 동작
+    setLastVisits(prev => {
+      const next = { ...prev, [portId]: Date.now() };
+      try { localStorage.setItem('portmanager-last-visits', JSON.stringify(next)); } catch {}
+      return next;
+    });
     const cfg = portalConfigRef.current;
     if (!cfg?.supabaseUrl || !cfg?.supabaseAnonKey || !cfg?.deviceId) return;
     try {
@@ -3076,6 +3102,10 @@ function App() {
     if (sidebarSection === 'running') list = list.filter(p => p.isRunning);
     else if (sidebarSection === 'starred') list = list.filter(p => p.favorite);
     else if (sidebarSection === 'wt') list = list.filter(p => !!p.worktreePath);
+    else if (sidebarSection === 'stale') {
+      const cutoff = Date.now() - 14 * 86400000;
+      list = list.filter(p => { const last = lastVisits[p.id]; return !last || last < cutoff; });
+    }
     else if (sidebarSection.startsWith('tag:')) list = list.filter(p => p.category === sidebarSection.slice(4));
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -3088,7 +3118,7 @@ function App() {
       );
     }
     return list;
-  }, [ports, sidebarSection, searchQuery]);
+  }, [ports, sidebarSection, searchQuery, lastVisits]);
 
   const v3Running = useMemo(() => v3Ports.filter(p => p.isRunning), [v3Ports]);
   const v3Idle = useMemo(() => v3Ports.filter(p => !p.isRunning), [v3Ports]);
@@ -3139,7 +3169,7 @@ function App() {
     const btnBase: React.CSSProperties = {padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#ede7dd',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',fontSize:11};
 
     return (
-      <div key={item.id} className="group" style={{
+      <div key={item.id} data-help-key="card-body" className="group" style={{
         padding:12, background:'#1c1916',
         border:'1px solid rgba(255,240,220,0.07)',
         borderRadius:8, cursor:'pointer',
@@ -3180,7 +3210,7 @@ function App() {
         {/* Primary action strip — visible on hover */}
         <div className="opacity-0 group-hover:opacity-100 transition-opacity" style={{marginTop:2,display:'flex',gap:4}}>
           {item.port ? (
-            <button onClick={e=>{e.stopPropagation(); item.isRunning ? stopCommand(item) : executeCommand(item);}} style={{
+            <button data-help-key="card-run-stop" onClick={e=>{e.stopPropagation(); item.isRunning ? stopCommand(item) : executeCommand(item);}} style={{
               flex:1,padding:'5px 0',borderRadius:5,
               background:item.isRunning?'rgba(201,106,90,0.14)':'rgba(143,185,110,0.14)',
               color:item.isRunning?'#c96a5a':'#8fb96e',
@@ -3191,7 +3221,7 @@ function App() {
               {item.isRunning ? 'Stop' : 'Run'}
             </button>
           ) : (
-            <button onClick={e=>{e.stopPropagation(); item.folderPath && API.openFolder(item.folderPath).catch(()=>{});}} style={{
+            <button data-help-key="menu-open-folder" onClick={e=>{e.stopPropagation(); item.folderPath && API.openFolder(item.folderPath).catch(()=>{});}} style={{
               flex:1,padding:'5px 0',borderRadius:5,
               background:'rgba(232,165,87,0.14)', color:'#e8a557',
               border:'none',fontSize:11,fontWeight:600,cursor:'pointer',
@@ -3201,17 +3231,17 @@ function App() {
               폴더 열기
             </button>
           )}
-          <button onClick={e=>{e.stopPropagation(); openCmuxClaude(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`cmux Claude${bypassPermissions?' (bypass)':''} — Mac 전용`}><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡':'cmux'}</button>
-          <button onClick={e=>{e.stopPropagation(); openCmuxClaudeNew(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`cmux 새창${bypassPermissions?' (bypass)':''} — 기존 워크스페이스 닫고 새로 시작`}><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡↺':'cmux ↺'}</button>
-          <button onClick={e=>{e.stopPropagation(); toggleWorktreePanel(item.id, item.folderPath);}} style={{...btnBase, color:expandedWorktreeIds.has(item.id)?'#e8a557':'#ede7dd', borderColor:expandedWorktreeIds.has(item.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title="워크트리 관리">
+          <button data-help-key="card-cmux" onClick={e=>{e.stopPropagation(); openCmuxClaude(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`cmux Claude${bypassPermissions?' (bypass)':''} — Mac 전용`}><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡':'cmux'}</button>
+          <button data-help-key="card-cmux-new" onClick={e=>{e.stopPropagation(); openCmuxClaudeNew(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`cmux 새창${bypassPermissions?' (bypass)':''} — 기존 워크스페이스 닫고 새로 시작`}><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡↺':'cmux ↺'}</button>
+          <button data-help-key="card-worktree" onClick={e=>{e.stopPropagation(); toggleWorktreePanel(item.id, item.folderPath);}} style={{...btnBase, color:expandedWorktreeIds.has(item.id)?'#e8a557':'#ede7dd', borderColor:expandedWorktreeIds.has(item.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title="워크트리 관리">
             <GitBranch style={{width:11,height:11}}/>
           </button>
           {item.port && (
-            <button onClick={e=>{e.stopPropagation(); API.openInChrome(`http://localhost:${item.port}`).catch(()=>{});}} style={btnBase} title="Chrome에서 열기">
+            <button data-help-key="card-chrome" onClick={e=>{e.stopPropagation(); API.openInChrome(`http://localhost:${item.port}`).catch(()=>{});}} style={btnBase} title="Chrome에서 열기">
               <Globe style={{width:11,height:11}}/>
             </button>
           )}
-          <button onClick={e=>{e.stopPropagation(); if(menuOpen){setV3MenuOpenId(null);setV3MenuRect(null);}else{const r=e.currentTarget.getBoundingClientRect();setV3MenuOpenId(item.id);setV3MenuRect({top:r.bottom+4,right:window.innerWidth-r.right});}}} style={{...btnBase, color: menuOpen?'#e8a557':'#ede7dd', borderColor: menuOpen?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}}>
+          <button data-help-key="card-more-menu" onClick={e=>{e.stopPropagation(); if(menuOpen){setV3MenuOpenId(null);setV3MenuRect(null);}else{const r=e.currentTarget.getBoundingClientRect();const menuH=340;const spaceBelow=window.innerHeight-r.bottom;const top=spaceBelow<menuH?Math.max(8,r.top-menuH-4):r.bottom+4;setV3MenuOpenId(item.id);setV3MenuRect({top,right:window.innerWidth-r.right});}}} style={{...btnBase, color: menuOpen?'#e8a557':'#ede7dd', borderColor: menuOpen?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}}>
             <ChevronDown style={{width:11,height:11}}/>
           </button>
         </div>
@@ -3342,12 +3372,12 @@ function App() {
           <div style={{position:'fixed',inset:0,zIndex:9998}} onClick={()=>{setV3MenuOpenId(null);setV3MenuRect(null);}}/>
           <div style={{position:'fixed',top:v3MenuRect.top,right:v3MenuRect.right,zIndex:9999,background:'#221f1b',border:'1px solid rgba(255,240,220,0.12)',borderRadius:8,padding:'4px 0',boxShadow:'0 12px 32px rgba(0,0,0,0.7)',minWidth:165}}>
             {[
-              {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item), title:'프로세스 강제 종료 후 재실행'},
-              {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath), title:'Finder에서 프로젝트 폴더 열기'},
-              {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>{ API.openLog(item.id).catch(e=>showToast(`로그 열기 실패: ${e}`, 'error')); }, title:'tail -f 로그 보기 (iTerm)'},
-              {label:'cmux 터미널', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxTerminal(item), title:'cmux로 폴더 열기 (Claude 없이, macOS 전용)'},
-            ].map(({label,icon,action,title}:{label:string;icon:React.ReactNode;action:()=>void;title?:string}) => (
-              <button key={label} title={title} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
+              {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item), title:'프로세스 강제 종료 후 재실행', helpKey:'menu-force-restart'},
+              {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath), title:'Finder에서 프로젝트 폴더 열기', helpKey:'menu-open-folder'},
+              {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>{ API.openLog(item.id).catch(e=>showToast(`로그 열기 실패: ${e}`, 'error')); }, title:'tail -f 로그 보기 (iTerm)', helpKey:'menu-view-log'},
+              {label:'cmux 터미널', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxTerminal(item), title:'cmux로 폴더 열기 (Claude 없이, macOS 전용)', helpKey:'menu-cmux-terminal'},
+            ].map(({label,icon,action,title,helpKey}:{label:string;icon:React.ReactNode;action:()=>void;title?:string;helpKey:string}) => (
+              <button key={label} data-help-key={helpKey} title={title} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
                 display:'flex',alignItems:'center',gap:8,padding:'6px 12px',width:'100%',
                 background:'transparent',border:'none',cursor:'pointer',
                 fontSize:12,color:'#ede7dd',fontFamily:'inherit',textAlign:'left',
@@ -3362,13 +3392,13 @@ function App() {
               Claude {bypassPermissions ? '⚡bypass' : ''}
             </div>
             {[
-              {label:'Terminal Claude', icon:<Zap style={{width:11,height:11}}/>, action:()=>openTerminalClaude(item), title:`Terminal.app으로 Claude 실행${bypassPermissions ? ' — bypass 모드' : ''}`},
-              {label:'tmux', icon:<SquareTerminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item), title:`tmux 세션으로 Claude 실행 (Mac·Windows)${bypassPermissions ? ' — bypass 모드' : ''}`},
-              {label:'tmux ↺ 새창', icon:<SquareTerminal style={{width:11,height:11}}/>, action:()=>openTmuxClaudeNew(item), title:`기존 tmux 세션 삭제 후 새창으로 시작${bypassPermissions ? ' — bypass 모드' : ''}`},
-              {label:'cmux (Mac 전용)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxClaude(item), title:`cmux 앱으로 Claude 실행 (macOS 전용)${bypassPermissions ? ' — bypass 모드' : ''}`},
-              {label:'cmux ↺ 새창 (Mac 전용)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxClaudeNew(item), title:`cmux 새 워크스페이스를 프로젝트 경로로 열고 Claude 실행${bypassPermissions ? ' — bypass 모드' : ''}`},
-            ].map(({label,icon,action,title}) => (
-              <button key={label} title={title} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
+              {label:'Terminal Claude', icon:<Zap style={{width:11,height:11}}/>, action:()=>openTerminalClaude(item), title:`Terminal.app으로 Claude 실행${bypassPermissions ? ' — bypass 모드' : ''}`, helpKey:'menu-terminal-claude'},
+              {label:'tmux', icon:<SquareTerminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item), title:`tmux 세션으로 Claude 실행 (Mac·Windows)${bypassPermissions ? ' — bypass 모드' : ''}`, helpKey:'menu-tmux'},
+              {label:'tmux ↺ 새창', icon:<SquareTerminal style={{width:11,height:11}}/>, action:()=>openTmuxClaudeNew(item), title:`기존 tmux 세션 삭제 후 새창으로 시작${bypassPermissions ? ' — bypass 모드' : ''}`, helpKey:'menu-tmux-new'},
+              {label:'cmux (Mac 전용)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxClaude(item), title:`cmux 앱으로 Claude 실행 (macOS 전용)${bypassPermissions ? ' — bypass 모드' : ''}`, helpKey:'menu-cmux-mac'},
+              {label:'cmux ↺ 새창 (Mac 전용)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxClaudeNew(item), title:`cmux 새 워크스페이스를 프로젝트 경로로 열고 Claude 실행${bypassPermissions ? ' — bypass 모드' : ''}`, helpKey:'menu-cmux-mac-new'},
+            ].map(({label,icon,action,title,helpKey}) => (
+              <button key={label} data-help-key={helpKey} title={title} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
                 display:'flex',alignItems:'center',gap:8,padding:'6px 12px',width:'100%',
                 background:'transparent',border:'none',cursor:'pointer',
                 fontSize:12,color:bypassPermissions?'#c8a8f0':'#ede7dd',fontFamily:'inherit',textAlign:'left',
@@ -3380,10 +3410,10 @@ function App() {
             {/* 편집/삭제 섹션 */}
             <div style={{margin:'3px 8px',borderTop:'1px solid rgba(255,240,220,0.08)'}}/>
             {[
-              {label:'수정', icon:<Pencil style={{width:11,height:11}}/>, action:()=>startEdit(item)},
-              {label:'삭제', icon:<Trash2 style={{width:11,height:11}}/>, action:()=>setDeleteConfirmId(item.id), danger:true},
-            ].map(({label,icon,action,danger}:{label:string;icon:React.ReactNode;action:()=>void;danger?:boolean}) => (
-              <button key={label} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
+              {label:'수정', icon:<Pencil style={{width:11,height:11}}/>, action:()=>startEdit(item), helpKey:'menu-edit'},
+              {label:'삭제', icon:<Trash2 style={{width:11,height:11}}/>, action:()=>setDeleteConfirmId(item.id), danger:true, helpKey:'menu-delete'},
+            ].map(({label,icon,action,danger,helpKey}:{label:string;icon:React.ReactNode;action:()=>void;danger?:boolean;helpKey:string}) => (
+              <button key={label} data-help-key={helpKey} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
                 display:'flex',alignItems:'center',gap:8,padding:'6px 12px',width:'100%',
                 background:'transparent',border:'none',cursor:'pointer',
                 fontSize:12,color:danger?'#c96a5a':'#ede7dd',fontFamily:'inherit',textAlign:'left',
@@ -3899,6 +3929,7 @@ function App() {
             <div className="flex gap-1 rounded-xl p-1 w-fit" style={{background:'#1c1916',border:'1px solid rgba(255,240,220,0.07)'}}>
               {!isMobile && (
                 <button
+                  data-help-key="tab-ports"
                   onClick={() => setActiveTab('ports')}
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
                     activeTab === 'ports'
@@ -3915,6 +3946,7 @@ function App() {
                 </button>
               )}
               <button
+                data-help-key="tab-portal"
                 onClick={() => setActiveTab('portal')}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200"
                 style={{
@@ -3932,6 +3964,7 @@ function App() {
               <>
                 <div className="flex items-center rounded-lg border border-stone-800/40 overflow-hidden">
                   <button
+                    data-help-key="btn-portal-push"
                     onClick={() => portalActionsRef.current?.push()}
                     title="Supabase Push"
                     className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm border-r border-stone-800/40 transition-all flex items-center gap-1"
@@ -3940,6 +3973,7 @@ function App() {
                     <span className="text-xs font-medium">Push</span>
                   </button>
                   <button
+                    data-help-key="btn-portal-pull"
                     onClick={() => portalActionsRef.current?.pull()}
                     title="Supabase Pull"
                     className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm transition-all flex items-center gap-1"
@@ -3949,20 +3983,23 @@ function App() {
                   </button>
                 </div>
                 <button
+                  data-help-key="btn-portal-export"
                   onClick={() => portalActionsRef.current?.exportData()}
                   title="내보내기"
-                  className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
-                >
-                  <Download className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => portalActionsRef.current?.importData()}
-                  title="불러오기"
                   className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
                 >
                   <Upload className="w-4 h-4" />
                 </button>
                 <button
+                  data-help-key="btn-portal-import"
+                  onClick={() => portalActionsRef.current?.importData()}
+                  title="불러오기"
+                  className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
+                <button
+                  data-help-key="btn-portal-settings"
                   onClick={() => portalActionsRef.current?.openSettings()}
                   title="Supabase / 단말 설정"
                   className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
@@ -3975,26 +4012,27 @@ function App() {
             {/* 포트 탭 전용 액션 버튼 (글로벌 위치) */}
             {activeTab === 'ports' && (
               <>
-                <button onClick={handleExportPorts} title="내보내기" className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all">
-                  <Download className="w-4 h-4" />
-                </button>
-                <button onClick={handleImportPorts} title="불러오기" className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all">
+                <button data-help-key="btn-export-ports" onClick={handleExportPorts} title="내보내기" className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all">
                   <Upload className="w-4 h-4" />
                 </button>
-                <button onClick={handleRefresh} disabled={isRefreshing || isAiEnriching} title={isAiEnriching ? 'AI 분석 중…' : '새로고침'} className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                <button data-help-key="btn-import-ports" onClick={handleImportPorts} title="불러오기" className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all">
+                  <Download className="w-4 h-4" />
+                </button>
+                <button data-help-key="btn-refresh" onClick={handleRefresh} disabled={isRefreshing || isAiEnriching} title={isAiEnriching ? 'AI 분석 중…' : '새로고침'} className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
                   <RefreshCw className={`w-4 h-4 ${isRefreshing || isAiEnriching ? 'animate-spin' : ''}`} />
                 </button>
                 <div className="flex items-center rounded-xl border border-stone-800/40 overflow-hidden">
-                  <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm border-r border-stone-800/40 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <button data-help-key="btn-supabase-push" onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm border-r border-stone-800/40 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
                     <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
                     <span className="text-xs font-medium">Push</span>
                   </button>
-                  <button onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <button data-help-key="btn-supabase-pull" onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
                     <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
                     <span className="text-xs font-medium">Pull</span>
                   </button>
                 </div>
                 <button
+                  data-help-key="btn-history"
                   onClick={openPortsHistory}
                   title="Push 히스토리 / 복원"
                   className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
@@ -4002,6 +4040,7 @@ function App() {
                   <Clock className="w-4 h-4" />
                 </button>
                 <button
+                  data-help-key="btn-settings"
                   onClick={() => setOpenPortalSettings(true)}
                   title="Supabase / 단말 설정"
                   className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
@@ -4013,6 +4052,7 @@ function App() {
 
             {/* bypass 토글 */}
             <button
+              data-help-key="btn-bypass"
               onClick={() => { const v = !bypassPermissions; setBypassPermissions(v); localStorage.setItem('portmanager-bypassPermissions', String(v)); }}
               title={bypassPermissions ? 'Claude bypass 모드 ON — 클릭하여 일반 모드로 전환' : 'Claude 일반 모드 — 클릭하여 bypass 모드로 전환'}
               className={`px-2.5 py-1.5 text-xs rounded-xl border transition-all flex items-center gap-1.5 font-medium ${
@@ -4027,6 +4067,7 @@ function App() {
 
             {/* 설정 마법사 버튼 */}
             <button
+              data-help-key="btn-setup-wizard"
               onClick={() => setShowSetupWizard(true)}
               title="초기 설정 마법사"
               className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 text-xs rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all flex items-center gap-1"
@@ -4037,6 +4078,7 @@ function App() {
 
             {/* 로그 복사 버튼 */}
             <button
+              data-help-key="btn-copy-log"
               onClick={handleCopyLog}
               title="앱 오류 로그 클립보드 복사 (개선에 활용)"
               className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-xl border transition-all ${
@@ -4049,14 +4091,19 @@ function App() {
               <span>{logCopied ? '복사됨' : '로그'}</span>
             </button>
 
-            {/* 사용자 가이드 버튼 */}
+            {/* 가이드 모드 토글 */}
             <button
-              onClick={() => setShowGuideModal(true)}
-              title="사용자 가이드"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-xl border bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 border-stone-800/40 hover:border-stone-700/60 transition-all"
+              data-help-key="btn-guide-toggle"
+              onClick={() => setGuideMode(!guideMode)}
+              title={guideMode ? "가이드 모드 끄기" : "가이드 모드 켜기 — 아무 버튼 눌러서 설명 보기"}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-xl border transition-all ${
+                guideMode
+                  ? 'bg-amber-500 text-black border-amber-400 hover:bg-amber-400 font-semibold shadow-[0_0_12px_rgba(245,158,11,0.35)]'
+                  : 'bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 border-stone-800/40 hover:border-stone-700/60'
+              }`}
             >
               <BookOpen className="w-3.5 h-3.5" />
-              <span>가이드</span>
+              <span>{guideMode ? '가이드 ON' : '가이드'}</span>
             </button>
           </div>
         </div>
@@ -4143,163 +4190,8 @@ function App() {
           </div>
         )}
 
-        {/* 설정 마법사 오버레이 */}
-        {/* 사용자 가이드 모달 */}
-        {showGuideModal && (
-          <div className="fixed inset-0 z-[200] flex items-start justify-center" style={{background:'rgba(10,8,6,0.65)',backdropFilter:'blur(2px)',paddingTop:60}} onClick={() => setShowGuideModal(false)}>
-            <div style={{width:640,maxHeight:'calc(100vh - 100px)',background:'#1c1916',borderRadius:12,border:'1px solid rgba(255,240,220,0.12)',boxShadow:'0 24px 80px rgba(0,0,0,0.6)',overflow:'hidden',display:'flex',flexDirection:'column'}} onClick={e => e.stopPropagation()}>
-              {/* 헤더 */}
-              <div style={{padding:'14px 20px',display:'flex',alignItems:'center',gap:8,borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
-                <GitBranch className="w-3.5 h-3.5" style={{color:'#e8a557'}} />
-                <h2 style={{margin:0,fontSize:14,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>포트 관리기 사용자 가이드</h2>
-                <div style={{flex:1}}/>
-                <button onClick={() => setShowGuideModal(false)} style={{background:'transparent',border:'none',color:'#a39a8c',cursor:'pointer',padding:4,display:'flex',alignItems:'center'}}>
-                  <XIcon className="w-3.5 h-3.5" />
-                </button>
-              </div>
-              {/* 본문 */}
-              <div style={{overflow:'auto',padding:'16px 20px'}}>
-                <div style={{fontSize:12.5,color:'#a39a8c',marginBottom:14}}>
-                  처음 쓰는 분도 5분이면 핵심 기능을 모두 쓸 수 있습니다.
-                </div>
-
-                {/* GuideCards 2-col */}
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:18}}>
-                  {[
-                    {icon:<Server className="w-3 h-3"/>, tone:{bg:'rgba(232,165,87,0.12)',fg:'#e8a557'}, title:'프로젝트·폴더', desc:'.command 파일로 개발 서버 실행, 폴더 즐겨찾기 관리'},
-                    {icon:<BookMarked className="w-3 h-3"/>, tone:{bg:'rgba(123,167,201,0.14)',fg:'#7ba7c9'}, title:'포털', desc:'자주 쓰는 사이트·폴더를 카테고리별 북마크로 관리'},
-                  ].map(c => (
-                    <div key={c.title} style={{padding:'14px 16px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:9}}>
-                      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
-                        <div style={{width:26,height:26,borderRadius:6,background:c.tone.bg,color:c.tone.fg,display:'flex',alignItems:'center',justifyContent:'center'}}>{c.icon}</div>
-                        <div style={{fontSize:13,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>{c.title}</div>
-                      </div>
-                      <div style={{fontSize:11.5,color:'#a39a8c',lineHeight:1.5}}>{c.desc}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* 퀵스타트 */}
-                <div style={{display:'flex',alignItems:'center',gap:6,margin:'0 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>
-                  <span style={{width:20,height:20,borderRadius:5,background:'rgba(232,165,87,0.12)',color:'#e8a557',display:'inline-flex',alignItems:'center',justifyContent:'center'}}>
-                    <Play className="w-2.5 h-2.5"/>
-                  </span>
-                  퀵스타트
-                </div>
-                <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
-                  {[
-                    '브라우저: localhost:9000 접속 또는 CS_Manager.app 실행',
-                    'Finder에서 .command 파일을 앱 창으로 끌어다 놓기 → 포트·폴더 자동 감지',
-                    '프로젝트 카드의 ▶ 실행 버튼 클릭 → 우측 상단 초록 Toast 확인',
-                    '카드의 🟢 열기 버튼 → Chrome에서 localhost:포트 자동 오픈',
-                  ].map((line, i) => (
-                    <div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 10px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:6,fontSize:12}}>
-                      <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:'#e8a557',background:'rgba(232,165,87,0.12)',padding:'2px 7px',borderRadius:4,flexShrink:0}}>Step {i+1}</span>
-                      <span style={{flex:1,color:'#ede7dd'}}>{line}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* 프로젝트 카드 버튼 */}
-                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>프로젝트 카드 버튼</div>
-                <div style={{border:'1px solid rgba(255,240,220,0.07)',borderRadius:8,overflow:'hidden',background:'#15120f',marginBottom:16}}>
-                  {[
-                    ['▶ 실행', '.command 파일 실행, 로그 자동 저장'],
-                    ['■ 중지', 'SIGTERM → (응답 없으면) SIGKILL 자동 전환'],
-                    ['⟳ 강제 재실행', '모든 PID 즉시 종료 → 500ms 대기 → 재실행'],
-                    ['● 열기', 'Chrome에서 localhost:포트 오픈'],
-                    ['📁 폴더', 'Finder에서 프로젝트 폴더 열기'],
-                    ['📜 로그', 'Terminal에서 tail -f로 실시간 로그 확인'],
-                  ].map(([btn, desc], i) => (
-                    <div key={String(btn)} style={{display:'grid',gridTemplateColumns:'120px 1fr',gap:10,padding:'8px 12px',fontSize:12,borderTop:i===0?'none':'1px solid rgba(255,240,220,0.07)'}}>
-                      <span style={{color:'#e8a557',fontFamily:"'JetBrains Mono',monospace"}}>{btn}</span>
-                      <span style={{color:'#a39a8c'}}>{desc}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* 포털 탭 */}
-                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>포털 탭</div>
-                <div style={{fontSize:12,color:'#a39a8c',marginBottom:10}}>우측 상단 + 버튼 → URL 또는 폴더 경로 입력</div>
-                <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:16}}>
-                  {[
-                    {icon:<Star className="w-3 h-3"/>, tone:{bg:'rgba(232,165,87,0.12)',fg:'#e8a557'}, title:'핀 고정', desc:'카드 hover → 핀 아이콘 → 최상단 고정'},
-                    {icon:<RefreshCw className="w-3 h-3"/>, tone:{bg:'rgba(90,192,74,0.12)',fg:'#8fb96e'}, title:'기기 동기화', desc:'URL·카테고리는 전 기기 공유, 폴더는 기기별 관리'},
-                  ].map(c => (
-                    <div key={c.title} style={{padding:'10px 12px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:9}}>
-                      <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
-                        <div style={{width:26,height:26,borderRadius:6,background:c.tone.bg,color:c.tone.fg,display:'flex',alignItems:'center',justifyContent:'center'}}>{c.icon}</div>
-                        <div style={{fontSize:13,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>{c.title}</div>
-                      </div>
-                      <div style={{fontSize:11.5,color:'#a39a8c',lineHeight:1.5}}>{c.desc}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* 숨겨진 기능 */}
-                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>💎 이런 기능이 있었어? TOP 6</div>
-                <div style={{border:'1px solid rgba(255,240,220,0.07)',borderRadius:8,overflow:'hidden',background:'#15120f',marginBottom:16}}>
-                  {[
-                    ['Cmd+F', '프로젝트 검색창 즉시 포커스'],
-                    ['✨ AI 버튼', '전체 프로젝트 이름·카테고리 한 번에 자동 생성'],
-                    ['⚠ 강제 재실행', '좀비 프로세스 한 방에 정리'],
-                    ['📜 로그 버튼', 'Terminal 자동 오픈 + tail -f 실시간 확인'],
-                    ['JSON 내보내기', 'Supabase 없이 백업/복원 가능'],
-                    ['단말 조회', '설정 → 고급 설정 → 다른 맥의 포트 목록 Pull'],
-                  ].map(([feat, desc], i) => (
-                    <div key={String(feat)} style={{display:'grid',gridTemplateColumns:'120px 1fr',gap:10,padding:'8px 12px',fontSize:12,borderTop:i===0?'none':'1px solid rgba(255,240,220,0.07)'}}>
-                      <span style={{color:'#e8a557',fontFamily:"'JetBrains Mono',monospace"}}>{feat}</span>
-                      <span style={{color:'#a39a8c'}}>{desc}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* 북마크 웹버전 */}
-                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>🌍 북마크 웹버전</div>
-                <div style={{background:'rgba(232,165,87,0.06)',border:'1px solid rgba(232,165,87,0.2)',borderRadius:9,padding:'12px 14px',marginBottom:10,fontSize:12,color:'#ede7dd',lineHeight:1.6}}>
-                  포털 탭과 동일한 북마크 기능을 <span style={{color:'#e8a557',fontWeight:500}}>Vercel 배포 URL</span>로 제공합니다.<br/>
-                  회사 PC, 스마트폰, 어디서나 브라우저 하나로 내 북마크에 접근할 수 있습니다.
-                </div>
-                <div style={{border:'1px solid rgba(255,240,220,0.07)',borderRadius:8,overflow:'hidden',background:'#15120f',marginBottom:16}}>
-                  {[
-                    ['비밀번호 보호', '배포 시 환경변수로 설정 — 타인 접근 차단'],
-                    ['기기 선택', '첫 접속 시 Supabase 등록 기기 목록에서 선택'],
-                    ['자동 Pull', '접속하면 선택 기기의 북마크를 즉시 불러옴'],
-                    ['모바일 최적화', '스마트폰에서도 편하게 사용 가능'],
-                  ].map(([feat, desc], i) => (
-                    <div key={String(feat)} style={{display:'grid',gridTemplateColumns:'120px 1fr',gap:10,padding:'8px 12px',fontSize:12,borderTop:i===0?'none':'1px solid rgba(255,240,220,0.07)'}}>
-                      <span style={{color:'#e8a557',fontFamily:"'JetBrains Mono',monospace"}}>{feat}</span>
-                      <span style={{color:'#a39a8c'}}>{desc}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* 트러블슈팅 */}
-                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>🔧 자주 겪는 문제</div>
-                <div style={{display:'flex',flexDirection:'column',gap:6,marginBottom:16}}>
-                  {[
-                    ['서버가 안 켜져요', '카드의 ⚠ 강제 재실행 클릭'],
-                    ['Push/Pull이 안 눌려요', '⚙ 세팅에서 Supabase URL + anon key 확인'],
-                    ['포트 번호가 안 잡혀요', '.command 파일 안에 PORT=3000 또는 localhost:3000 포함 필요'],
-                    ['웹버전에 내 기기가 없어요', '세팅 → 기기 이름 확인 후 Device ID 직접 입력'],
-                  ].map(([q, a]) => (
-                    <div key={String(q)} style={{background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:8,padding:'10px 12px'}}>
-                      <div style={{fontSize:12,fontWeight:500,color:'#ede7dd',marginBottom:2}}>Q. {q}</div>
-                      <div style={{fontSize:12,color:'#a39a8c'}}>→ {a}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* 단축키 */}
-                <div style={{display:'flex',alignItems:'center',gap:6,margin:'16px 0 10px',fontSize:12,fontWeight:600,color:'#ede7dd'}}>⌨️ 단축키</div>
-                <div style={{display:'flex',gap:16,fontSize:12,color:'#a39a8c',marginBottom:8}}>
-                  <span><kbd style={{background:'#221f1b',color:'#ede7dd',padding:'2px 6px',borderRadius:4,fontSize:11,fontFamily:"'JetBrains Mono',monospace"}}>Cmd+F</kbd> 검색창 포커스</span>
-                  <span><kbd style={{background:'#221f1b',color:'#ede7dd',padding:'2px 6px',borderRadius:4,fontSize:11,fontFamily:"'JetBrains Mono',monospace"}}>Esc</kbd> 검색창 닫기</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* 가이드 모드 오버레이 (배너 + 클릭 인터셉터 + 툴팁) */}
+        <GuideOverlay guideMode={guideMode} setGuideMode={setGuideMode} />
 
         {/* 삭제 확인 모달 */}
         {deleteConfirmId && (() => {
@@ -4390,6 +4282,7 @@ function App() {
                 <div style={{position:'relative'}}>
                   <Search style={{position:'absolute',left:8,top:'50%',transform:'translateY(-50%)',width:12,height:12,color:'#6b6459'}} />
                   <input
+                    data-help-key="sidebar-search"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     placeholder="Search…"
@@ -4409,8 +4302,9 @@ function App() {
                 {id:'running',label:'Running now',  count: ports.filter((p:PortInfo)=>p.isRunning).length,      Icon: Play},
                 {id:'starred',label:'Starred',      count: ports.filter((p:PortInfo)=>p.favorite).length,       Icon: Star},
                 {id:'wt',     label:'Worktrees',    count: ports.filter((p:PortInfo)=>!!p.worktreePath).length, Icon: GitBranch},
+                {id:'stale',  label:'Stale',        count: (() => { const cutoff = Date.now() - 14*86400000; return ports.filter((p:PortInfo)=>{ const last = lastVisits[p.id]; return !last || last < cutoff; }).length; })(), Icon: Clock},
               ] as const).map(({id,label,count,Icon}) => (
-                <button key={id} onClick={() => setSidebarSection(id)} style={{
+                <button key={id} data-help-key={`sidebar-${id === 'wt' ? 'worktrees' : id}`} onClick={() => setSidebarSection(id)} style={{
                   display:'flex',alignItems:'center',gap:8,
                   padding:'6px 8px',margin:'0 4px',borderRadius:5,cursor:'pointer',
                   background: sidebarSection === id ? '#221f1b' : 'transparent',
@@ -4434,7 +4328,7 @@ function App() {
                       padding:'12px 12px 4px',fontSize:10,
                       fontFamily:'JetBrains Mono, monospace',
                       color:'#6b6459',textTransform:'uppercase' as const,letterSpacing:0.5,
-                    }}>Tags</div>
+                    }} data-help-key="sidebar-tags">Tags</div>
                     {tags.map((tag:string) => {
                       const n = ports.filter((p:PortInfo)=>p.category===tag).length;
                       const active = sidebarSection === `tag:${tag}`;
@@ -4460,6 +4354,7 @@ function App() {
               {/* Workspace Roots Panel — Vercel 배포에서는 숨김 */}
               {!isDeployedWeb() && <div style={{marginTop:'auto',borderTop:'1px solid rgba(255,240,220,0.07)'}}>
                 <button
+                  data-help-key="workspace-roots"
                   onClick={() => setWorkspaceRootsOpen(v => !v)}
                   style={{
                     display:'flex',alignItems:'center',gap:6,width:'100%',
@@ -4501,6 +4396,7 @@ function App() {
                             </span>
                           )}
                           <button
+                            data-help-key="workspace-new-folder"
                             onClick={() => { setActiveRootId(root.id); setShowNewProjectModal(true); }}
                             title="새 프로젝트 폴더"
                             style={{padding:'2px 6px',background:'rgba(232,165,87,0.1)',border:'1px solid rgba(232,165,87,0.2)',borderRadius:4,color:'#e8a557',cursor:'pointer',fontSize:10,fontFamily:'Inter Tight, system-ui, sans-serif',flexShrink:0}}
@@ -4518,6 +4414,7 @@ function App() {
                       );
                     })}
                     <button
+                      data-help-key="workspace-add-root"
                       onClick={handleAddWorkspaceRoot}
                       style={{
                         display:'flex',alignItems:'center',gap:5,
@@ -4542,52 +4439,54 @@ function App() {
                 display:'flex',alignItems:'center',gap:10,
                 borderBottom:'1px solid rgba(255,240,220,0.07)',
               }}>
-                <h1 style={{margin:0,fontSize:18,fontWeight:600,letterSpacing:-0.3,color:'#ede7dd'}}>
+                <h1 data-help-key="header-section-title" style={{margin:0,fontSize:18,fontWeight:600,letterSpacing:-0.3,color:'#ede7dd'}}>
                   {sidebarSection === 'all' ? 'All projects'
                     : sidebarSection === 'running' ? 'Running now'
                     : sidebarSection === 'starred' ? 'Starred'
                     : sidebarSection === 'wt' ? 'Worktrees'
+                    : sidebarSection === 'stale' ? 'Stale (2주+ 미접속)'
                     : sidebarSection.startsWith('tag:') ? sidebarSection.slice(4)
                     : 'All projects'}
                 </h1>
-                <span style={{fontSize:12,color:'#a39a8c'}}>{v3Ports.length} projects</span>
+                <span data-help-key="header-project-count" style={{fontSize:12,color:'#a39a8c'}}>{v3Ports.length} projects</span>
                 <div style={{flex:1}} />
-                <button onClick={handleExportPorts} title="내보내기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
-                  <Download style={{width:13,height:13}} />
-                </button>
-                <button onClick={handleImportPorts} title="불러오기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                <button data-help-key="btn-export-ports" onClick={handleExportPorts} title="내보내기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
                   <Upload style={{width:13,height:13}} />
                 </button>
-                <button onClick={handleRefresh} disabled={isRefreshing||isAiEnriching} title="새로고침" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                <button data-help-key="btn-import-ports" onClick={handleImportPorts} title="불러오기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                  <Download style={{width:13,height:13}} />
+                </button>
+                <button data-help-key="btn-refresh" onClick={handleRefresh} disabled={isRefreshing||isAiEnriching} title="새로고침" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
                   <RefreshCw style={{width:13,height:13}} className={isRefreshing||isAiEnriching ? 'animate-spin' : ''} />
                 </button>
-                <button onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
+                <button data-help-key="btn-supabase-push" onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
                   <CloudUpload style={{width:13,height:13}} className={isPushingPorts ? 'animate-pulse' : ''} />
                   Push
                 </button>
-                <button onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
+                <button data-help-key="btn-supabase-pull" onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
                   <CloudDownload style={{width:13,height:13}} className={isRestoring ? 'animate-pulse' : ''} />
                   Pull
                 </button>
-                <button onClick={() => setOpenPortalSettings(true)} title="설정" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                <button data-help-key="btn-settings" onClick={() => setOpenPortalSettings(true)} title="설정" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
                   <Settings style={{width:13,height:13}} />
                 </button>
-                <button onClick={openCmuxTerminalAtRoot} title="cmux 터미널로 작업 루트 열기 (macOS 전용)" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
+                <button data-help-key="header-cmux-root" onClick={openCmuxTerminalAtRoot} title="cmux 터미널로 작업 루트 열기 (macOS 전용)" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
                   <SquareTerminal style={{width:13,height:13}} />
                   cmux
                 </button>
                 {!isTauri() && !isDeployedWeb() && (
                   <>
-                    <button onClick={handleBuildApp} disabled={isBuilding} title="앱 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                    <button data-help-key="header-build-app" onClick={handleBuildApp} disabled={isBuilding} title="앱 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
                       <Terminal style={{width:13,height:13}} className={isBuilding && buildType==='app' ? 'animate-spin' : ''} />
                     </button>
-                    <button onClick={handleBuildDmg} disabled={isBuilding} title="DMG 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                    <button data-help-key="header-build-dmg" onClick={handleBuildDmg} disabled={isBuilding} title="DMG 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
                       <Package style={{width:13,height:13}} className={isBuilding && buildType==='dmg' ? 'animate-spin' : ''} />
                     </button>
                   </>
                 )}
                 {!isDeployedWeb() && (
                   <button
+                    data-help-key="header-new-project"
                     onClick={() => { setActiveRootId(workspaceRoots[0]?.id ?? null); setShowNewProjectModal(true); }}
                     style={{
                       padding:'5px 12px',background:'#e8a557',border:'none',borderRadius:5,
@@ -4606,7 +4505,7 @@ function App() {
               <div style={{flex:1,overflowY:'auto',padding:'16px 28px 28px'}}>
                 {v3Running.length > 0 && (
                   <div style={{marginBottom:24}}>
-                    <div style={{
+                    <div data-help-key="section-header-running" style={{
                       display:'flex',alignItems:'center',gap:6,marginBottom:10,
                       fontSize:11,fontFamily:'JetBrains Mono, monospace',
                       color:'#a39a8c',textTransform:'uppercase' as const,letterSpacing:0.5,
@@ -4622,7 +4521,7 @@ function App() {
 
                 {v3Idle.length > 0 && (
                   <div>
-                    <div style={{
+                    <div data-help-key="section-header-idle" style={{
                       display:'flex',alignItems:'center',gap:6,marginBottom:10,
                       fontSize:11,fontFamily:'JetBrains Mono, monospace',
                       color:'#a39a8c',textTransform:'uppercase' as const,letterSpacing:0.5,

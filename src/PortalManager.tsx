@@ -1134,7 +1134,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     }
     setIsRestoring(true);
     try {
-      const supabase = createClient(sbUrl, sbKey);
+      const supabase = getSupabaseClient(sbUrl, sbKey);
       const ownDeviceId = data.deviceId ?? getOrCreateDeviceId();
       const targetDeviceId = viewingDeviceId || ownDeviceId;
       const [itemsRes, catsRes] = await Promise.all([
@@ -1190,7 +1190,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     if (!sbUrl || !sbKey) { showToast('Supabase URL과 Key를 먼저 입력 후 저장하세요', 'error'); return; }
     setIsFetchingDevices(true);
     try {
-      const supabase = createClient(sbUrl, sbKey);
+      const supabase = getSupabaseClient(sbUrl, sbKey);
       const seen = new Set<string>();
       // device_id → device_name 맵 (여러 소스에서 보강)
       const nameMap = new Map<string, string>();
@@ -1290,7 +1290,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     if (id === data.deviceId) { showToast('내 기기는 삭제할 수 없습니다', 'error'); return; }
     setDeletingDeviceId(id);
     try {
-      const sb = createClient(sbUrl, sbKey);
+      const sb = getSupabaseClient(sbUrl, sbKey);
       const { error } = await sb.from('devices').delete().eq('id', id);
       if (error) throw error;
       setKnownDevices(prev => prev.filter(d => d.device_id !== id));
@@ -1376,6 +1376,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       <div className="hidden md:flex flex-col flex-shrink-0" style={{width:220,padding:'14px 10px',borderRight:'1px solid rgba(255,240,220,0.07)',background:'#1c1916',gap:2,overflow:'hidden'}}>
         {/* All */}
         <button
+          data-help-key="portal-sidebar-all"
           onClick={() => setSelectedCat('all')}
           style={{
             display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:6,cursor:'pointer',border:'none',
@@ -1394,7 +1395,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
           const count = data.items.filter(i => i.category === cat.id).length;
           const active = selectedCat === cat.id;
           return (
-            <div key={cat.id} className="group" style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:6,cursor:'pointer',background:active?'#221f1b':'transparent',color:active?'#ede7dd':'#a39a8c',fontSize:12.5}} onClick={() => setSelectedCat(cat.id)}>
+            <div key={cat.id} data-help-key="portal-sidebar-category" className="group" style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:6,cursor:'pointer',background:active?'#221f1b':'transparent',color:active?'#ede7dd':'#a39a8c',fontSize:12.5}} onClick={() => setSelectedCat(cat.id)}>
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${c.dot}`} />
               <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cat.name}</span>
               <span style={{fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace"}}>{count}</span>
@@ -1412,6 +1413,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
         {/* Add category */}
         <button
+          data-help-key="portal-add-category"
           onClick={() => setShowCatModal(true)}
           style={{marginTop:6,padding:'7px 10px',borderRadius:6,color:'#6b6459',fontSize:12,display:'flex',alignItems:'center',gap:8,cursor:'pointer',border:'1px dashed rgba(255,240,220,0.07)',background:'transparent',fontFamily:'inherit'}}
         >
@@ -1421,11 +1423,12 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
         {/* Sync status */}
         {data.lastSynced && (
-          <p style={{marginTop:'auto',padding:'6px 8px',fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace"}}>
+          <p data-help-key="portal-sync-status" style={{marginTop:'auto',padding:'6px 8px',fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace"}}>
             동기화: {new Date(data.lastSynced).toLocaleDateString('ko-KR')}
           </p>
         )}
         <button
+          data-help-key="portal-sidebar-history"
           onClick={openPortalHistory}
           style={{marginTop:data.lastSynced?2:4,padding:'7px 10px',borderRadius:6,color:'#6b6459',fontSize:12,display:'flex',alignItems:'center',gap:6,cursor:'pointer',border:'1px solid rgba(255,240,220,0.07)',background:'transparent',fontFamily:'inherit',width:'100%'}}
           title="Push 히스토리 / 복원"
@@ -1449,6 +1452,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
           <div style={{flex:'1 1 200px',position:'relative',minWidth:0}}>
             <Search className="w-3.5 h-3.5" style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'#6b6459'}} />
             <input
+              data-help-key="portal-search"
               type="text"
               placeholder="검색…"
               value={search}
@@ -1469,6 +1473,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             </div>
           )}
           <button
+            data-help-key="portal-add-item"
             onClick={() => openAddModal(selectedCat !== 'all' ? selectedCat : undefined)}
             style={{padding:'8px 14px',background:'#e8a557',color:'#15120f',border:'none',borderRadius:7,fontSize:12.5,fontWeight:600,cursor:'pointer',display:'inline-flex',alignItems:'center',gap:5,fontFamily:'inherit',flexShrink:0}}
           >
@@ -1819,6 +1824,7 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
 
   return (
     <div
+      data-help-key="portal-item-card"
       style={{
         padding:14, background:'#1c1916',
         border:`1px solid ${hovered ? 'rgba(255,240,220,0.12)' : 'rgba(255,240,220,0.07)'}`,
@@ -1867,6 +1873,7 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
           <span>{item.type === 'web' ? '열기' : '폴더'}</span>
         </button>
         <button
+          data-help-key="portal-pin-toggle"
           onClick={() => onTogglePin(item.id)}
           style={{padding:'5px 8px',borderRadius:5,background:item.pinned?'rgba(232,165,87,0.12)':'transparent',border:'1px solid rgba(255,240,220,0.07)',color:item.pinned?'#e8a557':'#6b6459',cursor:'pointer'}}
           title={item.pinned ? '고정 해제' : '고정'}
@@ -1874,12 +1881,14 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
           <Pin className="w-3 h-3" />
         </button>
         <button
+          data-help-key="menu-edit"
           onClick={() => onEdit(item)}
           style={{padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#6b6459',cursor:'pointer'}}
         >
           <Pencil className="w-3 h-3" />
         </button>
         <button
+          data-help-key="menu-delete"
           onClick={() => onDelete(item.id)}
           style={{padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#6b6459',cursor:'pointer'}}
         >

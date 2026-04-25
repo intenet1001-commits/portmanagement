@@ -44,3 +44,98 @@ body {
     padding-right: env(safe-area-inset-right);
   }
 }
+
+/* --- Guide Mode --- */
+/*
+ * Design principle: Calm baseline + strong hover.
+ *  • All marked elements get a quiet inset hint (1px inner ring, no bg, no pulse).
+ *  • The hover halo (rendered in GuideMode.tsx) is the single strong amber accent.
+ *  • Discoverability comes from the corner notch — a subtle triangle, not a pulsing dot.
+ * This keeps 60+ simultaneously-marked elements from screaming at the user.
+ */
+
+@keyframes guide-tip-in {
+  from {
+    transform: translateY(-3px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes guide-banner-pulse {
+  0%, 100% { opacity: 0.92; }
+  50%      { opacity: 1;    }
+}
+
+body.guide-mode-active {
+  padding-top: 36px; /* room for the top banner */
+}
+
+/* Calm baseline marker — subtle inner ring, no bg fill, no pulse */
+body.guide-mode-active [data-help-key] {
+  position: relative;
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.22);
+  border-radius: 6px;
+  cursor: help !important;
+  transition: box-shadow 0.15s ease;
+}
+
+/* Subtle corner notch in lieu of a pulsing dot — directional, never collides.
+ * `inherit` background means it never paints on top of an opacity:0 wrapper. */
+body.guide-mode-active [data-help-key]::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 5px 5px 0;
+  border-color: transparent rgba(245, 158, 11, 0.55) transparent transparent;
+  border-top-right-radius: 6px;
+  z-index: 9100;
+  pointer-events: none;
+}
+
+/* Text-only tags (titles, counters): notch is overkill — drop it, keep only a faint underline. */
+body.guide-mode-active h1[data-help-key],
+body.guide-mode-active h2[data-help-key],
+body.guide-mode-active h3[data-help-key],
+body.guide-mode-active span[data-help-key],
+body.guide-mode-active p[data-help-key] {
+  box-shadow: none;
+  border-bottom: 1px dashed rgba(245, 158, 11, 0.35);
+  border-radius: 0;
+  padding-bottom: 1px;
+}
+body.guide-mode-active h1[data-help-key]::after,
+body.guide-mode-active h2[data-help-key]::after,
+body.guide-mode-active h3[data-help-key]::after,
+body.guide-mode-active span[data-help-key]::after,
+body.guide-mode-active p[data-help-key]::after {
+  content: none;
+}
+
+/* Inputs/textareas: same calm inset, no harsh outline conflict */
+body.guide-mode-active input[data-help-key],
+body.guide-mode-active textarea[data-help-key] {
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.3);
+}
+
+/* Force-show hover-only action strips so users can SEE the buttons they're learning about.
+ * Targets wrappers like `<div class="opacity-0 group-hover:opacity-100">` that contain
+ * any [data-help-key] children. Without this, card action buttons stay invisible until
+ * the user hovers the parent card, defeating the purpose of guide mode. */
+body.guide-mode-active .opacity-0:has([data-help-key]),
+body.guide-mode-active .group-hover\:opacity-100:has([data-help-key]) {
+  opacity: 1 !important;
+  transition: none !important;
+}
+
+/* Banner gets a gentle breathing animation instead of every button pulsing */
+body.guide-mode-active .guide-mode-banner {
+  animation: guide-banner-pulse 2.4s ease-in-out infinite;
+}
