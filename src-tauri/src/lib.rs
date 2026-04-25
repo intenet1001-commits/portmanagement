@@ -1188,16 +1188,7 @@ fn open_tmux_claude_bypass(session_name: String, folder_path: Option<String>, wo
         } else {
             format!("printf '\\033]0;{}\\007'; tmux new-session -d -s '{}-bypass' -n '{}' \"zsh -l -c 'claude --dangerously-skip-permissions'\" 2>/dev/null || true; tmux set-option -g set-titles on 2>/dev/null; tmux set-option -g set-titles-string '#W' 2>/dev/null; tmux set-window-option -t '{}-bypass' automatic-rename off 2>/dev/null; tmux rename-window -t '{}-bypass' '{}' 2>/dev/null; tmux attach-session -t '{}-bypass'", esc_title_sq, esc_session, esc_display, esc_session, esc_session, esc_display, esc_session)
         };
-        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
-        let script = format!(
-            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 2.0\n    set name to \"{}\"\n  end tell\nend tell",
-            escaped, escaped_title
-        );
-        Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .spawn()
-            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+        open_iterm_with_script(&cmd)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -1261,16 +1252,7 @@ fn open_terminal_claude_bypass(folder_path: Option<String>, name: Option<String>
         } else {
             format!("printf '\\033]0;{}\\007' && claude --dangerously-skip-permissions", esc_title_sq)
         };
-        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
-        let script = format!(
-            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 2.0\n    set name to \"{}\"\n  end tell\nend tell",
-            escaped, escaped_name
-        );
-        Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .spawn()
-            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+        open_iterm_with_script(&cmd)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -1301,16 +1283,7 @@ fn open_terminal_claude(folder_path: Option<String>, name: Option<String>, workt
         } else {
             format!("printf '\\033]0;{}\\007' && claude", esc_title_sq)
         };
-        let escaped = cmd.replace('\\', "\\\\").replace('"', "\\\"");
-        let script = format!(
-            "tell application \"iTerm\"\n  activate\n  set newWindow to create window with default profile\n  tell current session of newWindow\n    write text \"{}\"\n    delay 2.0\n    set name to \"{}\"\n  end tell\nend tell",
-            escaped, escaped_name
-        );
-        Command::new("osascript")
-            .arg("-e")
-            .arg(&script)
-            .spawn()
-            .map_err(|e| format!("Failed to open iTerm: {}", e))?;
+        open_iterm_with_script(&cmd)?;
     }
 
     #[cfg(target_os = "windows")]
@@ -1859,6 +1832,160 @@ fn suggest_names_batch(ports: Vec<serde_json::Value>) -> Result<serde_json::Valu
     Err(format!("JSON 파싱 실패 (raw='{}')", &raw[..raw.len().min(300)]))
 }
 
+// ──────────────────── cmux (Mac-only terminal multiplexer) ────────────────────
+// cmux invocation lives in Rust because the Bun api-server's long-running
+// Bun.serve handler context degrades cmux subprocess calls over time
+// (Broken pipe on every cmux ping after a few minutes), while identical calls
+// from any other context — shell, nohup bash, standalone bun — remain reliable.
+
+fn resolve_cmux_cli() -> Option<String> {
+    use std::path::Path;
+    if Path::new("/Applications/cmux.app/Contents/Resources/bin/cmux").exists() {
+        return Some("/Applications/cmux.app/Contents/Resources/bin/cmux".into());
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let home_app = format!("{}/Applications/cmux.app/Contents/Resources/bin/cmux", home.to_string_lossy());
+        if Path::new(&home_app).exists() { return Some(home_app); }
+    }
+    if Path::new("/opt/homebrew/bin/cmux").exists() {
+        return Some("/opt/homebrew/bin/cmux".into());
+    }
+    None
+}
+
+fn wait_cmux_ready(cli: &str, total: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + total;
+    while std::time::Instant::now() < deadline {
+        if Command::new(cli).arg("ping").output().map(|o| o.status.success()).unwrap_or(false) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    false
+}
+
+fn cmux_send_with_retry(cli: &str, payload: &str) -> Result<(), String> {
+    let mut last_err = String::new();
+    for attempt in 0..3 {
+        let out = Command::new(cli).args(["send", payload]).output()
+            .map_err(|e| format!("cmux send spawn 실패: {}", e))?;
+        if out.status.success() { return Ok(()); }
+        last_err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        if !last_err.contains("Broken pipe") && !last_err.contains("errno 32") { break; }
+        if attempt < 2 { std::thread::sleep(std::time::Duration::from_millis(300)); }
+    }
+    Err(format!("cmux send 실패: {}", if last_err.is_empty() { "unknown".into() } else { last_err }))
+}
+
+fn cmux_install_error() -> String {
+    "cmux가 설치되지 않았습니다.\n설치: brew tap manaflow-ai/cmux && brew install --cask cmux".to_string()
+}
+
+fn first_worktree(worktree_path: &Option<String>) -> Option<String> {
+    worktree_path.as_deref()
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+#[tauri::command]
+fn open_cmux_claude(name: String, folder_path: Option<String>, worktree_path: Option<String>, bypass: bool) -> Result<String, String> {
+    if cfg!(windows) { return Err("cmux는 맥에서만 가능합니다".into()); }
+
+    let cd_path = first_worktree(&worktree_path)
+        .or(folder_path)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "프로젝트 경로가 없습니다.".to_string())?;
+
+    let cli = resolve_cmux_cli().ok_or_else(cmux_install_error)?;
+    let _ = Command::new("open").args(["-a", "cmux"]).status();
+
+    if !wait_cmux_ready(&cli, std::time::Duration::from_secs(5)) {
+        return Err(cmux_access_help_msg("cmux 소켓 준비 대기 시간 초과 (5초)"));
+    }
+
+    let claude_cli = if bypass { "claude --dangerously-skip-permissions" } else { "claude" };
+    // Atomic: create a fresh workspace at the project path and run claude there.
+    // Title format mirrors tmux (build_window_title): "⚡️ project › worktree" (bypass) or "🔷 project › worktree".
+    let title = build_window_title(&name, worktree_path.as_deref(), true, bypass, false);
+    let out = Command::new(&cli)
+        .args(["new-workspace", "--cwd", &cd_path, "--command", claude_cli, "--name", &title])
+        .output()
+        .map_err(|e| format!("cmux new-workspace 실행 실패: {}", e))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(cmux_access_help_msg(&format!("cmux new-workspace 실패: {}", stderr)));
+    }
+    Ok(format!("cmux Claude{} 실행 중", if bypass { " bypass" } else { "" }))
+}
+
+#[tauri::command]
+fn open_cmux_claude_new(name: String, folder_path: Option<String>, worktree_path: Option<String>, bypass: bool) -> Result<String, String> {
+    if cfg!(windows) { return Err("cmux는 맥에서만 가능합니다".into()); }
+
+    let cd_path = first_worktree(&worktree_path)
+        .or(folder_path)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "프로젝트 경로가 없습니다.".to_string())?;
+
+    let cli = resolve_cmux_cli().ok_or_else(cmux_install_error)?;
+    let _ = Command::new("open").args(["-a", "cmux"]).status();
+
+    if !wait_cmux_ready(&cli, std::time::Duration::from_secs(5)) {
+        return Err(cmux_access_help_msg("cmux 소켓 준비 대기 시간 초과 (5초)"));
+    }
+
+    let claude_cli = if bypass { "claude --dangerously-skip-permissions" } else { "claude" };
+    // is_fresh=true distinguishes the "↺ 새창" button from the regular one.
+    let title = build_window_title(&name, worktree_path.as_deref(), true, bypass, true);
+    let out = Command::new(&cli)
+        .args(["new-workspace", "--cwd", &cd_path, "--command", claude_cli, "--name", &title])
+        .output()
+        .map_err(|e| format!("cmux new-workspace 실행 실패: {}", e))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(cmux_access_help_msg(&format!("cmux new-workspace 실패: {}", stderr)));
+    }
+    Ok(format!("cmux 새창{} 시작 ↺", if bypass { " bypass" } else { "" }))
+}
+
+#[tauri::command]
+fn open_cmux_terminal(name: String, folder_path: Option<String>) -> Result<String, String> {
+    if cfg!(windows) { return Err("cmux는 맥에서만 가능합니다".into()); }
+
+    // Empty/missing path → fall back to $HOME (root area).
+    let cd_path = folder_path
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| std::env::var("HOME").ok())
+        .unwrap_or_else(|| "/".into());
+
+    let cli = resolve_cmux_cli().ok_or_else(cmux_install_error)?;
+    let _ = Command::new("open").args(["-a", "cmux"]).status();
+
+    if !wait_cmux_ready(&cli, std::time::Duration::from_secs(5)) {
+        return Err(cmux_access_help_msg("cmux 소켓 준비 대기 시간 초과 (5초)"));
+    }
+
+    let title = format!("🪟 {}", name);
+    let out = Command::new(&cli)
+        .args(["new-workspace", "--cwd", &cd_path, "--name", &title])
+        .output()
+        .map_err(|e| format!("cmux new-workspace 실행 실패: {}", e))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(cmux_access_help_msg(&format!("cmux new-workspace 실패: {}", stderr)));
+    }
+    Ok("cmux 터미널 열림".into())
+}
+
+/// If the error pattern suggests access denied (cmuxOnly mode), append guidance.
+fn cmux_access_help_msg(base: &str) -> String {
+    format!(
+        "{}\n\n💡 cmux 설정 확인: cmux 메뉴 → Settings → Socket Control → \"Allow All\"로 변경 후 재시도하세요. (현재 cmuxOnly 모드는 외부 앱의 호출을 차단)",
+        base
+    )
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -1904,6 +2031,9 @@ pub fn run() {
         create_folder,
         suggest_name,
         suggest_names_batch,
+        open_cmux_claude,
+        open_cmux_claude_new,
+        open_cmux_terminal,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())

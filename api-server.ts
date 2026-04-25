@@ -55,6 +55,88 @@ function winToWslPath(winPath: string): string {
 
 const { spawnSync: nodeSpawnSync } = require('child_process');
 
+// ──────────────── cmux helpers (browser/web fallback path) ────────────────
+// Tauri app uses Rust commands directly (src-tauri/src/lib.rs). For browser/
+// localhost mode, we keep these helpers but use Node's child_process to
+// sidestep the Bun.spawn degradation observed in long-running Bun.serve.
+
+function resolveCmuxCli(): string | null {
+  const bundled = '/Applications/cmux.app/Contents/Resources/bin/cmux';
+  const homeBundled = `${homedir()}/Applications/cmux.app/Contents/Resources/bin/cmux`;
+  const homebrew = '/opt/homebrew/bin/cmux';
+  if (existsSync(bundled)) return bundled;
+  if (existsSync(homeBundled)) return homeBundled;
+  if (existsSync(homebrew)) return homebrew;
+  return null;
+}
+
+function cmuxAppExists(): boolean {
+  return existsSync('/Applications/cmux.app') || existsSync(`${homedir()}/Applications/cmux.app`);
+}
+
+/** Invoke cmux via `osascript do shell script` with a CLEANED env (no CMUX_*
+ *  vars inherited from the api-server's parent shell) — Bun.serve's long-running
+ *  process tree exhibits a degradation where cmux subprocess calls start
+ *  failing with broken pipe after some time, even via bash/Node child_process.
+ *  Using osascript routes through macOS's AppleScript engine (fully detached
+ *  from Bun's subprocess state) and stripping CMUX_* prevents the daemon from
+ *  treating the call as a stale-pane request. */
+function nodeCmuxRun(cli: string, args: string[]): { ok: boolean; stderr: string; stdout: string } {
+  const escape = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const shellEscape = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+  const shellCmd = `${shellEscape(cli)} ${args.map(shellEscape).join(' ')}`;
+  const appleScript = `do shell script "${escape(shellCmd)}"`;
+  // Strip CMUX_* env vars — they reference panes that may not match the call context.
+  const cleanEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (!k.startsWith('CMUX_') && v !== undefined) cleanEnv[k] = v;
+  }
+  const r = nodeSpawnSync('osascript', ['-e', appleScript], {
+    encoding: 'utf-8',
+    timeout: 8000,
+    env: cleanEnv,
+  });
+  return {
+    ok: r.status === 0,
+    stderr: (r.stderr ?? '').toString().trim(),
+    stdout: (r.stdout ?? '').toString().trim(),
+  };
+}
+
+async function waitCmuxReadyNode(cli: string, totalMs = 5000): Promise<boolean> {
+  const deadline = Date.now() + totalMs;
+  while (Date.now() < deadline) {
+    if (nodeCmuxRun(cli, ['ping']).ok) return true;
+    await new Promise(res => setTimeout(res, 250));
+  }
+  return false;
+}
+
+/** Build the cmux workspace tab title — mirrors Rust `build_window_title` for the
+ *  is_tmux=true / cmux flow: "⚡️ project › worktree" (bypass) or "🔷 project › worktree". */
+function buildCmuxTitle(name: string, worktreePath: string | undefined, bypass: boolean): string {
+  const wtBase = (worktreePath ?? '').split(',')[0]?.trim().split('/').pop() ?? '';
+  const base = wtBase ? `${name} › ${wtBase}` : name;
+  const prefix = bypass ? '⚡️ ' : '🔷 ';
+  return prefix + base;
+}
+
+function cmuxAccessHelp(base: string): string {
+  return `${base}\n\n💡 cmux 설정 확인: cmux 메뉴 → Settings → Socket Control → "Allow All"로 변경 후 재시도하세요. (현재 cmuxOnly 모드는 외부 앱의 호출을 차단)`;
+}
+
+async function cmuxSendNodeWithRetry(cli: string, payload: string): Promise<{ ok: boolean; stderr: string }> {
+  let lastErr = '';
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = nodeCmuxRun(cli, ['send', payload]);
+    if (r.ok) return { ok: true, stderr: '' };
+    lastErr = r.stderr;
+    if (!/Broken pipe|errno 32/i.test(lastErr)) break;
+    if (attempt < 2) await new Promise(res => setTimeout(res, 300));
+  }
+  return { ok: false, stderr: lastErr || 'unknown' };
+}
+
 /** WSL distro 목록 캐시 */
 let _cachedDistros: string[] | null = null;
 
@@ -1232,82 +1314,92 @@ end try`;
       }
     }
 
+    // cmux endpoints — used by browser/localhost mode; Tauri app prefers
+    // invoke('open_cmux_claude') / invoke('open_cmux_claude_new') in Rust
+    // (see src-tauri/src/lib.rs). These HTTP fallbacks use Node's
+    // child_process to avoid the Bun.spawn degradation in long-running Bun.serve.
     if (url.pathname === "/api/open-cmux-claude" && req.method === "POST") {
       if (IS_WIN) return new Response(JSON.stringify({ error: 'cmux는 맥에서만 가능합니다' }), { status: 400, headers });
       try {
-        const { folderPath, name, worktreePath, bypass = true } = await req.json();
+        const { folderPath, worktreePath, bypass = true, name = '' } = await req.json();
         const cdPath = (worktreePath ? worktreePath.split(',')[0].trim() : null) || folderPath;
+        if (!cdPath) {
+          return new Response(JSON.stringify({ success: false, error: '프로젝트 경로가 없습니다.' }), { status: 400, headers });
+        }
         const claudeCli = bypass ? 'claude --dangerously-skip-permissions' : 'claude';
-        const cmd = cdPath ? `cd '${escapeSq(cdPath)}' && ${claudeCli}` : claudeCli;
+        const title = buildCmuxTitle(name || 'claude', worktreePath, bypass);
 
-        // cmux 설치 확인: 앱 또는 CLI 중 하나라도 있으면 설치된 것으로 판단
-        const appExists = existsSync('/Applications/cmux.app') || existsSync(`${homedir()}/Applications/cmux.app`);
-        const cmuxCliWhich = Bun.spawnSync(['which', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
-        const cliPath = cmuxCliWhich.exitCode === 0
-          ? new TextDecoder().decode(cmuxCliWhich.stdout).trim()
-          : (existsSync('/opt/homebrew/bin/cmux') ? '/opt/homebrew/bin/cmux' : null);
-        if (!appExists && !cliPath) {
+        const cli = resolveCmuxCli();
+        if (!cli && !cmuxAppExists()) {
           return new Response(JSON.stringify({ error: 'cmux가 설치되지 않았습니다.\n설치: brew tap manaflow-ai/cmux && brew install --cask cmux' }), { status: 400, headers });
         }
-
-        // cmux가 이미 실행 중인지 확인
-        const runningCheck = Bun.spawnSync(['pgrep', '-x', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
-        const alreadyRunning = runningCheck.exitCode === 0;
-
-        // 앱이 있으면 open -a로 포커스, 없으면 CLI만으로 진행
-        if (appExists) Bun.spawn(['open', '-a', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
-
-        // 이미 실행 중이면 짧게, 새로 시작이면 길게 대기
-        await new Promise(r => setTimeout(r, alreadyRunning ? 400 : 3000));
-
-        // cmux CLI로 명령 전송 (Broken pipe 시 1회 재시도)
-        const cmuxCli = cliPath ?? 'cmux';
-        let sendProc = Bun.spawnSync([cmuxCli, 'send', cmd + '\n'], { stdout: 'pipe', stderr: 'pipe' });
-        if (sendProc.exitCode !== 0) {
-          const errMsg = new TextDecoder().decode(sendProc.stderr).trim();
-          devLog('cmux send error (1st try):', errMsg);
-          // Broken pipe — 소켓 초기화 대기 후 재시도
-          await new Promise(r => setTimeout(r, 1500));
-          sendProc = Bun.spawnSync([cmuxCli, 'send', cmd + '\n'], { stdout: 'pipe', stderr: 'pipe' });
-          if (sendProc.exitCode !== 0) {
-            const err = new TextDecoder().decode(sendProc.stderr).trim();
-            return new Response(JSON.stringify({ success: false, error: `cmux 명령 전송 실패: ${err || 'unknown error'}` }), { status: 500, headers });
-          }
+        if (cmuxAppExists()) nodeSpawnSync('open', ['-a', 'cmux'], { stdio: 'pipe' });
+        const cliPath = cli ?? 'cmux';
+        if (!(await waitCmuxReadyNode(cliPath))) {
+          return new Response(JSON.stringify({ success: false, error: cmuxAccessHelp('cmux 소켓 준비 대기 시간 초과 (5초)') }), { status: 500, headers });
         }
-
+        const ws = nodeCmuxRun(cliPath, ['new-workspace', '--cwd', cdPath, '--command', claudeCli, '--name', title]);
+        if (!ws.ok) {
+          return new Response(JSON.stringify({ success: false, error: cmuxAccessHelp(`cmux new-workspace 실패: ${ws.stderr || 'unknown'}`) }), { status: 500, headers });
+        }
         return new Response(JSON.stringify({ success: true, message: `cmux Claude${bypass ? ' bypass' : ''} 실행 중` }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
     }
 
-    if (url.pathname === "/api/open-cmux-clear" && req.method === "POST") {
+    if (url.pathname === "/api/open-cmux-claude-new" && req.method === "POST") {
       if (IS_WIN) return new Response(JSON.stringify({ error: 'cmux는 맥에서만 가능합니다' }), { status: 400, headers });
       try {
-        const appExists = existsSync('/Applications/cmux.app') || existsSync(`${homedir()}/Applications/cmux.app`);
-        const cmuxCliWhich = Bun.spawnSync(['which', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
-        const cliPath = cmuxCliWhich.exitCode === 0
-          ? new TextDecoder().decode(cmuxCliWhich.stdout).trim()
-          : (existsSync('/opt/homebrew/bin/cmux') ? '/opt/homebrew/bin/cmux' : null);
-        if (!appExists && !cliPath) {
+        const { folderPath, worktreePath, bypass = true, name = '' } = await req.json();
+        const cdPath = (worktreePath ? worktreePath.split(',')[0].trim() : null) || folderPath;
+        if (!cdPath) {
+          return new Response(JSON.stringify({ success: false, error: '프로젝트 경로가 없습니다.' }), { status: 400, headers });
+        }
+        const claudeCli = bypass ? 'claude --dangerously-skip-permissions' : 'claude';
+        const title = buildCmuxTitle(name || 'claude', worktreePath, bypass);
+
+        const cli = resolveCmuxCli();
+        if (!cli && !cmuxAppExists()) {
           return new Response(JSON.stringify({ error: 'cmux가 설치되지 않았습니다.\n설치: brew tap manaflow-ai/cmux && brew install --cask cmux' }), { status: 400, headers });
         }
-        const runningCheck = Bun.spawnSync(['pgrep', '-x', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
-        const alreadyRunning = runningCheck.exitCode === 0;
-        if (appExists) Bun.spawn(['open', '-a', 'cmux'], { stdout: 'pipe', stderr: 'pipe' });
-        await new Promise(r => setTimeout(r, alreadyRunning ? 400 : 3000));
-        const cmuxCli = cliPath ?? 'cmux';
-        let clearProc = Bun.spawnSync([cmuxCli, 'send', '/clear\n'], { stdout: 'pipe', stderr: 'pipe' });
-        if (clearProc.exitCode !== 0) {
-          devLog('cmux clear error (1st try):', new TextDecoder().decode(clearProc.stderr).trim());
-          await new Promise(r => setTimeout(r, 1500));
-          clearProc = Bun.spawnSync([cmuxCli, 'send', '/clear\n'], { stdout: 'pipe', stderr: 'pipe' });
-          if (clearProc.exitCode !== 0) {
-            const err = new TextDecoder().decode(clearProc.stderr).trim();
-            return new Response(JSON.stringify({ success: false, error: `cmux /clear 실패: ${err || 'unknown error'}` }), { status: 500, headers });
-          }
+        if (cmuxAppExists()) nodeSpawnSync('open', ['-a', 'cmux'], { stdio: 'pipe' });
+        const cliPath = cli ?? 'cmux';
+        if (!(await waitCmuxReadyNode(cliPath))) {
+          return new Response(JSON.stringify({ success: false, error: cmuxAccessHelp('cmux 소켓 준비 대기 시간 초과 (5초)') }), { status: 500, headers });
         }
-        return new Response(JSON.stringify({ success: true, message: 'cmux /clear 전송 완료' }), { headers });
+        const ws = nodeCmuxRun(cliPath, ['new-workspace', '--cwd', cdPath, '--command', claudeCli, '--name', title]);
+        if (!ws.ok) {
+          return new Response(JSON.stringify({ success: false, error: cmuxAccessHelp(`cmux new-workspace 실패: ${ws.stderr || 'unknown'}`) }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true, message: `cmux 새창${bypass ? ' bypass' : ''} 시작 ↺` }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
+      }
+    }
+
+    if (url.pathname === "/api/open-cmux-terminal" && req.method === "POST") {
+      if (IS_WIN) return new Response(JSON.stringify({ error: 'cmux는 맥에서만 가능합니다' }), { status: 400, headers });
+      try {
+        const { folderPath, name = '' } = await req.json();
+        // Empty/missing path → fall back to $HOME (root area).
+        const cdPath = (folderPath && String(folderPath).trim()) || homedir() || '/';
+        const cli = resolveCmuxCli();
+        if (!cli && !cmuxAppExists()) {
+          return new Response(JSON.stringify({ error: 'cmux가 설치되지 않았습니다.\n설치: brew tap manaflow-ai/cmux && brew install --cask cmux' }), { status: 400, headers });
+        }
+        if (cmuxAppExists()) nodeSpawnSync('open', ['-a', 'cmux'], { stdio: 'pipe' });
+        const cliPath = cli ?? 'cmux';
+        if (!(await waitCmuxReadyNode(cliPath))) {
+          return new Response(JSON.stringify({ success: false, error: cmuxAccessHelp('cmux 소켓 준비 대기 시간 초과 (5초)') }), { status: 500, headers });
+        }
+        const baseName = (name && String(name).trim()) || cdPath.split('/').filter(Boolean).pop() || 'terminal';
+        const title = `🪟 ${baseName}`;
+        const ws = nodeCmuxRun(cliPath, ['new-workspace', '--cwd', cdPath, '--name', title]);
+        if (!ws.ok) {
+          return new Response(JSON.stringify({ success: false, error: cmuxAccessHelp(`cmux new-workspace 실패: ${ws.stderr || 'unknown'}`) }), { status: 500, headers });
+        }
+        return new Response(JSON.stringify({ success: true, message: 'cmux 터미널 열림' }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
@@ -1353,14 +1445,6 @@ end try`;
       } catch (error: any) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
       }
-    }
-
-    if (url.pathname === "/api/check-cmux" && req.method === "GET") {
-      if (IS_WIN) return new Response(JSON.stringify({ installed: false, reason: 'windows' }), { headers });
-      const appExists = existsSync('/Applications/cmux.app') || existsSync(`${homedir()}/Applications/cmux.app`);
-      const cliExists = Bun.spawnSync(['which', 'cmux'], { stdout: 'pipe', stderr: 'pipe' }).exitCode === 0
-        || existsSync('/opt/homebrew/bin/cmux');
-      return new Response(JSON.stringify({ installed: appExists || cliExists, app: appExists, cli: cliExists }), { headers });
     }
 
     if (url.pathname === "/api/check-wsl" && req.method === "GET") {
