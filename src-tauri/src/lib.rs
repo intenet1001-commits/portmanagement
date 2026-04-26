@@ -1,6 +1,6 @@
 use std::fs;
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tauri::{State, Manager};
@@ -2050,6 +2050,9 @@ fn set_global_shortcut(app: tauri::AppHandle, shortcut: String, old_shortcut: St
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  let window_visible = Arc::new(Mutex::new(true));
+  let vis_shortcut = Arc::clone(&window_visible);
+  let vis_close = Arc::clone(&window_visible);
   tauri::Builder::default()
     .manage(AppState {
         processes: Mutex::new(HashMap::new()),
@@ -2106,12 +2109,19 @@ pub fn run() {
     .plugin(tauri_plugin_process::init())
     .plugin(
       tauri_plugin_global_shortcut::Builder::new()
-        .with_handler(|app_handle, _shortcut, event| {
+        .with_handler(move |app_handle, _shortcut, event| {
           if event.state() == ShortcutState::Pressed {
             if let Some(window) = app_handle.get_webview_window("main") {
-              let _ = window.show();
-              let _ = window.unminimize();
-              let _ = window.set_focus();
+              let mut vis = vis_shortcut.lock().unwrap();
+              if *vis {
+                let _ = window.hide();
+                *vis = false;
+              } else {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                *vis = true;
+              }
             }
           }
         })
@@ -2132,6 +2142,7 @@ pub fn run() {
           if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
             let _ = win.hide();
+            *vis_close.lock().unwrap() = false;
           }
         });
       }
