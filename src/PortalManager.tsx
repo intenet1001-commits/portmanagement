@@ -1443,7 +1443,6 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         {/* Vercel 배포: 조회 전용 모드 배너 */}
         {isDeployedWeb() && (
           <div style={{background:'rgba(99,102,241,0.12)',border:'1px solid rgba(99,102,241,0.25)',borderRadius:8,padding:'8px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8,fontSize:12,color:'#a5b4fc'}}>
-            <span style={{fontSize:14}}>👁</span>
             <span><strong>조회 전용 모드</strong> — Vercel 배포 환경입니다. 북마크 수정은 로컬 앱에서 진행하세요.</span>
           </div>
         )}
