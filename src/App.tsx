@@ -4464,13 +4464,14 @@ function App() {
                 onKeyDown={e => {
                   e.preventDefault();
                   const isModifier = ['Meta','Control','Alt','Shift'].includes(e.key);
-                  if (isModifier) return; // 수정자 단독 keydown은 무시
+                  if (isModifier) return;
                   const parts: string[] = [];
-                  if (e.metaKey || e.ctrlKey) parts.push('CommandOrControl');
-                  if (e.altKey) parts.push('Alt');
+                  if (e.metaKey) parts.push('CommandOrControl'); // ⌘ Cmd
+                  else if (e.ctrlKey) parts.push('Control');      // ⌃ Ctrl (별도)
+                  if (e.altKey) parts.push('Alt');                // ⌥ Option
                   if (e.shiftKey) parts.push('Shift');
                   parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
-                  if (parts.length >= 2) { // 수정자 1개 이상 + 일반 키 필수
+                  if (parts.length >= 2) {
                     setShortcutInput(parts.join('+'));
                     setIsRecordingShortcut(false);
                   }
