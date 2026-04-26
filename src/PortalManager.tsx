@@ -838,6 +838,23 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     setData(next);
     try {
       await PortalAPI.save(next);
+      if (isDeployedWeb() && next.supabaseUrl && next.supabaseAnonKey) {
+        const supabase = getSupabaseClient(next.supabaseUrl, next.supabaseAnonKey);
+        const itemRows = next.items
+          .filter(i => i.type === 'web')
+          .map(i => ({
+            id: i.id, device_id: '__shared__', name: i.name, type: i.type,
+            url: i.url ?? null, path: null, category: i.category,
+            description: i.description ?? null, pinned: i.pinned,
+            visit_count: i.visitCount, last_visited: i.lastVisited ?? null,
+            created_at: i.createdAt ?? null,
+          }));
+        const catRows = next.categories.map(c => ({
+          id: c.id, device_id: '__shared__', name: c.name, color: c.color, order: c.order,
+        }));
+        await supabase.from('portal_items').upsert(itemRows, { onConflict: 'id' });
+        await supabase.from('portal_categories').upsert(catRows, { onConflict: 'id' });
+      }
     } catch (e) {
       showToast('저장 실패: ' + e, 'error');
     }
@@ -1440,12 +1457,6 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0">
-        {/* Vercel 배포: 조회 전용 모드 배너 */}
-        {isDeployedWeb() && (
-          <div style={{background:'rgba(99,102,241,0.12)',border:'1px solid rgba(99,102,241,0.25)',borderRadius:8,padding:'8px 14px',marginBottom:12,display:'flex',alignItems:'center',gap:8,fontSize:12,color:'#a5b4fc'}}>
-            <span><strong>조회 전용 모드</strong> — Vercel 배포 환경입니다. 북마크 수정은 로컬 앱에서 진행하세요.</span>
-          </div>
-        )}
         {/* Search row */}
         <div style={{padding:'14px 0 14px',display:'flex',flexWrap:'wrap',gap:8,borderBottom:'1px solid rgba(255,240,220,0.07)',marginBottom:14}}>
           <div style={{flex:'1 1 200px',position:'relative',minWidth:0}}>
@@ -1509,11 +1520,9 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
                   <span style={{fontWeight:500,color:'#ede7dd'}}>{cat.name}</span>
                   <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:'#6b6459'}}>{catItems.length}</span>
                   <div style={{flex:1}}/>
-                  {!isDeployedWeb() && (
-                    <button onClick={() => openAddModal(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#6b6459',padding:4,display:'flex',alignItems:'center'}}>
-                      <Plus className="w-3 h-3" />
-                    </button>
-                  )}
+                  <button onClick={() => openAddModal(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#6b6459',padding:4,display:'flex',alignItems:'center'}}>
+                    <Plus className="w-3 h-3" />
+                  </button>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                   {catItems.map(item => (
