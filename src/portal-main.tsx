@@ -677,7 +677,7 @@ function App() {
   } as React.CSSProperties;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0b] text-white flex flex-col" style={webThemeVars} onClick={() => showDevicePicker && setShowDevicePicker(false)}>
+    <div className="min-h-screen bg-[#0a0a0b] text-white flex flex-col" style={webThemeVars} onClick={() => { setShowDevicePicker(false); setShowMoreMenu(false); }}>
       {/* ── Header ── */}
       <header className="sticky top-0 z-40 bg-[#0a0a0b]/95 backdrop-blur border-b border-zinc-800/60 px-4 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 min-w-0">
