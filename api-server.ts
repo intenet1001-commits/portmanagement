@@ -1426,6 +1426,29 @@ end try`);
       }
     }
 
+    // GET /api/log-content/:portId?offset=N — read log file content with optional offset
+    if (url.pathname.startsWith("/api/log-content/") && req.method === "GET") {
+      const portId = decodeURIComponent(url.pathname.slice("/api/log-content/".length));
+      if (!portId) return new Response(JSON.stringify({ error: 'portId 필요' }), { status: 400, headers });
+      try {
+        const offset = parseInt(url.searchParams.get('offset') ?? '0', 10);
+        const logsDir = join(APP_DATA_DIR, "logs");
+        const logFile = join(logsDir, `${portId}.log`);
+        if (!existsSync(logFile)) {
+          return new Response(JSON.stringify({ content: '', size: 0, exists: false }), { headers });
+        }
+        const stat = Bun.file(logFile);
+        const size = stat.size;
+        // Read from offset to end
+        const file = Bun.file(logFile);
+        const text = await file.text();
+        const content = offset > 0 && offset < text.length ? text.slice(offset) : text;
+        return new Response(JSON.stringify({ content, size, exists: true, offset }), { headers });
+      } catch (error: any) {
+        return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
+      }
+    }
+
     if (url.pathname === "/api/send-tmux-keys" && req.method === "POST") {
       try {
         const { sessionName, text } = await req.json();

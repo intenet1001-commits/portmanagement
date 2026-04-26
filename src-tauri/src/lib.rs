@@ -913,6 +913,40 @@ fn open_log(port_id: String, app_handle: tauri::AppHandle) -> Result<String, Str
     Ok(format!("로그 파일을 열었습니다: {:?}", log_file))
 }
 
+#[tauri::command]
+fn read_log_content(port_id: String, offset: usize, app_handle: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let app_data_dir = app_handle.path().app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let logs_dir = app_data_dir.join("logs");
+    let log_file = logs_dir.join(format!("{}.log", port_id));
+
+    if !log_file.exists() {
+        return Ok(serde_json::json!({
+            "content": "",
+            "size": 0,
+            "exists": false
+        }));
+    }
+
+    let content = fs::read_to_string(&log_file)
+        .map_err(|e| format!("Failed to read log file: {}", e))?;
+
+    let size = content.len();
+    let sliced = if offset > 0 && offset < size {
+        &content[offset..]
+    } else {
+        &content
+    };
+
+    Ok(serde_json::json!({
+        "content": sliced,
+        "size": size,
+        "exists": true,
+        "offset": offset
+    }))
+}
+
 /// Escape single quotes for use inside single-quoted shell strings.
 /// ' → '\'' (end-quote, literal-apostrophe, re-open-quote)
 fn escape_sq(s: &str) -> String {
@@ -2013,6 +2047,7 @@ pub fn run() {
         import_ports_from_file,
         open_in_chrome,
         open_log,
+        read_log_content,
         check_wsl,
         install_wsl,
         install_wsl_tmux,

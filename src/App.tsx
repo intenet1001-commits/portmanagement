@@ -285,6 +285,17 @@ const API = {
     }
   },
 
+  async readLogContent(portId: string, offset: number = 0): Promise<{ content: string; size: number; exists: boolean; offset: number }> {
+    if (isTauri()) {
+      return invoke('read_log_content', { portId, offset });
+    } else {
+      const res = await fetch(`/api/log-content/${encodeURIComponent(portId)}?offset=${offset}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? '로그 읽기 실패');
+      return data;
+    }
+  },
+
   async openTmuxClaude(sessionName: string, folderPath?: string, worktreePath?: string): Promise<string> {
     if (isTauri()) {
       return invoke<string>('open_tmux_claude', { sessionName, folderPath: folderPath ?? null, worktreePath: worktreePath ?? null });
@@ -975,6 +986,15 @@ function App() {
   const lastLogIndexRef = useRef<number>(0);
   const isBuildingRef = useRef(false);
   const buildLogContainerRef = useRef<HTMLDivElement>(null);
+  // Port log viewer modal state
+  const [showPortLog, setShowPortLog] = useState(false);
+  const [portLogs, setPortLogs] = useState<string[]>([]);
+  const [viewingPortId, setViewingPortId] = useState<string | null>(null);
+  const [viewingPortName, setViewingPortName] = useState<string>('');
+  const [isLoadingPortLog, setIsLoadingPortLog] = useState(false);
+  const portLogContainerRef = useRef<HTMLDivElement>(null);
+  const portLogOffsetRef = useRef<number>(0);
+  const portLogPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [workspaceRoots, setWorkspaceRoots] = useState<WorkspaceRoot[]>([]);
   const [workspaceRootsOpen, setWorkspaceRootsOpen] = useState(false);
   const [visitCounts, setVisitCounts] = useState<{ portId: string; count: number }[]>([]);
@@ -1704,6 +1724,23 @@ function App() {
       buildLogContainerRef.current.scrollTop = buildLogContainerRef.current.scrollHeight;
     }
   }, [buildLogs]);
+
+  // Port log viewer scroll to bottom
+  useEffect(() => {
+    if (portLogContainerRef.current) {
+      portLogContainerRef.current.scrollTop = portLogContainerRef.current.scrollHeight;
+    }
+  }, [portLogs]);
+
+  // Port log polling cleanup
+  useEffect(() => {
+    return () => {
+      if (portLogPollingRef.current) {
+        clearInterval(portLogPollingRef.current);
+        portLogPollingRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handler = () => {
@@ -2553,6 +2590,64 @@ function App() {
     showToast(`AI 업데이트 완료: 이름 ${nameCount}개, 카테고리 ${catCount}개`, 'success');
   };
 
+  // Port log viewer handler
+  const handleViewPortLog = async (portId: string, portName: string) => {
+    setViewingPortId(portId);
+    setViewingPortName(portName);
+    setPortLogs([]);
+    portLogOffsetRef.current = 0;
+    setShowPortLog(true);
+    setIsLoadingPortLog(true);
+
+    // Clear any existing polling
+    if (portLogPollingRef.current) {
+      clearInterval(portLogPollingRef.current);
+      portLogPollingRef.current = null;
+    }
+
+    try {
+      // Initial load
+      const data = await API.readLogContent(portId, 0);
+      if (!data.exists) {
+        setPortLogs(['로그 파일이 아직 생성되지 않았습니다.', '', '서버를 이 앱에서 실행하면 로그가 기록됩니다.']);
+      } else {
+        const lines = data.content.split('\n').filter((l: string) => l.length > 0);
+        setPortLogs(lines.length > 0 ? lines : ['(로그가 비어 있습니다)']);
+        portLogOffsetRef.current = data.size;
+      }
+      setIsLoadingPortLog(false);
+
+      // Start polling for new content
+      portLogPollingRef.current = setInterval(async () => {
+        try {
+          const newData = await API.readLogContent(portId, portLogOffsetRef.current);
+          if (newData.exists && newData.content && newData.content.length > 0) {
+            const newLines = newData.content.split('\n').filter((l: string) => l.length > 0);
+            if (newLines.length > 0) {
+              setPortLogs(prev => [...prev, ...newLines]);
+              portLogOffsetRef.current = newData.size;
+            }
+          }
+        } catch (e) {
+          // Ignore polling errors
+        }
+      }, 1000);
+    } catch (error) {
+      setPortLogs([`로그 읽기 실패: ${error}`]);
+      setIsLoadingPortLog(false);
+    }
+  };
+
+  const handleClosePortLog = () => {
+    setShowPortLog(false);
+    setViewingPortId(null);
+    setViewingPortName('');
+    if (portLogPollingRef.current) {
+      clearInterval(portLogPollingRef.current);
+      portLogPollingRef.current = null;
+    }
+  };
+
   const handleBuildApp = async () => {
     if (isBuilding) return;
 
@@ -3396,7 +3491,7 @@ function App() {
             {[
               {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item), title:'프로세스 강제 종료 후 재실행', helpKey:'menu-force-restart'},
               {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath), title:'Finder에서 프로젝트 폴더 열기', helpKey:'menu-open-folder'},
-              {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>{ API.openLog(item.id).catch(e=>showToast(`로그 열기 실패: ${e}`, 'error')); }, title:'tail -f 로그 보기 (iTerm)', helpKey:'menu-view-log'},
+              {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>{ handleViewPortLog(item.id, item.name); }, title:'실시간 로그 보기 (인앱)', helpKey:'menu-view-log'},
               {label:'cmux 터미널', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxTerminal(item), title:'cmux로 폴더 열기 (Claude 없이, macOS 전용)', helpKey:'menu-cmux-terminal'},
             ].map(({label,icon,action,title,helpKey}:{label:string;icon:React.ReactNode;action:()=>void;title?:string;helpKey:string}) => (
               <button key={label} data-help-key={helpKey} title={title} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
@@ -3854,6 +3949,103 @@ function App() {
                   <button
                     onClick={() => {
                       const logText = buildLogs.join('\n');
+                      navigator.clipboard.writeText(logText);
+                      showToast('로그가 클립보드에 복사되었습니다', 'success');
+                    }}
+                    className="px-3 py-1.5 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-xs rounded-lg transition-colors"
+                  >
+                    로그 복사
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 포트 로그 뷰어 모달 */}
+      {showPortLog && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#1c1916] rounded-xl border border-stone-800/40 w-full max-w-4xl max-h-[80vh] flex flex-col">
+            {/* 헤더 */}
+            <div className="flex items-center justify-between p-6 border-b border-stone-800/40">
+              <div className="flex items-center gap-3">
+                <FileText className={`w-5 h-5 ${isLoadingPortLog ? 'animate-spin text-blue-400' : 'text-green-400'}`} />
+                <div>
+                  <h2 className="text-lg font-semibold text-white">
+                    {viewingPortName} 로그
+                  </h2>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    {isLoadingPortLog ? '로그 로딩 중...' : '실시간 업데이트 중 (1초 간격)'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => { API.openLog(viewingPortId!).catch(e=>showToast(`iTerm 열기 실패: ${e}`, 'error')); }}
+                  className="px-3 py-1.5 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-xs rounded-lg transition-colors flex items-center gap-1.5"
+                  title="iTerm에서 tail -f 열기"
+                >
+                  <Terminal className="w-3.5 h-3.5" />
+                  iTerm
+                </button>
+                <button
+                  onClick={handleClosePortLog}
+                  className="p-2 hover:bg-[#221f1b] rounded-lg transition-colors"
+                >
+                  <XIcon className="w-5 h-5 text-zinc-400" />
+                </button>
+              </div>
+            </div>
+
+            {/* 로그 내용 */}
+            <div ref={portLogContainerRef} className="flex-1 overflow-y-auto p-6 font-mono text-xs">
+              <div className="space-y-0.5">
+                {portLogs.map((log, index) => (
+                  <div
+                    key={index}
+                    className={`${
+                      log.includes('error') || log.includes('Error') || log.includes('ERROR') || log.includes('실패')
+                        ? 'text-red-400'
+                        : log.includes('success') || log.includes('✅') || log.includes('완료') || log.includes('started') || log.includes('ready')
+                        ? 'text-green-400'
+                        : log.includes('warn') || log.includes('WARN') || log.includes('⚠️')
+                        ? 'text-yellow-400'
+                        : 'text-[#ede7dd]/90'
+                    }`}
+                  >
+                    {log}
+                  </div>
+                ))}
+                {isLoadingPortLog && (
+                  <div className="text-blue-400 animate-pulse mt-2">
+                    ⏳ 로딩 중...
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 푸터 */}
+            <div className="p-4 border-t border-stone-800/40 bg-[#1c1916]/80">
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-zinc-400">
+                  총 {portLogs.length}줄
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setPortLogs([]);
+                      portLogOffsetRef.current = 0;
+                      handleViewPortLog(viewingPortId!, viewingPortName);
+                    }}
+                    className="px-3 py-1.5 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-xs rounded-lg transition-colors flex items-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    새로고침
+                  </button>
+                  <button
+                    onClick={() => {
+                      const logText = portLogs.join('\n');
                       navigator.clipboard.writeText(logText);
                       showToast('로그가 클립보드에 복사되었습니다', 'success');
                     }}
