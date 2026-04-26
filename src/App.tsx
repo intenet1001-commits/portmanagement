@@ -3253,6 +3253,16 @@ function App() {
               <Globe style={{width:11,height:11}}/>
             </button>
           )}
+          {item.deployUrl && (
+            <button onClick={e=>{e.stopPropagation(); window.open(item.deployUrl, '_blank');}} style={btnBase} title={`배포 주소: ${item.deployUrl}`}>
+              <Rocket style={{width:11,height:11}}/>
+            </button>
+          )}
+          {item.githubUrl && (
+            <button onClick={e=>{e.stopPropagation(); window.open(item.githubUrl, '_blank');}} style={btnBase} title={`GitHub: ${item.githubUrl}`}>
+              <Github style={{width:11,height:11}}/>
+            </button>
+          )}
           <button data-help-key="card-more-menu" onClick={e=>{e.stopPropagation(); if(menuOpen){setV3MenuOpenId(null);setV3MenuRect(null);}else{const r=e.currentTarget.getBoundingClientRect();const menuH=340;const spaceBelow=window.innerHeight-r.bottom;const top=spaceBelow<menuH?Math.max(8,r.top-menuH-4):r.bottom+4;setV3MenuOpenId(item.id);setV3MenuRect({top,right:window.innerWidth-r.right});}}} style={{...btnBase, color: menuOpen?'#e8a557':'#ede7dd', borderColor: menuOpen?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}}>
             <ChevronDown style={{width:11,height:11}}/>
           </button>
