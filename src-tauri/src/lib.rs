@@ -2125,6 +2125,16 @@ pub fn run() {
             .build(),
         )?;
       }
+      // 창 닫기 → 숨김 (백그라운드 유지 — 단축키가 항상 동작하도록)
+      if let Some(window) = app.get_webview_window("main") {
+        let win = window.clone();
+        window.on_window_event(move |event| {
+          if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            api.prevent_close();
+            let _ = win.hide();
+          }
+        });
+      }
       // 저장된 글로벌 단축키 불러와서 등록
       let shortcut_path = app.path().app_data_dir()
         .map(|d| d.join("shortcut.json"))
