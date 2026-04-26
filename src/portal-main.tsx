@@ -725,7 +725,7 @@ function App() {
                 </button>
               </div>
               {/* Mobile more menu */}
-              <div className="relative sm:hidden">
+              <div className="relative sm:hidden" onClick={e => e.stopPropagation()}>
                 <button onClick={() => setShowMoreMenu(s => !s)} className={btnCls} title="더보기">
                   <MoreHorizontal className="w-3.5 h-3.5" />
                 </button>
