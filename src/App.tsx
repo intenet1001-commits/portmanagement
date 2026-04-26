@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock, Zap, History } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock, Zap, History, Laptop } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { getSupabaseClient } from './lib/supabaseClient';
@@ -3220,7 +3220,7 @@ function App() {
         </div>
 
         {/* Primary action strip — visible on hover */}
-        <div className="opacity-0 group-hover:opacity-100 transition-opacity" style={{marginTop:2,display:'flex',gap:4}}>
+        <div className="opacity-0 group-hover:opacity-100 transition-opacity" style={{marginTop:2,display:'flex',flexWrap:'wrap',gap:4}}>
           {item.port ? (
             <button data-help-key="card-run-stop" onClick={e=>{e.stopPropagation(); item.isRunning ? stopCommand(item) : executeCommand(item);}} style={{
               flex:1,padding:'5px 0',borderRadius:5,
@@ -3249,13 +3249,13 @@ function App() {
             <GitBranch style={{width:11,height:11}}/>
           </button>
           {item.port && (
-            <button data-help-key="card-chrome" onClick={e=>{e.stopPropagation(); API.openInChrome(`http://localhost:${item.port}`).catch(()=>{});}} style={btnBase} title="Chrome에서 열기">
-              <Globe style={{width:11,height:11}}/>
+            <button data-help-key="card-chrome" onClick={e=>{e.stopPropagation(); API.openInChrome(`http://localhost:${item.port}`).catch(()=>{});}} style={btnBase} title="localhost에서 열기">
+              <Laptop style={{width:11,height:11}}/>
             </button>
           )}
           {item.deployUrl && (
             <button data-help-key="card-deploy" onClick={e=>{e.stopPropagation(); API.openInChrome(item.deployUrl!).catch(()=>{});}} style={btnBase} title={`배포 주소: ${item.deployUrl}`}>
-              <Rocket style={{width:11,height:11}}/>
+              <Globe style={{width:11,height:11}}/>
             </button>
           )}
           {item.githubUrl && (

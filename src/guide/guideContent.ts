@@ -133,12 +133,12 @@ export const GUIDE_CONTENT: Record<string, GuideEntry> = {
     body: 'git worktree 여러 개를 카드 아래에 펼쳐서 보여줘요. 브랜치마다 독립 dev 서버.',
   },
   'card-chrome': {
-    title: 'Chrome에서 열기',
-    body: '실행 중인 dev 서버 URL(localhost:포트)을 Chrome 브라우저로 열어요.',
+    title: 'localhost 열기',
+    body: '실행 중인 dev 서버 URL(localhost:포트)을 Chrome 브라우저로 열어요. 노트북 아이콘으로 표시.',
   },
   'card-deploy': {
     title: '배포 주소 열기',
-    body: '이 프로젝트의 배포된 URL(Vercel, Netlify 등)을 Chrome으로 열어요.',
+    body: '이 프로젝트의 배포된 URL(Vercel, Netlify 등)을 Chrome으로 열어요. 지구본 아이콘으로 표시.',
     tip: '카드 수정 → 배포 URL 필드에 주소를 넣으면 버튼이 나타나요.',
   },
   'card-github': {
