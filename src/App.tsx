@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock, Zap, History, Laptop } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock, Zap, History, Laptop, Keyboard } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { getSupabaseClient } from './lib/supabaseClient';
@@ -489,6 +489,15 @@ const API = {
       return data.results ?? [];
     } catch { return []; }
   },
+
+  async getGlobalShortcut(): Promise<string> {
+    if (isTauri()) return invoke<string>('get_global_shortcut');
+    return '';
+  },
+
+  async setGlobalShortcut(shortcut: string, oldShortcut: string): Promise<void> {
+    if (isTauri()) return invoke('set_global_shortcut', { shortcut, oldShortcut });
+  },
 };
 
 const CLAUDE_AI_NAME_PROMPT = `포트관리기의 프로젝트 목록에 "AI 추천 이름(aiName)"과 "카테고리(category)"를 채워줘.
@@ -922,6 +931,10 @@ function App() {
   const [bypassPermissions, setBypassPermissions] = useState(
     () => localStorage.getItem('portmanager-bypassPermissions') !== 'false'
   );
+  const [globalShortcut, setGlobalShortcut] = useState('CommandOrControl+Alt+P');
+  const [showShortcutModal, setShowShortcutModal] = useState(false);
+  const [shortcutInput, setShortcutInput] = useState('');
+  const [isRecordingShortcut, setIsRecordingShortcut] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editPort, setEditPort] = useState('');
@@ -1618,6 +1631,11 @@ function App() {
       }
     };
     loadPortsData();
+  }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    API.getGlobalShortcut().then(s => { if (s) setGlobalShortcut(s); }).catch(() => {});
   }, []);
 
   // 앱 시작 시 스테일 워크트리 자동 prune (1회)
@@ -4264,6 +4282,18 @@ function App() {
               </>
             )}
 
+            {/* 글로벌 단축키 설정 */}
+            {isTauri() && (
+              <button
+                onClick={() => { setShortcutInput(globalShortcut); setShowShortcutModal(true); }}
+                title={`앱 열기 단축키: ${globalShortcut}`}
+                className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 text-xs rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all flex items-center gap-1"
+              >
+                <Keyboard className="w-3.5 h-3.5" />
+                <span className="font-mono">{globalShortcut.replace('CommandOrControl', '⌘').replace('Alt', '⌥').replace('Shift', '⇧').replace('Control', '⌃')}</span>
+              </button>
+            )}
+
             {/* bypass 토글 */}
             <button
               data-help-key="btn-bypass"
@@ -4405,6 +4435,54 @@ function App() {
         )}
 
         {/* 가이드 모드 오버레이 (배너 + 클릭 인터셉터 + 툴팁) */}
+        {/* 글로벌 단축키 설정 모달 */}
+        {showShortcutModal && (
+          <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.7)',zIndex:9500,display:'flex',alignItems:'center',justifyContent:'center'}}
+            onClick={() => setShowShortcutModal(false)}>
+            <div style={{background:'#1c1916',border:'1px solid rgba(255,240,220,0.12)',borderRadius:12,padding:24,width:360,display:'flex',flexDirection:'column',gap:16}}
+              onClick={e => e.stopPropagation()}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                <span style={{fontSize:14,fontWeight:600,color:'#ede7dd'}}>앱 열기 단축키</span>
+                <button onClick={() => setShowShortcutModal(false)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#6b6459'}}><XIcon style={{width:14,height:14}}/></button>
+              </div>
+              <p style={{fontSize:11.5,color:'#6b6459',margin:0}}>입력란 클릭 후 원하는 키 조합을 누르세요.</p>
+              <input
+                style={{padding:'8px 12px',background:'#0a0a0b',border:'1px solid rgba(255,240,220,0.12)',borderRadius:6,color:'#ede7dd',fontSize:13,fontFamily:'JetBrains Mono, monospace',outline:'none'}}
+                value={isRecordingShortcut ? '키를 누르세요...' : shortcutInput}
+                readOnly
+                placeholder="예: CommandOrControl+Alt+P"
+                onFocus={() => setIsRecordingShortcut(true)}
+                onBlur={() => setIsRecordingShortcut(false)}
+                onKeyDown={e => {
+                  e.preventDefault();
+                  const parts: string[] = [];
+                  if (e.metaKey || e.ctrlKey) parts.push('CommandOrControl');
+                  if (e.altKey) parts.push('Alt');
+                  if (e.shiftKey) parts.push('Shift');
+                  const key = e.key.toUpperCase();
+                  if (!['META','CONTROL','ALT','SHIFT'].includes(e.key.toUpperCase())) parts.push(key);
+                  if (parts.length > 1) setShortcutInput(parts.join('+'));
+                }}
+              />
+              <p style={{fontSize:11,color:'#4b4540',margin:0}}>예시: CommandOrControl+Alt+P (⌘⌥P), CommandOrControl+Shift+Space</p>
+              <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+                <button onClick={() => setShowShortcutModal(false)} style={{padding:'6px 14px',background:'transparent',border:'1px solid rgba(255,240,220,0.1)',borderRadius:6,color:'#a39a8c',cursor:'pointer',fontSize:12}}>취소</button>
+                <button onClick={async () => {
+                  if (!shortcutInput) return;
+                  try {
+                    await API.setGlobalShortcut(shortcutInput, globalShortcut);
+                    setGlobalShortcut(shortcutInput);
+                    setShowShortcutModal(false);
+                    showToast(`단축키 설정: ${shortcutInput}`, 'success');
+                  } catch(e: any) {
+                    showToast('단축키 설정 실패: ' + e.message, 'error');
+                  }
+                }} style={{padding:'6px 14px',background:'#e8a557',border:'none',borderRadius:6,color:'#0a0a0b',cursor:'pointer',fontSize:12,fontWeight:600}}>저장</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <GuideOverlay guideMode={guideMode} setGuideMode={setGuideMode} />
 
         {/* 삭제 확인 모달 */}

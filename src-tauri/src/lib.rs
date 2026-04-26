@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tauri::{State, Manager};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct PortInfo {
@@ -2020,6 +2021,33 @@ fn cmux_access_help_msg(base: &str) -> String {
     )
 }
 
+#[tauri::command]
+fn get_global_shortcut(app: tauri::AppHandle) -> String {
+    let path = app.path().app_data_dir()
+        .map(|d| d.join("shortcut.json"));
+    path.ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["shortcut"].as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "CommandOrControl+Alt+P".to_string())
+}
+
+#[tauri::command]
+fn set_global_shortcut(app: tauri::AppHandle, shortcut: String, old_shortcut: String) -> Result<(), String> {
+    if !old_shortcut.is_empty() {
+        let _ = app.global_shortcut().unregister(old_shortcut.as_str());
+    }
+    app.global_shortcut().register(shortcut.as_str())
+        .map_err(|e| e.to_string())?;
+    let path = app.path().app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("shortcut.json");
+    let json = serde_json::json!({ "shortcut": shortcut });
+    std::fs::write(&path, json.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -2069,11 +2097,26 @@ pub fn run() {
         open_cmux_claude,
         open_cmux_claude_new,
         open_cmux_terminal,
+        get_global_shortcut,
+        set_global_shortcut,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())
     .plugin(tauri_plugin_updater::Builder::new().build())
     .plugin(tauri_plugin_process::init())
+    .plugin(
+      tauri_plugin_global_shortcut::Builder::new()
+        .with_handler(|app_handle, _shortcut, event| {
+          if event.state() == ShortcutState::Pressed {
+            if let Some(window) = app_handle.get_webview_window("main") {
+              let _ = window.show();
+              let _ = window.unminimize();
+              let _ = window.set_focus();
+            }
+          }
+        })
+        .build()
+    )
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -2082,6 +2125,16 @@ pub fn run() {
             .build(),
         )?;
       }
+      // 저장된 글로벌 단축키 불러와서 등록
+      let shortcut_path = app.path().app_data_dir()
+        .map(|d| d.join("shortcut.json"))
+        .ok();
+      let saved = shortcut_path.as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v["shortcut"].as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "CommandOrControl+Alt+P".to_string());
+      let _ = app.global_shortcut().register(saved.as_str());
       Ok(())
     })
     .run(tauri::generate_context!())
