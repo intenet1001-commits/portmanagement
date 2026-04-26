@@ -4459,9 +4459,14 @@ function App() {
                   if (e.metaKey || e.ctrlKey) parts.push('CommandOrControl');
                   if (e.altKey) parts.push('Alt');
                   if (e.shiftKey) parts.push('Shift');
-                  const key = e.key.toUpperCase();
-                  if (!['META','CONTROL','ALT','SHIFT'].includes(e.key.toUpperCase())) parts.push(key);
-                  if (parts.length > 1) setShortcutInput(parts.join('+'));
+                  const key = e.key;
+                  if (!['Meta','Control','Alt','Shift'].includes(key)) {
+                    parts.push(key.length === 1 ? key.toUpperCase() : key);
+                  }
+                  if (parts.length > 1) {
+                    setShortcutInput(parts.join('+'));
+                    setIsRecordingShortcut(false);
+                  }
                 }}
               />
               <p style={{fontSize:11,color:'#4b4540',margin:0}}>예시: CommandOrControl+Alt+P (⌘⌥P), CommandOrControl+Shift+Space</p>
