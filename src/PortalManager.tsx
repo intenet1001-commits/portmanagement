@@ -1390,21 +1390,21 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       </div>
 
       {/* ── Left Sidebar (desktop only) ──────────────────────────────────────── */}
-      <div className="hidden md:flex flex-col flex-shrink-0" style={{width:220,padding:'14px 10px',borderRight:'1px solid rgba(255,240,220,0.07)',background:'#1c1916',gap:2,overflow:'hidden'}}>
+      <div className="hidden md:flex flex-col flex-shrink-0" style={{width:220,padding:'14px 10px',borderRight:'1px solid var(--pm-border,rgba(255,240,220,0.07))',background:'var(--pm-bg,#1c1916)',gap:2,overflow:'hidden'}}>
         {/* All */}
         <button
           data-help-key="portal-sidebar-all"
           onClick={() => setSelectedCat('all')}
           style={{
             display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:6,cursor:'pointer',border:'none',
-            background:selectedCat==='all' ? '#221f1b' : 'transparent',
-            color:selectedCat==='all' ? '#ede7dd' : '#a39a8c',
+            background:selectedCat==='all' ? 'var(--pm-bg-hover,#221f1b)' : 'transparent',
+            color:selectedCat==='all' ? 'var(--pm-text,#ede7dd)' : 'var(--pm-text-muted,#a39a8c)',
             fontSize:12.5,fontWeight:selectedCat==='all'?500:400,fontFamily:'inherit',
           }}
         >
           <BookMarked className="w-3 h-3 flex-shrink-0" />
           <span style={{flex:1,textAlign:'left'}}>전체</span>
-          <span style={{fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace"}}>{data.items.length}</span>
+          <span style={{fontSize:10.5,color:'var(--pm-text-faint,#6b6459)',fontFamily:"'JetBrains Mono',monospace"}}>{data.items.length}</span>
         </button>
 
         {data.categories.sort((a, b) => a.order - b.order).map(cat => {
@@ -1412,15 +1412,15 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
           const count = data.items.filter(i => i.category === cat.id).length;
           const active = selectedCat === cat.id;
           return (
-            <div key={cat.id} data-help-key="portal-sidebar-category" className="group" style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:6,cursor:'pointer',background:active?'#221f1b':'transparent',color:active?'#ede7dd':'#a39a8c',fontSize:12.5}} onClick={() => setSelectedCat(cat.id)}>
+            <div key={cat.id} data-help-key="portal-sidebar-category" className="group" style={{display:'flex',alignItems:'center',gap:8,padding:'7px 10px',borderRadius:6,cursor:'pointer',background:active?'var(--pm-bg-hover,#221f1b)':'transparent',color:active?'var(--pm-text,#ede7dd)':'var(--pm-text-muted,#a39a8c)',fontSize:12.5}} onClick={() => setSelectedCat(cat.id)}>
               <span className={`w-2 h-2 rounded-full flex-shrink-0 ${c.dot}`} />
               <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{cat.name}</span>
-              <span style={{fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace"}}>{count}</span>
+              <span style={{fontSize:10.5,color:'var(--pm-text-faint,#6b6459)',fontFamily:"'JetBrains Mono',monospace"}}>{count}</span>
               <span
                 role="button"
                 onClick={e => { e.stopPropagation(); deleteCategory(cat.id); }}
                 className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity cursor-pointer"
-                style={{color:'#6b6459'}}
+                style={{color:'var(--pm-text-faint,#6b6459)'}}
               >
                 <X className="w-3 h-3" />
               </span>
@@ -1432,7 +1432,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         <button
           data-help-key="portal-add-category"
           onClick={() => setShowCatModal(true)}
-          style={{marginTop:6,padding:'7px 10px',borderRadius:6,color:'#6b6459',fontSize:12,display:'flex',alignItems:'center',gap:8,cursor:'pointer',border:'1px dashed rgba(255,240,220,0.07)',background:'transparent',fontFamily:'inherit'}}
+          style={{marginTop:6,padding:'7px 10px',borderRadius:6,color:'var(--pm-text-faint,#6b6459)',fontSize:12,display:'flex',alignItems:'center',gap:8,cursor:'pointer',border:'1px dashed var(--pm-border,rgba(255,240,220,0.07))',background:'transparent',fontFamily:'inherit'}}
         >
           <Plus className="w-3 h-3" />
           카테고리 추가
@@ -1440,14 +1440,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
         {/* Sync status */}
         {data.lastSynced && (
-          <p data-help-key="portal-sync-status" style={{marginTop:'auto',padding:'6px 8px',fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace"}}>
+          <p data-help-key="portal-sync-status" style={{marginTop:'auto',padding:'6px 8px',fontSize:10.5,color:'var(--pm-text-faint,#6b6459)',fontFamily:"'JetBrains Mono',monospace"}}>
             동기화: {new Date(data.lastSynced).toLocaleDateString('ko-KR')}
           </p>
         )}
         <button
           data-help-key="portal-sidebar-history"
           onClick={openPortalHistory}
-          style={{marginTop:data.lastSynced?2:4,padding:'7px 10px',borderRadius:6,color:'#6b6459',fontSize:12,display:'flex',alignItems:'center',gap:6,cursor:'pointer',border:'1px solid rgba(255,240,220,0.07)',background:'transparent',fontFamily:'inherit',width:'100%'}}
+          style={{marginTop:data.lastSynced?2:4,padding:'7px 10px',borderRadius:6,color:'var(--pm-text-faint,#6b6459)',fontSize:12,display:'flex',alignItems:'center',gap:6,cursor:'pointer',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',background:'transparent',fontFamily:'inherit',width:'100%'}}
           title="Push 히스토리 / 복원"
         >
           <Clock className="w-3 h-3 flex-shrink-0" />
@@ -1458,16 +1458,16 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       {/* ── Main Content ─────────────────────────────────────────────────────── */}
       <div className="flex-1 min-w-0">
         {/* Search row */}
-        <div style={{padding:'14px 0 14px',display:'flex',flexWrap:'wrap',gap:8,borderBottom:'1px solid rgba(255,240,220,0.07)',marginBottom:14}}>
+        <div style={{padding:'14px 0 14px',display:'flex',flexWrap:'wrap',gap:8,borderBottom:'1px solid var(--pm-border,rgba(255,240,220,0.07))',marginBottom:14}}>
           <div style={{flex:'1 1 200px',position:'relative',minWidth:0}}>
-            <Search className="w-3.5 h-3.5" style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'#6b6459'}} />
+            <Search className="w-3.5 h-3.5" style={{position:'absolute',left:10,top:'50%',transform:'translateY(-50%)',color:'var(--pm-text-faint,#6b6459)'}} />
             <input
               data-help-key="portal-search"
               type="text"
               placeholder="검색…"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              style={{width:'100%',padding:'8px 10px 8px 30px',background:'#1c1916',border:'1px solid rgba(255,240,220,0.07)',borderRadius:7,color:'#ede7dd',fontSize:12.5,outline:'none',fontFamily:'inherit',boxSizing:'border-box'}}
+              style={{width:'100%',padding:'8px 10px 8px 30px',background:'var(--pm-bg,#1c1916)',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',borderRadius:7,color:'var(--pm-text,#ede7dd)',fontSize:12.5,outline:'none',fontFamily:'inherit',boxSizing:'border-box'}}
             />
           </div>
           {viewingDeviceId && viewingDeviceId !== data.deviceId && (
@@ -1515,12 +1515,12 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             const c = getColor(cat.color);
             return (
               <div key={cat.id} style={{marginBottom:20}}>
-                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:11.5,color:'#a39a8c'}}>
+                <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:11.5,color:'var(--pm-text-muted,#a39a8c)'}}>
                   <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.dot}`} />
-                  <span style={{fontWeight:500,color:'#ede7dd'}}>{cat.name}</span>
-                  <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:'#6b6459'}}>{catItems.length}</span>
+                  <span style={{fontWeight:500,color:'var(--pm-text,#ede7dd)'}}>{cat.name}</span>
+                  <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:10.5,color:'var(--pm-text-faint,#6b6459)'}}>{catItems.length}</span>
                   <div style={{flex:1}}/>
-                  <button onClick={() => openAddModal(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'#6b6459',padding:4,display:'flex',alignItems:'center'}}>
+                  <button onClick={() => openAddModal(cat.id)} style={{background:'transparent',border:'none',cursor:'pointer',color:'var(--pm-text-faint,#6b6459)',padding:4,display:'flex',alignItems:'center'}}>
                     <Plus className="w-3 h-3" />
                   </button>
                 </div>
@@ -1542,9 +1542,9 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             </div>
           ) : (
             filteredItems.length === 0 && (
-              <div style={{background:'#1c1916',borderRadius:10,border:'1px solid rgba(255,240,220,0.07)',padding:'48px 24px',textAlign:'center'}}>
-                <BookMarked className="w-7 h-7 mx-auto mb-3" style={{color:'#6b6459'}} />
-                <p style={{fontSize:13,color:'#a39a8c',marginBottom:12}}>
+              <div style={{background:'var(--pm-bg,#1c1916)',borderRadius:10,border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',padding:'48px 24px',textAlign:'center'}}>
+                <BookMarked className="w-7 h-7 mx-auto mb-3" style={{color:'var(--pm-text-faint,#6b6459)'}} />
+                <p style={{fontSize:13,color:'var(--pm-text-muted,#a39a8c)',marginBottom:12}}>
                   {search ? '검색 결과가 없습니다' : '항목이 없습니다'}
                 </p>
                 <button
@@ -1648,7 +1648,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
           {/* ── 1. 단말 이름 ─────────────────────────────────────────────────── */}
           <div style={{marginBottom:16}}>
-            <div style={{display:'flex',alignItems:'center',marginBottom:6,fontSize:11.5,color:'#a39a8c'}}>
+            <div style={{display:'flex',alignItems:'center',marginBottom:6,fontSize:11.5,color:'var(--pm-text-muted,#a39a8c)'}}>
               <span>이 기기 이름{!deviceName && !data.deviceId && <span style={{color:'#e8a557',fontWeight:500,marginLeft:4}}>* 필수</span>}</span>
               <div style={{flex:1}}/>
               {deviceName
@@ -1662,12 +1662,12 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
               type="text"
               value={deviceName}
               onChange={e => setDeviceName(e.target.value)}
-              style={{width:'100%',padding:'8px 10px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:6,color:'#ede7dd',fontSize:12.5,outline:'none',fontFamily:'inherit',boxSizing:'border-box'}}
+              style={{width:'100%',padding:'8px 10px',background:'var(--pm-bg-input,#15120f)',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',borderRadius:6,color:'var(--pm-text,#ede7dd)',fontSize:12.5,outline:'none',fontFamily:'inherit',boxSizing:'border-box'}}
               placeholder="예: MyMacPro, 회사맥북, WindowsPC"
               autoFocus={!deviceName && !data.deviceId}
             />
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginTop:5}}>
-              <p style={{fontSize:10.5,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace",margin:0}}>Device ID: {data.deviceId ? data.deviceId.slice(0, 16) + '…' : '자동생성'}</p>
+              <p style={{fontSize:10.5,color:'var(--pm-text-faint,#6b6459)',fontFamily:"'JetBrains Mono',monospace",margin:0}}>Device ID: {data.deviceId ? data.deviceId.slice(0, 16) + '…' : '자동생성'}</p>
               {onChangeDevice && (
                 <button
                   onClick={() => { setShowSettings(false); onChangeDevice(); }}
@@ -1681,20 +1681,20 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
           {/* ── 2. Supabase 연결 ─────────────────────────────────────────────── */}
           <div style={{marginBottom:16}}>
-            <label style={{display:'block',fontSize:11.5,color:'#a39a8c',marginBottom:6}}>Project URL</label>
+            <label style={{display:'block',fontSize:11.5,color:'var(--pm-text-muted,#a39a8c)',marginBottom:6}}>Project URL</label>
             <input
               type="text"
               value={sbUrl}
               onChange={e => setSbUrl(e.target.value)}
-              style={{width:'100%',padding:'8px 10px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:6,color:'#ede7dd',fontSize:12.5,outline:'none',fontFamily:'inherit',boxSizing:'border-box',marginBottom:12}}
+              style={{width:'100%',padding:'8px 10px',background:'var(--pm-bg-input,#15120f)',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',borderRadius:6,color:'var(--pm-text,#ede7dd)',fontSize:12.5,outline:'none',fontFamily:'inherit',boxSizing:'border-box',marginBottom:12}}
               placeholder="https://xxx.supabase.co"
             />
-            <label style={{display:'block',fontSize:11.5,color:'#a39a8c',marginBottom:6}}>Anon Key</label>
+            <label style={{display:'block',fontSize:11.5,color:'var(--pm-text-muted,#a39a8c)',marginBottom:6}}>Anon Key</label>
             <input
               type="password"
               value={sbKey}
               onChange={e => setSbKey(e.target.value)}
-              style={{width:'100%',padding:'8px 10px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:6,color:'#ede7dd',fontSize:12.5,outline:'none',fontFamily:"'JetBrains Mono',monospace",boxSizing:'border-box'}}
+              style={{width:'100%',padding:'8px 10px',background:'var(--pm-bg-input,#15120f)',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',borderRadius:6,color:'var(--pm-text,#ede7dd)',fontSize:12.5,outline:'none',fontFamily:"'JetBrains Mono',monospace",boxSizing:'border-box'}}
               placeholder="eyJ..."
             />
             {sbUrl && sbKey && (
@@ -1760,30 +1760,30 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       {/* ── Push 히스토리 모달 — 포털 아이템 ─────────────────────────────────── */}
       {showPortalHistory && (
         <div style={{position:'fixed',inset:0,zIndex:60,display:'flex',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.6)',backdropFilter:'blur(4px)'}} onClick={() => setShowPortalHistory(false)}>
-          <div style={{background:'#18181b',border:'1px solid rgba(255,240,220,0.1)',borderRadius:12,width:'calc(100vw - 24px)',maxWidth:460,margin:'0 12px',boxShadow:'0 24px 48px rgba(0,0,0,0.6)',overflow:'hidden'}} onClick={e => e.stopPropagation()}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
+          <div style={{background:'#18181b',border:'1px solid var(--pm-border-mid,rgba(255,240,220,0.1))',borderRadius:12,width:'calc(100vw - 24px)',maxWidth:460,margin:'0 12px',boxShadow:'0 24px 48px rgba(0,0,0,0.6)',overflow:'hidden'}} onClick={e => e.stopPropagation()}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',borderBottom:'1px solid var(--pm-border,rgba(255,240,220,0.07))'}}>
               <div style={{display:'flex',alignItems:'center',gap:8}}>
                 <Clock className="w-4 h-4" style={{color:'#e8a557'}} />
-                <span style={{fontSize:13,fontWeight:600,color:'#ede7dd'}}>Push 히스토리 — 포털 북마크</span>
+                <span style={{fontSize:13,fontWeight:600,color:'var(--pm-text,#ede7dd)'}}>Push 히스토리 — 포털 북마크</span>
               </div>
-              <button onClick={() => setShowPortalHistory(false)} style={{background:'transparent',border:'none',color:'#a39a8c',cursor:'pointer',padding:4,display:'flex',alignItems:'center'}}><X className="w-4 h-4" /></button>
+              <button onClick={() => setShowPortalHistory(false)} style={{background:'transparent',border:'none',color:'var(--pm-text-muted,#a39a8c)',cursor:'pointer',padding:4,display:'flex',alignItems:'center'}}><X className="w-4 h-4" /></button>
             </div>
             <div style={{overflowY:'auto',maxHeight:360}}>
               {portalHistoryLoading ? (
                 <div style={{display:'flex',alignItems:'center',justifyContent:'center',padding:'40px 0'}}>
-                  <RefreshCw className="w-5 h-5" style={{color:'#6b6459',animation:'spin 1s linear infinite'}} />
+                  <RefreshCw className="w-5 h-5" style={{color:'var(--pm-text-faint,#6b6459)',animation:'spin 1s linear infinite'}} />
                 </div>
               ) : portalHistoryList.length === 0 ? (
                 <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'40px 0',gap:8}}>
                   <Clock className="w-8 h-8" style={{color:'#3f3a34'}} />
-                  <p style={{fontSize:13,color:'#6b6459',margin:0}}>저장된 히스토리가 없습니다</p>
+                  <p style={{fontSize:13,color:'var(--pm-text-faint,#6b6459)',margin:0}}>저장된 히스토리가 없습니다</p>
                   <p style={{fontSize:11,color:'#4a4540',margin:0}}>Push 시 자동으로 스냅샷이 저장됩니다</p>
                 </div>
               ) : portalHistoryList.map((snap, i) => (
-                <div key={snap.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',borderBottom:'1px solid rgba(255,240,220,0.05)'}}>
+                <div key={snap.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'12px 16px',borderBottom:'1px solid var(--pm-border-faint,rgba(255,240,220,0.05))'}}>
                   <div style={{minWidth:0}}>
-                    <p style={{fontSize:13,color:'#ede7dd',fontWeight:500,margin:0}}>{new Date(snap.created_at).toLocaleString('ko-KR')}</p>
-                    <p style={{fontSize:11,color:'#6b6459',margin:'3px 0 0',fontFamily:"'JetBrains Mono',monospace"}}>
+                    <p style={{fontSize:13,color:'var(--pm-text,#ede7dd)',fontWeight:500,margin:0}}>{new Date(snap.created_at).toLocaleString('ko-KR')}</p>
+                    <p style={{fontSize:11,color:'var(--pm-text-faint,#6b6459)',margin:'3px 0 0',fontFamily:"'JetBrains Mono',monospace"}}>
                       {snap.row_count}개 항목{snap.device_name ? ` · ${snap.device_name}` : ''}
                       {i === 0 && <span style={{marginLeft:6,color:'#8fb96e',fontWeight:500}}>최신</span>}
                     </p>
@@ -1801,7 +1801,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
                 </div>
               ))}
             </div>
-            <div style={{padding:'8px 16px',borderTop:'1px solid rgba(255,240,220,0.07)',background:'rgba(255,255,255,0.02)'}}>
+            <div style={{padding:'8px 16px',borderTop:'1px solid var(--pm-border,rgba(255,240,220,0.07))',background:'rgba(255,255,255,0.02)'}}>
               <p style={{fontSize:10.5,color:'#4a4540',margin:0}}>복원 시 현재 Supabase 북마크 데이터를 선택한 시점으로 되돌립니다</p>
             </div>
           </div>
@@ -1834,8 +1834,8 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
     <div
       data-help-key="portal-item-card"
       style={{
-        padding:14, background:'#1c1916',
-        border:`1px solid ${hovered ? 'rgba(255,240,220,0.12)' : 'rgba(255,240,220,0.07)'}`,
+        padding:14, background:'var(--pm-bg,#1c1916)',
+        border:`1px solid ${hovered ? 'var(--pm-border-hover,var(--pm-border-hover,rgba(255,240,220,0.12)))' : 'var(--pm-border,var(--pm-border,rgba(255,240,220,0.07)))'}`,
         borderRadius:10, display:'flex', flexDirection:'column', gap:6,
         minHeight:100, position:'relative', cursor:'pointer', transition:'border-color .1s',
       }}
@@ -1844,7 +1844,7 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
     >
       {/* Visit count badge */}
       {item.visitCount > 0 && (
-        <span style={{position:'absolute',top:10,right:10,fontSize:10,fontFamily:"'JetBrains Mono',monospace",color:'#6b6459'}}>{item.visitCount}</span>
+        <span style={{position:'absolute',top:10,right:10,fontSize:10,fontFamily:"'JetBrains Mono',monospace",color:'var(--pm-text-faint,#6b6459)'}}>{item.visitCount}</span>
       )}
       {item.pinned && <Star className="w-3 h-3" style={{position:'absolute',top:10,right:item.visitCount>0?28:10,color:'#e8a557'}} />}
 
@@ -1856,17 +1856,17 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
             : <Folder className={`w-3.5 h-3.5 ${c.text}`} />
           }
         </div>
-        <div style={{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:13,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>
+        <div style={{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:13,fontWeight:600,letterSpacing:-0.2,color:'var(--pm-text,#ede7dd)'}}>
           {item.name}
         </div>
       </div>
 
       {item.description && (
-        <div style={{fontSize:11,color:'#a39a8c',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.description}</div>
+        <div style={{fontSize:11,color:'var(--pm-text-muted,#a39a8c)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.description}</div>
       )}
 
       {/* URL/path preview */}
-      <div style={{fontSize:11,color:'#6b6459',fontFamily:"'JetBrains Mono',monospace",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+      <div style={{fontSize:11,color:'var(--pm-text-faint,#6b6459)',fontFamily:"'JetBrains Mono',monospace",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
         {item.type === 'web' ? item.url : item.path}
       </div>
 
@@ -1883,7 +1883,7 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
         <button
           data-help-key="portal-pin-toggle"
           onClick={() => onTogglePin(item.id)}
-          style={{padding:'5px 8px',borderRadius:5,background:item.pinned?'rgba(232,165,87,0.12)':'transparent',border:'1px solid rgba(255,240,220,0.07)',color:item.pinned?'#e8a557':'#6b6459',cursor:'pointer'}}
+          style={{padding:'5px 8px',borderRadius:5,background:item.pinned?'rgba(232,165,87,0.12)':'transparent',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',color:item.pinned?'#e8a557':'var(--pm-text-faint,#6b6459)',cursor:'pointer'}}
           title={item.pinned ? '고정 해제' : '고정'}
         >
           <Pin className="w-3 h-3" />
@@ -1891,14 +1891,14 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
         <button
           data-help-key="menu-edit"
           onClick={() => onEdit(item)}
-          style={{padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#6b6459',cursor:'pointer'}}
+          style={{padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',color:'var(--pm-text-faint,#6b6459)',cursor:'pointer'}}
         >
           <Pencil className="w-3 h-3" />
         </button>
         <button
           data-help-key="menu-delete"
           onClick={() => onDelete(item.id)}
-          style={{padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#6b6459',cursor:'pointer'}}
+          style={{padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',color:'var(--pm-text-faint,#6b6459)',cursor:'pointer'}}
         >
           <Trash2 className="w-3 h-3" />
         </button>
@@ -1918,17 +1918,17 @@ function Modal({ title, children, onClose, onConfirm, confirmLabel }: {
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{background:'rgba(10,8,6,0.65)',backdropFilter:'blur(2px)'}}>
-      <div style={{width:'100%',maxWidth:440,background:'#1c1916',borderRadius:12,border:'1px solid rgba(255,240,220,0.12)',boxShadow:'0 24px 80px rgba(0,0,0,0.6)',overflow:'hidden',maxHeight:'90vh',display:'flex',flexDirection:'column',minWidth:0}}>
-        <div style={{padding:'14px 18px',display:'flex',alignItems:'center',borderBottom:'1px solid rgba(255,240,220,0.07)',flexShrink:0}}>
-          <h3 style={{margin:0,fontSize:14,fontWeight:600,letterSpacing:-0.2,color:'#ede7dd'}}>{title}</h3>
+      <div style={{width:'100%',maxWidth:440,background:'var(--pm-bg,#1c1916)',borderRadius:12,border:'1px solid var(--pm-border-hover,rgba(255,240,220,0.12))',boxShadow:'0 24px 80px rgba(0,0,0,0.6)',overflow:'hidden',maxHeight:'90vh',display:'flex',flexDirection:'column',minWidth:0}}>
+        <div style={{padding:'14px 18px',display:'flex',alignItems:'center',borderBottom:'1px solid var(--pm-border,rgba(255,240,220,0.07))',flexShrink:0}}>
+          <h3 style={{margin:0,fontSize:14,fontWeight:600,letterSpacing:-0.2,color:'var(--pm-text,#ede7dd)'}}>{title}</h3>
           <div style={{flex:1}}/>
-          <button onClick={onClose} style={{background:'transparent',border:'none',color:'#a39a8c',cursor:'pointer',padding:4,display:'flex',alignItems:'center'}}>
+          <button onClick={onClose} style={{background:'transparent',border:'none',color:'var(--pm-text-muted,#a39a8c)',cursor:'pointer',padding:4,display:'flex',alignItems:'center'}}>
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
         <div style={{padding:18,flex:1,overflowY:'auto'}}>{children}</div>
-        <div style={{padding:'12px 18px',borderTop:'1px solid rgba(255,240,220,0.07)',display:'flex',gap:8,justifyContent:'flex-end',flexShrink:0}}>
-          <button onClick={onClose} style={{padding:'7px 16px',background:'transparent',color:'#ede7dd',border:'1px solid rgba(255,240,220,0.12)',borderRadius:6,fontSize:12.5,cursor:'pointer',fontFamily:'inherit'}}>
+        <div style={{padding:'12px 18px',borderTop:'1px solid var(--pm-border,rgba(255,240,220,0.07))',display:'flex',gap:8,justifyContent:'flex-end',flexShrink:0}}>
+          <button onClick={onClose} style={{padding:'7px 16px',background:'transparent',color:'var(--pm-text,#ede7dd)',border:'1px solid var(--pm-border-hover,rgba(255,240,220,0.12))',borderRadius:6,fontSize:12.5,cursor:'pointer',fontFamily:'inherit'}}>
             취소
           </button>
           <button onClick={onConfirm} style={{padding:'7px 16px',background:'#e8a557',color:'#15120f',border:'none',borderRadius:6,fontSize:12.5,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>

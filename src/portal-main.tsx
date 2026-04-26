@@ -120,7 +120,7 @@ function PasswordGate({ onVerified }: { onVerified: () => void }) {
           <div className="p-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
             <BookMarked className="w-4 h-4 text-blue-400" />
           </div>
-          <span className="font-semibold text-white text-sm">포트 관리기</span>
+          <span className="font-semibold text-white text-sm">북마크</span>
         </div>
         <div>
           <label className="text-xs text-zinc-400 mb-1 block">비밀번호</label>
@@ -640,8 +640,22 @@ function App() {
 
   const btnCls = 'flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 hover:text-zinc-200 rounded-lg border border-zinc-700/50 transition-all';
 
+  const webThemeVars = {
+    '--pm-bg': '#18181b',
+    '--pm-bg-input': '#111113',
+    '--pm-bg-hover': '#27272a',
+    '--pm-border': 'rgba(255,255,255,0.07)',
+    '--pm-border-hover': 'rgba(255,255,255,0.11)',
+    '--pm-border-mid': 'rgba(255,255,255,0.09)',
+    '--pm-border-faint': 'rgba(255,255,255,0.05)',
+    '--pm-border-strong': 'rgba(255,255,255,0.20)',
+    '--pm-text': '#f4f4f5',
+    '--pm-text-muted': '#a1a1aa',
+    '--pm-text-faint': '#71717a',
+  } as React.CSSProperties;
+
   return (
-    <div className="min-h-screen bg-[#0a0a0b] text-white flex flex-col" onClick={() => showDevicePicker && setShowDevicePicker(false)}>
+    <div className="min-h-screen bg-[#0a0a0b] text-white flex flex-col" style={webThemeVars} onClick={() => showDevicePicker && setShowDevicePicker(false)}>
       {/* ── Header ── */}
       <header className="sticky top-0 z-40 bg-[#0a0a0b]/95 backdrop-blur border-b border-zinc-800/60 px-4 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-2 min-w-0">
@@ -650,7 +664,7 @@ function App() {
               <div className="p-1.5 bg-blue-500/10 rounded-lg border border-blue-500/20">
                 <BookMarked className="w-4 h-4 text-blue-400" />
               </div>
-              <span className="font-semibold text-white text-sm hidden sm:inline">포트 관리기</span>
+              <span className="font-semibold text-white text-sm hidden sm:inline">북마크</span>
             </div>
             {/* Tabs — compact mode only */}
             {!isFullLayout && (
