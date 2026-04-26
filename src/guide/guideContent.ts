@@ -146,6 +146,11 @@ export const GUIDE_CONTENT: Record<string, GuideEntry> = {
     body: '이 프로젝트의 GitHub 저장소를 Chrome으로 열어요.',
     tip: '카드 수정 → GitHub URL 필드에 주소를 넣으면 버튼이 나타나요.',
   },
+  'card-favorite': {
+    title: '즐겨찾기',
+    body: '별(★) 버튼을 누르면 즐겨찾기에 추가돼요. 즐겨찾기 항목은 목록 최상단에 고정되고, 왼쪽 사이드바 "Starred" 필터로 모아볼 수 있어요.',
+    tip: '다시 누르면 즐겨찾기가 해제돼요.',
+  },
   'card-more-menu': {
     title: '더 보기 메뉴',
     body: '카드별 추가 액션이 들어 있어요. 강제 재실행, 로그 보기, tmux/Claude 옵션 등.',

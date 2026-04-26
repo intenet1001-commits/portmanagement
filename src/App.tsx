@@ -3376,6 +3376,9 @@ function App() {
               <Github style={{width:11,height:11}}/>
             </button>
           )}
+          <button data-help-key="card-favorite" onClick={e=>{e.stopPropagation(); toggleFavorite(item);}} style={{...btnBase, color: item.favorite?'#e8a557':'#ede7dd', borderColor: item.favorite?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title={item.favorite?'즐겨찾기 해제':'즐겨찾기 추가'}>
+            <Star style={{width:11,height:11,fill:item.favorite?'#e8a557':'none'}}/>
+          </button>
           <button data-help-key="card-more-menu" onClick={e=>{e.stopPropagation(); if(menuOpen){setV3MenuOpenId(null);setV3MenuRect(null);}else{const r=e.currentTarget.getBoundingClientRect();const menuH=340;const spaceBelow=window.innerHeight-r.bottom;const top=spaceBelow<menuH?Math.max(8,r.top-menuH-4):r.bottom+4;setV3MenuOpenId(item.id);setV3MenuRect({top,right:window.innerWidth-r.right});}}} style={{...btnBase, color: menuOpen?'#e8a557':'#ede7dd', borderColor: menuOpen?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}}>
             <ChevronDown style={{width:11,height:11}}/>
           </button>
