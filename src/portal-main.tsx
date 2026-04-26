@@ -5,7 +5,7 @@ import PortalManager, { PortalActions } from './PortalManager';
 import {
   BookMarked, Settings, CloudUpload, CloudDownload,
   ExternalLink, Github, RefreshCw, Clock, Monitor, Smartphone,
-  Server, Pencil, Trash2,
+  Server, Pencil, Trash2, Search,
   ChevronDown, X, MoreHorizontal, Link2,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
@@ -165,6 +165,7 @@ function PortsView({ deviceId, creds, showToast, onSwitchDevice }: {
 }) {
   const [ports, setPorts] = useState<PortRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const sb = useCallback(() => createClient(creds.url, creds.key), [creds.url, creds.key]);
 
@@ -196,12 +197,22 @@ function PortsView({ deviceId, creds, showToast, onSwitchDevice }: {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-3">
         <p className="text-xs text-zinc-500">{ports.length}개 포트</p>
         <button onClick={loadPorts} disabled={loading}
           className="p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-50">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
         </button>
+      </div>
+      <div className="relative mb-4">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500 pointer-events-none" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+          placeholder="프로젝트 검색..."
+          className="w-full pl-8 pr-3 py-1.5 bg-zinc-900/60 border border-zinc-800/60 rounded-lg text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-zinc-600 transition-colors"
+        />
       </div>
 
       {!loading && ports.length === 0 ? (
@@ -222,7 +233,11 @@ function PortsView({ deviceId, creds, showToast, onSwitchDevice }: {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-          {ports.map(p => (
+          {ports.filter(p => {
+            if (!searchQuery.trim()) return true;
+            const q = searchQuery.toLowerCase();
+            return (p.name?.toLowerCase().includes(q) || String(p.port ?? '').includes(q) || p.folder_path?.toLowerCase().includes(q));
+          }).map(p => (
             <div key={p.id} className="bg-zinc-900/60 border border-zinc-800/60 rounded-xl p-4 hover:border-zinc-700/60 transition-all">
               <div className="mb-2">
                 <p className="text-sm font-medium text-white leading-snug truncate">{p.name}</p>
