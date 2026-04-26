@@ -4241,28 +4241,9 @@ function App() {
               </>
             )}
 
-            {/* 포트 탭 전용 액션 버튼 (글로벌 위치) */}
+            {/* 포트 탭 전용 액션 버튼 (글로벌 위치) — history·settings만 유지, 나머지는 컨텐츠 헤더에 있음 */}
             {activeTab === 'ports' && (
               <>
-                <button data-help-key="btn-export-ports" onClick={handleExportPorts} title="내보내기" className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all">
-                  <Upload className="w-4 h-4" />
-                </button>
-                <button data-help-key="btn-import-ports" onClick={handleImportPorts} title="불러오기" className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all">
-                  <Download className="w-4 h-4" />
-                </button>
-                <button data-help-key="btn-refresh" onClick={handleRefresh} disabled={isRefreshing || isAiEnriching} title={isAiEnriching ? 'AI 분석 중…' : '새로고침'} className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                  <RefreshCw className={`w-4 h-4 ${isRefreshing || isAiEnriching ? 'animate-spin' : ''}`} />
-                </button>
-                <div className="flex items-center rounded-xl border border-stone-800/40 overflow-hidden">
-                  <button data-help-key="btn-supabase-push" onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm border-r border-stone-800/40 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
-                    <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
-                    <span className="text-xs font-medium">Push</span>
-                  </button>
-                  <button data-help-key="btn-supabase-pull" onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
-                    <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
-                    <span className="text-xs font-medium">Pull</span>
-                  </button>
-                </div>
                 <button
                   data-help-key="btn-history"
                   onClick={openPortsHistory}
