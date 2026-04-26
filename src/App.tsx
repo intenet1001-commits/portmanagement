@@ -4215,6 +4215,14 @@ function App() {
                   </button>
                 </div>
                 <button
+                  data-help-key="btn-portal-history"
+                  onClick={() => portalActionsRef.current?.history()}
+                  title="북마크 히스토리 / 복원"
+                  className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all"
+                >
+                  <Clock className="w-4 h-4" />
+                </button>
+                <button
                   data-help-key="btn-portal-export"
                   onClick={() => portalActionsRef.current?.exportData()}
                   title="내보내기"
