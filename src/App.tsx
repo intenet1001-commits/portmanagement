@@ -4427,7 +4427,7 @@ function App() {
                             새 폴더
                           </button>
                           <button
-                            onClick={() => handleRemoveWorkspaceRoot(root.id)}
+                            onClick={() => { if (confirm(`"${root.name}" 루트 폴더를 목록에서 제거하시겠습니까?`)) handleRemoveWorkspaceRoot(root.id); }}
                             title="루트 제거"
                             style={{padding:'2px 4px',background:'transparent',border:'none',color:'#6b6459',cursor:'pointer',display:'flex',alignItems:'center',flexShrink:0}}
                           >
