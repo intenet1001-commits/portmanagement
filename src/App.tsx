@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock, Zap } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock, Zap, History } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { getSupabaseClient } from './lib/supabaseClient';
@@ -3113,6 +3113,11 @@ function App() {
       const cutoff = Date.now() - 14 * 86400000;
       list = list.filter(p => { const last = lastVisits[p.id]; return !last || last < cutoff; });
     }
+    else if (sidebarSection === 'recent') {
+      const cutoff = Date.now() - 7 * 86400000;
+      list = list.filter(p => { const last = lastVisits[p.id]; return !!last && last >= cutoff; });
+      list = [...list].sort((a, b) => (lastVisits[b.id] || 0) - (lastVisits[a.id] || 0));
+    }
     else if (sidebarSection.startsWith('tag:')) list = list.filter(p => p.category === sidebarSection.slice(4));
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
@@ -4307,6 +4312,7 @@ function App() {
               {([
                 {id:'all',    label:'All projects', count: ports.length,                              Icon: Server},
                 {id:'running',label:'Running now',  count: ports.filter((p:PortInfo)=>p.isRunning).length,      Icon: Play},
+                {id:'recent', label:'Recent',       count: (() => { const cutoff = Date.now() - 7*86400000; return ports.filter((p:PortInfo)=>{ const last = lastVisits[p.id]; return !!last && last >= cutoff; }).length; })(), Icon: History},
                 {id:'starred',label:'Starred',      count: ports.filter((p:PortInfo)=>p.favorite).length,       Icon: Star},
                 {id:'wt',     label:'Worktrees',    count: ports.filter((p:PortInfo)=>!!p.worktreePath).length, Icon: GitBranch},
                 {id:'stale',  label:'Stale',        count: (() => { const cutoff = Date.now() - 14*86400000; return ports.filter((p:PortInfo)=>{ const last = lastVisits[p.id]; return !last || last < cutoff; }).length; })(), Icon: Clock},
