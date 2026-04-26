@@ -4241,9 +4241,28 @@ function App() {
               </>
             )}
 
-            {/* 포트 탭 전용 액션 버튼 (글로벌 위치) — history·settings만 유지, 나머지는 컨텐츠 헤더에 있음 */}
+            {/* 포트 탭 전용 액션 버튼 (글로벌 위치) */}
             {activeTab === 'ports' && (
               <>
+                <button data-help-key="btn-export-ports" onClick={handleExportPorts} title="내보내기" className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all">
+                  <Upload className="w-4 h-4" />
+                </button>
+                <button data-help-key="btn-import-ports" onClick={handleImportPorts} title="불러오기" className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all">
+                  <Download className="w-4 h-4" />
+                </button>
+                <button data-help-key="btn-refresh" onClick={handleRefresh} disabled={isRefreshing || isAiEnriching} title={isAiEnriching ? 'AI 분석 중…' : '새로고침'} className="p-2 bg-[#1c1916] hover:bg-[#221f1b] text-zinc-500 hover:text-[#ede7dd]/90 rounded-xl border border-stone-800/40 hover:border-stone-700/60 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                  <RefreshCw className={`w-4 h-4 ${isRefreshing || isAiEnriching ? 'animate-spin' : ''}`} />
+                </button>
+                <div className="flex items-center rounded-xl border border-stone-800/40 overflow-hidden">
+                  <button data-help-key="btn-supabase-push" onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm border-r border-stone-800/40 transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <CloudUpload className={`w-3.5 h-3.5 ${isPushingPorts ? 'animate-pulse' : 'text-indigo-400'}`} />
+                    <span className="text-xs font-medium">Push</span>
+                  </button>
+                  <button data-help-key="btn-supabase-pull" onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" className="px-2.5 py-1.5 bg-[#1c1916] hover:bg-[#221f1b] text-[#ede7dd]/90 text-sm transition-all flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <CloudDownload className={`w-3.5 h-3.5 ${isRestoring ? 'animate-pulse' : 'text-indigo-400'}`} />
+                    <span className="text-xs font-medium">Pull</span>
+                  </button>
+                </div>
                 <button
                   data-help-key="btn-history"
                   onClick={openPortsHistory}
@@ -4275,8 +4294,8 @@ function App() {
               </button>
             )}
 
-            {/* bypass 토글 */}
-            <button
+            {/* bypass 토글 — 포털 탭에서 숨김 */}
+            {activeTab !== 'portal' && <button
               data-help-key="btn-bypass"
               onClick={() => { const v = !bypassPermissions; setBypassPermissions(v); localStorage.setItem('portmanager-bypassPermissions', String(v)); }}
               title={bypassPermissions ? 'Claude bypass 모드 ON — 클릭하여 일반 모드로 전환' : 'Claude 일반 모드 — 클릭하여 bypass 모드로 전환'}
@@ -4288,7 +4307,7 @@ function App() {
             >
               <Zap className={`w-3 h-3 ${bypassPermissions ? 'text-purple-300' : ''}`} />
               <span>bypass {bypassPermissions ? 'ON' : 'OFF'}</span>
-            </button>
+            </button>}
 
             {/* 설정 마법사 버튼 */}
             <button
@@ -4729,23 +4748,6 @@ function App() {
                 </h1>
                 <span data-help-key="header-project-count" style={{fontSize:12,color:'#a39a8c'}}>{v3Ports.length} projects</span>
                 <div style={{flex:1}} />
-                <button data-help-key="btn-export-ports" onClick={handleExportPorts} title="내보내기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
-                  <Upload style={{width:13,height:13}} />
-                </button>
-                <button data-help-key="btn-import-ports" onClick={handleImportPorts} title="불러오기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
-                  <Download style={{width:13,height:13}} />
-                </button>
-                <button data-help-key="btn-refresh" onClick={handleRefresh} disabled={isRefreshing||isAiEnriching} title="새로고침" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
-                  <RefreshCw style={{width:13,height:13}} className={isRefreshing||isAiEnriching ? 'animate-spin' : ''} />
-                </button>
-                <button data-help-key="btn-supabase-push" onClick={handlePushToSupabase} disabled={isPushingPorts} title="Supabase Push" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
-                  <CloudUpload style={{width:13,height:13}} className={isPushingPorts ? 'animate-pulse' : ''} />
-                  Push
-                </button>
-                <button data-help-key="btn-supabase-pull" onClick={handleRestoreFromSupabase} disabled={isRestoring} title="Supabase Pull" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
-                  <CloudDownload style={{width:13,height:13}} className={isRestoring ? 'animate-pulse' : ''} />
-                  Pull
-                </button>
                 <button data-help-key="header-cmux-root" onClick={openCmuxTerminalAtRoot} title="cmux 터미널로 작업 루트 열기 (macOS 전용)" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
                   <SquareTerminal style={{width:13,height:13}} />
                   cmux
