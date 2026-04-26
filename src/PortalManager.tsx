@@ -1060,6 +1060,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
   async function restorePortalSnapshot(snapshotId: string) {
     if (!sbUrl || !sbKey) return;
+    if (!window.confirm('현재 북마크 데이터가 선택한 스냅샷으로 대체됩니다.\n스냅샷에 없는 북마크는 삭제됩니다.\n계속하시겠습니까?')) return;
     setPortalHistoryRestoring(snapshotId);
     try {
       const supabase = getSupabaseClient(sbUrl, sbKey);
