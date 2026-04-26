@@ -1053,8 +1053,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     setPortalHistoryLoading(true);
     setShowPortalHistory(true);
     const supabase = getSupabaseClient(sbUrl, sbKey);
-    const deviceId = data.deviceId ?? null;
-    const list = await fetchPushHistory(supabase, 'portal_items', deviceId);
+    const list = await fetchPushHistory(supabase, 'portal_items', '__shared__');
     setPortalHistoryList(list);
     setPortalHistoryLoading(false);
   }
@@ -1069,13 +1068,13 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       const { error: uErr } = await supabase.from('portal_items').upsert(rows, { onConflict: 'id' });
       if (uErr) throw new Error(uErr.message);
       const snapshotIds = new Set(rows.map(r => r.id));
-      const deviceId = data.deviceId ?? null;
+      // 공유 북마크(__shared__)만 정리 — 기기별 항목은 건드리지 않음
       const { data: current } = await supabase
         .from('portal_items').select('id')
-        .or(`device_id.eq.${deviceId},device_id.eq.__shared__`);
+        .eq('device_id', '__shared__');
       const toDelete = (current ?? []).filter((r: any) => !snapshotIds.has(r.id)).map((r: any) => r.id);
       if (toDelete.length > 0) await supabase.from('portal_items').delete().in('id', toDelete);
-      await pullFromSupabase();
+      await pullFromSupabase({ skipConfirm: true });
       showToast('스냅샷으로 복원 완료 ✓', 'success');
       setShowPortalHistory(false);
     } catch (e) {
@@ -1125,7 +1124,8 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         "order": cat.order,
       }));
 
-      await savePushSnapshot(supabase, 'portal_items', deviceId, data.deviceName ?? null, itemRows);
+      // 북마크 스냅샷은 기기 무관 공유 — '__shared__' sentinel로 저장
+      await savePushSnapshot(supabase, 'portal_items', '__shared__', '(공유)', itemRows);
       const [itemsRes, catsRes] = await Promise.all([
         supabase.from('portal_items').upsert(itemRows, { onConflict: 'id' }),
         supabase.from('portal_categories').upsert(catRows, { onConflict: 'id' }),
