@@ -1195,6 +1195,8 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       };
       await persist(nextData);
       setData(nextData);
+      // Pull 완료 후 항상 내 기기 모드로 복귀
+      setViewingDeviceId('');
       showToast(`Supabase에서 ${items.length}개 항목을 복원했습니다 ✓`, 'success');
     } catch (err) {
       showToast('복원 실패: ' + err, 'error');
@@ -1321,7 +1323,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   }
 
   async function saveSettings() {
-    const next: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceName: deviceName || undefined, viewingDeviceId: viewingDeviceId || undefined };
+    const next: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceName: deviceName || undefined };
     await persist(next);
     setShowSettings(false);
     showToast('설정 저장됨', 'success');
@@ -1644,7 +1646,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       {/* ── Settings Modal (탭 무관하게 항상 렌더) ────────────────────────── */}
       {showSettings && (
-        <Modal title="설정" onClose={() => setShowSettings(false)} onConfirm={async () => { await saveSettings(); if (viewingDeviceId && viewingDeviceId !== data.deviceId) { await pullFromSupabase(); } else { await syncSupabase(); } }} confirmLabel="저장 후 동기화">
+        <Modal title="설정" onClose={() => setShowSettings(false)} onConfirm={async () => { const isPull = viewingDeviceId !== '' && viewingDeviceId !== data.deviceId; await saveSettings(); if (isPull) { await pullFromSupabase(); } else { await syncSupabase(); } }} confirmLabel="저장 후 동기화">
 
           {/* ── 1. 단말 이름 ─────────────────────────────────────────────────── */}
           <div style={{marginBottom:16}}>
