@@ -3254,12 +3254,12 @@ function App() {
             </button>
           )}
           {item.deployUrl && (
-            <button onClick={e=>{e.stopPropagation(); window.open(item.deployUrl, '_blank');}} style={btnBase} title={`배포 주소: ${item.deployUrl}`}>
+            <button data-help-key="card-deploy" onClick={e=>{e.stopPropagation(); API.openInChrome(item.deployUrl!).catch(()=>{});}} style={btnBase} title={`배포 주소: ${item.deployUrl}`}>
               <Rocket style={{width:11,height:11}}/>
             </button>
           )}
           {item.githubUrl && (
-            <button onClick={e=>{e.stopPropagation(); window.open(item.githubUrl, '_blank');}} style={btnBase} title={`GitHub: ${item.githubUrl}`}>
+            <button data-help-key="card-github" onClick={e=>{e.stopPropagation(); API.openInChrome(item.githubUrl!).catch(()=>{});}} style={btnBase} title={`GitHub: ${item.githubUrl}`}>
               <Github style={{width:11,height:11}}/>
             </button>
           )}

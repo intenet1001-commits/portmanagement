@@ -136,6 +136,16 @@ export const GUIDE_CONTENT: Record<string, GuideEntry> = {
     title: 'Chrome에서 열기',
     body: '실행 중인 dev 서버 URL(localhost:포트)을 Chrome 브라우저로 열어요.',
   },
+  'card-deploy': {
+    title: '배포 주소 열기',
+    body: '이 프로젝트의 배포된 URL(Vercel, Netlify 등)을 Chrome으로 열어요.',
+    tip: '카드 수정 → 배포 URL 필드에 주소를 넣으면 버튼이 나타나요.',
+  },
+  'card-github': {
+    title: 'GitHub 열기',
+    body: '이 프로젝트의 GitHub 저장소를 Chrome으로 열어요.',
+    tip: '카드 수정 → GitHub URL 필드에 주소를 넣으면 버튼이 나타나요.',
+  },
   'card-more-menu': {
     title: '더 보기 메뉴',
     body: '카드별 추가 액션이 들어 있어요. 강제 재실행, 로그 보기, tmux/Claude 옵션 등.',
@@ -202,6 +212,11 @@ export const GUIDE_CONTENT: Record<string, GuideEntry> = {
   'sidebar-running': {
     title: '실행 중',
     body: '현재 dev 서버가 켜져 있는 카드만 모아 봐요.',
+  },
+  'sidebar-recent': {
+    title: '최근 사용',
+    body: '7일 이내에 열었던 프로젝트를 최신 순으로 보여줘요. 포트 없는 폴더 항목도 포함돼요.',
+    tip: '자주 쓰는 프로젝트를 빠르게 찾고 싶을 때 유용해요.',
   },
   'sidebar-starred': {
     title: '즐겨찾기',
