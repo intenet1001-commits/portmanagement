@@ -2147,6 +2147,18 @@ pub fn run() {
       let _ = app.global_shortcut().register(saved.as_str());
       Ok(())
     })
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application")
+    .run(|app_handle, event| {
+      // macOS: Dock 아이콘 클릭 시 숨겨진 창 복원
+      if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+        if !has_visible_windows {
+          if let Some(window) = app_handle.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+          }
+        }
+      }
+    });
 }
