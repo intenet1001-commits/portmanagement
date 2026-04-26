@@ -968,6 +968,12 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   }
 
   async function deleteCategory(id: string) {
+    const affectedCount = data.items.filter(i => i.category === id).length;
+    const catName = data.categories.find(c => c.id === id)?.name ?? '카테고리';
+    const msg = affectedCount > 0
+      ? `"${catName}" 카테고리와 안에 있는 북마크 ${affectedCount}개가 모두 삭제됩니다.\n계속하시겠습니까?`
+      : `"${catName}" 카테고리를 삭제하시겠습니까?`;
+    if (!window.confirm(msg)) return;
     const next: PortalData = {
       ...data,
       categories: data.categories.filter(c => c.id !== id),
@@ -975,7 +981,8 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     };
     await persist(next);
     if (selectedCat === id) setSelectedCat('all');
-    showToast('카테고리 삭제됨', 'success');
+    const detail = affectedCount > 0 ? ` (북마크 ${affectedCount}개 포함)` : '';
+    showToast(`카테고리 삭제됨${detail}`, 'success');
   }
 
   // ── Export / Import ───────────────────────────────────────────────────────
@@ -1005,6 +1012,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
   }
 
   async function importData() {
+    if (!window.confirm('현재 북마크 데이터가 파일로 완전히 대체됩니다.\n계속하시겠습니까?')) return;
     if (isTauri()) {
       try {
         const selected = await openDialog({ multiple: false, filters: [{ name: 'JSON', extensions: ['json'] }] });
@@ -1083,6 +1091,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       setShowSettings(true);
       return;
     }
+    if (isSyncing || isRestoring) { showToast('동기화 진행 중입니다', 'error'); return; }
     setIsSyncing(true);
     setSyncOk(null);
     try {
@@ -1143,11 +1152,15 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     }
   }
 
-  async function pullFromSupabase() {
+  async function pullFromSupabase(opts?: { skipConfirm?: boolean }) {
     if (!sbUrl || !sbKey) {
       showToast('Supabase URL과 키를 먼저 설정하세요', 'error');
       setShowSettings(true);
       return;
+    }
+    if (isSyncing || isRestoring) { showToast('동기화 진행 중입니다', 'error'); return; }
+    if (!opts?.skipConfirm && data.items.length > 0) {
+      if (!window.confirm('현재 북마크 데이터가 Supabase 데이터로 덮어씌워집니다.\n계속하시겠습니까?')) return;
     }
     setIsRestoring(true);
     try {
@@ -1646,7 +1659,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       {/* ── Settings Modal (탭 무관하게 항상 렌더) ────────────────────────── */}
       {showSettings && (
-        <Modal title="설정" onClose={() => setShowSettings(false)} onConfirm={async () => { const isPull = viewingDeviceId !== '' && viewingDeviceId !== data.deviceId; await saveSettings(); if (isPull) { await pullFromSupabase(); } else { await syncSupabase(); } }} confirmLabel="저장 후 동기화">
+        <Modal title="설정" onClose={() => setShowSettings(false)} onConfirm={async () => { const isPull = viewingDeviceId !== '' && viewingDeviceId !== data.deviceId; await saveSettings(); if (isPull) { await pullFromSupabase({ skipConfirm: true }); } else { await syncSupabase(); } }} confirmLabel="저장 후 동기화">
 
           {/* ── 1. 단말 이름 ─────────────────────────────────────────────────── */}
           <div style={{marginBottom:16}}>
@@ -1831,13 +1844,26 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
   const cat = getCat(item.category);
   const c = cat ? getColor(cat.color) : COLORS.teal;
   const [hovered, setHovered] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const confirmTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handleDeleteClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (confirmDelete) {
+      if (confirmTimerRef.current) clearTimeout(confirmTimerRef.current);
+      onDelete(item.id);
+    } else {
+      setConfirmDelete(true);
+      confirmTimerRef.current = setTimeout(() => setConfirmDelete(false), 3000);
+    }
+  }
 
   return (
     <div
       data-help-key="portal-item-card"
       style={{
         padding:14, background:'var(--pm-bg,#1c1916)',
-        border:`1px solid ${hovered ? 'var(--pm-border-hover,var(--pm-border-hover,rgba(255,240,220,0.12)))' : 'var(--pm-border,var(--pm-border,rgba(255,240,220,0.07)))'}`,
+        border:`1px solid ${hovered ? 'var(--pm-border-hover,rgba(255,240,220,0.12))' : 'var(--pm-border,rgba(255,240,220,0.07))'}`,
         borderRadius:10, display:'flex', flexDirection:'column', gap:6,
         minHeight:100, position:'relative', cursor:'pointer', transition:'border-color .1s',
       }}
@@ -1899,10 +1925,19 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
         </button>
         <button
           data-help-key="menu-delete"
-          onClick={() => onDelete(item.id)}
-          style={{padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',color:'var(--pm-text-faint,#6b6459)',cursor:'pointer'}}
+          onClick={handleDeleteClick}
+          style={{
+            padding:'5px 8px',borderRadius:5,cursor:'pointer',
+            background: confirmDelete ? 'rgba(239,68,68,0.12)' : 'transparent',
+            border: confirmDelete ? '1px solid rgba(239,68,68,0.4)' : '1px solid var(--pm-border,rgba(255,240,220,0.07))',
+            color: confirmDelete ? '#f87171' : 'var(--pm-text-faint,#6b6459)',
+            fontSize: confirmDelete ? 10 : undefined,
+            whiteSpace: 'nowrap',
+            transition: 'all .15s',
+          }}
+          title={confirmDelete ? '한 번 더 누르면 삭제됩니다' : '삭제'}
         >
-          <Trash2 className="w-3 h-3" />
+          {confirmDelete ? '삭제?' : <Trash2 className="w-3 h-3" />}
         </button>
       </div>
     </div>
