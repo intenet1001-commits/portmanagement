@@ -9,6 +9,7 @@ import {
   ChevronDown, X, MoreHorizontal, Link2,
 } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
+import { fetchPushHistory, type PushSnapshot } from './pushHistory';
 
 const PW_VERIFIED_KEY = 'portal_pw_verified';
 const REQUIRED_HASH = (import.meta.env.VITE_PORTAL_PASSWORD_HASH as string | undefined) ?? '';
@@ -371,6 +372,9 @@ function App() {
   const [registerName, setRegisterName] = useState('');
   const [registering, setRegistering] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [showPortsHistory, setShowPortsHistory] = useState(false);
+  const [portsHistoryList, setPortsHistoryList] = useState<PushSnapshot[]>([]);
+  const [portsHistoryLoading, setPortsHistoryLoading] = useState(false);
   const actionsRef = useRef<PortalActions | null>(null);
   const creds = getSupabaseCreds();
 
@@ -552,6 +556,24 @@ function App() {
     setShowDevicePicker(false);
   }
 
+  async function openPortsHistory() {
+    if (!creds || !selectedDeviceId) {
+      showToast('기기를 먼저 선택하세요', 'error');
+      return;
+    }
+    setShowPortsHistory(true);
+    setPortsHistoryLoading(true);
+    try {
+      const sb = createClient(creds.url, creds.key);
+      const list = await fetchPushHistory(sb, 'ports', selectedDeviceId);
+      setPortsHistoryList(list);
+    } catch (e) {
+      showToast('히스토리 로드 실패: ' + String(e), 'error');
+    } finally {
+      setPortsHistoryLoading(false);
+    }
+  }
+
   function cycleViewMode() {
     const next: ViewMode = viewMode === 'auto' ? 'full' : viewMode === 'full' ? 'compact' : 'auto';
     setViewMode(next);
@@ -729,6 +751,13 @@ function App() {
               </div>
             </>}
 
+            {/* Project history button — ports tab only */}
+            {activeTab === 'ports' && (
+              <button onClick={openPortsHistory} className={btnCls} title="Push 히스토리">
+                <Clock className="w-3.5 h-3.5" /><span className="hidden sm:inline">히스토리</span>
+              </button>
+            )}
+
             {/* Layout toggle — hidden on mobile */}
             <button onClick={cycleViewMode} className={`${btnCls} hidden sm:flex`} title={`레이아웃: ${viewMode}`}>
               {viewModeIcon}
@@ -825,6 +854,63 @@ function App() {
       </div>
 
       {toasts.map(t => <Toast key={t.id} message={t.message} type={t.type} />)}
+
+      {showPortsHistory && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowPortsHistory(false)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-md shadow-2xl"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+              <div className="flex items-center gap-2.5">
+                <Clock className="w-4 h-4 text-zinc-400" />
+                <span className="text-sm font-semibold text-white">프로젝트 Push 히스토리</span>
+              </div>
+              <button onClick={() => setShowPortsHistory(false)}
+                className="p-1 text-zinc-500 hover:text-zinc-300 transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4">
+              {portsHistoryLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <RefreshCw className="w-5 h-5 text-zinc-500 animate-spin" />
+                </div>
+              ) : portsHistoryList.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 gap-2 text-center">
+                  <Clock className="w-8 h-8 text-zinc-700" />
+                  <p className="text-sm text-zinc-500">히스토리가 없습니다</p>
+                  <p className="text-xs text-zinc-600">로컬 앱에서 Push하면 기록이 저장됩니다</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {portsHistoryList.map((snap, i) => (
+                    <div key={snap.id} className={`px-3 py-2.5 rounded-xl border ${
+                      i === 0 ? 'border-blue-500/30 bg-blue-500/5' : 'border-zinc-800/60 bg-zinc-900/60'
+                    }`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-medium text-zinc-200">
+                            {new Date(snap.created_at).toLocaleString('ko-KR', {
+                              month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                            })}
+                            {i === 0 && <span className="ml-2 text-[10px] text-blue-400 font-normal">최신</span>}
+                          </p>
+                          <p className="text-[10px] text-zinc-500 mt-0.5">
+                            {snap.device_name ?? snap.device_id?.slice(0, 8) ?? '기기 미상'}
+                          </p>
+                        </div>
+                        <span className="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-1 rounded-md shrink-0">
+                          {snap.row_count}개
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showDeviceManager && creds && (
         <DeviceManagerModal
