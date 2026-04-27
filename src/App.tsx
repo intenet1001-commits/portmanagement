@@ -3592,7 +3592,28 @@ function App() {
       <div style={{flex:1,display:'flex',overflow:'hidden'}}>
         {/* 좌측 목록 패널 */}
         <div style={{width:300,flexShrink:0,borderRight:'1px solid rgba(255,240,220,0.07)',display:'flex',flexDirection:'column',background:'#1c1916'}}>
-          <div style={{padding:'10px 12px',borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
+          {/* 섹션 필터 칩 */}
+          <div style={{padding:'8px 10px 0',display:'flex',gap:3,flexWrap:'wrap' as const,borderBottom:'1px solid rgba(255,240,220,0.05)'}}>
+            {([
+              ['all','All',v3Ports.length],
+              ['running','Running',v3Running.length],
+              ['starred','Starred',v3Ports.filter(p=>p.favorite).length],
+              ['wt','Worktrees',v3Ports.filter(p=>p.worktreePath).length],
+            ] as [string,string,number][]).map(([id,label,count])=>(
+              <button key={id} onClick={()=>setSidebarSection(id)} style={{
+                padding:'2px 7px',borderRadius:4,fontSize:10.5,cursor:'pointer',
+                fontFamily:'Inter Tight, system-ui, sans-serif',
+                background:sidebarSection===id?'rgba(232,165,87,0.12)':'transparent',
+                color:sidebarSection===id?'#e8a557':'#6b6459',
+                border:`1px solid ${sidebarSection===id?'rgba(232,165,87,0.25)':'transparent'}`,
+                display:'flex',alignItems:'center',gap:3,
+              }}>
+                {label}
+                <span style={{fontSize:9.5,fontFamily:'JetBrains Mono, monospace',opacity:0.7}}>{count}</span>
+              </button>
+            ))}
+          </div>
+          <div style={{padding:'8px 12px 10px',borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
             <div style={{position:'relative'}}>
               <Search style={{position:'absolute',left:8,top:'50%',transform:'translateY(-50%)',width:12,height:12,color:'#6b6459'}} />
               <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Jump to project…" style={{
@@ -4783,8 +4804,8 @@ function App() {
         {/* 포트 관리 탭 - V3 Sidebar */}
         {activeTab === 'ports' && (
           <div style={{flex:1,display:'flex',minHeight:0,overflow:'hidden'}}>
-            {/* LEFT SIDEBAR */}
-            <div style={{
+            {/* LEFT SIDEBAR — 터미널 뷰에서 숨김 */}
+            {portViewMode !== 'terminal' && <div style={{
               width:240,flexShrink:0,display:'flex',flexDirection:'column',
               background:'#1c1916',borderRight:'1px solid rgba(255,240,220,0.07)',
               overflowY:'auto' as const,
@@ -4955,7 +4976,7 @@ function App() {
                   </div>
                 )}
               </div>}
-            </div>
+            </div>}
 
             {/* MAIN AREA */}
             <div style={{flex:1,display:'flex',flexDirection:'column',minHeight:0,overflow:'hidden'}}>
