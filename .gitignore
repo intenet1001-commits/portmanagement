@@ -45,3 +45,14 @@ dist-portal
 .vercel
 .env*.local
 .bkit/
+
+# Claude local settings (per-machine, not for repo)
+.claude/
+
+# Ad-hoc test/diagnosis scripts (one-off, superseded by tests/smoke.mjs)
+analyze-*.mjs
+test-mobile-*.mjs
+test-load.mjs
+test-full.mjs
+test-tmux-api.ts
+tests/screenshots/
