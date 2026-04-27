@@ -1899,6 +1899,19 @@ fn wait_cmux_ready(cli: &str, total: std::time::Duration) -> bool {
     false
 }
 
+/// cmux에 열린 창이 없으면 새 창을 생성한다.
+/// TabManager는 열린 창이 있을 때만 활성화된다.
+fn ensure_cmux_window(cli: &str) {
+    let out = Command::new(cli).args(["list-windows"]).output();
+    if let Ok(o) = out {
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        if stdout.trim() == "No windows" {
+            let _ = Command::new(cli).args(["new-window"]).output();
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+}
+
 fn cmux_send_with_retry(cli: &str, payload: &str) -> Result<(), String> {
     let mut last_err = String::new();
     for attempt in 0..3 {
@@ -1938,6 +1951,7 @@ fn open_cmux_claude(name: String, folder_path: Option<String>, worktree_path: Op
     if !wait_cmux_ready(&cli, std::time::Duration::from_secs(5)) {
         return Err(cmux_access_help_msg("cmux 소켓 준비 대기 시간 초과 (5초)"));
     }
+    ensure_cmux_window(&cli);
 
     let claude_cli = if bypass { "claude --dangerously-skip-permissions" } else { "claude" };
     // Atomic: create a fresh workspace at the project path and run claude there.
@@ -1969,6 +1983,7 @@ fn open_cmux_claude_new(name: String, folder_path: Option<String>, worktree_path
     if !wait_cmux_ready(&cli, std::time::Duration::from_secs(5)) {
         return Err(cmux_access_help_msg("cmux 소켓 준비 대기 시간 초과 (5초)"));
     }
+    ensure_cmux_window(&cli);
 
     let claude_cli = if bypass { "claude --dangerously-skip-permissions" } else { "claude" };
     // is_fresh=true distinguishes the "↺ 새창" button from the regular one.
@@ -2000,6 +2015,7 @@ fn open_cmux_terminal(name: String, folder_path: Option<String>) -> Result<Strin
     if !wait_cmux_ready(&cli, std::time::Duration::from_secs(5)) {
         return Err(cmux_access_help_msg("cmux 소켓 준비 대기 시간 초과 (5초)"));
     }
+    ensure_cmux_window(&cli);
 
     let title = format!("🪟 {}", name);
     let out = Command::new(&cli)

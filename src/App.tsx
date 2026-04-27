@@ -1867,17 +1867,14 @@ function App() {
     }
   }, [ports, isLoading]);
 
-  // 웹 브라우저: 창 포커스 시 데이터 다시 로드 (앱과의 동기화)
+  // 창 포커스 시 데이터 다시 로드 (웹↔Tauri 동기화)
   useEffect(() => {
-    if (isTauri()) return; // Tauri 앱은 메모리 상태를 직접 관리
-
     const handleFocus = async () => {
       if (import.meta.env.DEV) console.log('[App] Window focused, reloading ports data...');
       try {
         const data = await API.loadPorts();
-        skipNextSave.current = true; // 서버에서 읽어온 데이터는 다시 저장하지 않음
+        skipNextSave.current = true; // 파일에서 읽어온 데이터는 다시 저장하지 않음
         setPorts(data);
-        // 초기 로드가 실패했을 경우에도 포커스 복구 시 정상 처리
         if (!hasInitiallyLoaded.current) {
           hasInitiallyLoaded.current = true;
         }
@@ -1885,6 +1882,14 @@ function App() {
         console.error('[App] Failed to reload ports on focus:', error);
       }
     };
+
+    if (isTauri()) {
+      let unlisten: (() => void) | undefined;
+      import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+        getCurrentWindow().listen('tauri://focus', handleFocus).then(fn => { unlisten = fn; });
+      });
+      return () => { unlisten?.(); };
+    }
 
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
