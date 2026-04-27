@@ -1442,9 +1442,12 @@ function App() {
     return data?.message ?? 'OK';
   };
 
+  // cmux 는 macOS 전용 (Swift+AppKit) — Linux/WSL 빌드 자체가 존재하지 않아 대안 불가.
+  // Windows 사용자는 카드 ⌄ 메뉴의 'tmux'/'tmux ↺ 새창' 항목 사용.
+  const cmuxMacOnlyToast = () => showToast('cmux는 macOS 전용입니다 — Windows에서는 ⌄ 메뉴의 "tmux" 사용', 'error');
+
   const openCmuxClaudeNew = async (item: PortInfo, worktreePath?: string) => {
-    // Windows: cmux 미지원 → WSL+tmux fresh 세션으로 폴백 (사용자 의도 동일)
-    if (isWindows()) { await openTmuxClaudeFresh(item); return; }
+    if (isWindows()) { cmuxMacOnlyToast(); return; }
     recordVisit(item.id);
     try {
       const msg = await callCmux('open_cmux_claude_new', '/api/open-cmux-claude-new', {
@@ -1461,8 +1464,7 @@ function App() {
   };
 
   const openCmuxClaude = async (item: PortInfo, worktreePath?: string) => {
-    // Windows: cmux 미지원 → WSL+tmux 세션으로 폴백
-    if (isWindows()) { openTmuxClaude(item); return; }
+    if (isWindows()) { cmuxMacOnlyToast(); return; }
     recordVisit(item.id);
     try {
       const msg = await callCmux('open_cmux_claude', '/api/open-cmux-claude', {
@@ -1480,16 +1482,7 @@ function App() {
 
   const openCmuxTerminal = async (item: PortInfo) => {
     if (!item.folderPath) { showToast('폴더 경로가 없습니다.', 'error'); return; }
-    // Windows: cmux 미지원 → 일반 터미널(claude 없이 WSL bash) 폴백
-    if (isWindows()) {
-      try {
-        await API.openTerminalClaude(item.folderPath, getSessionName(item));
-        showToast('WSL 터미널 열림', 'success');
-      } catch (e: any) {
-        showToast(`터미널 열기 실패: ${e?.message ?? e}`, 'error');
-      }
-      return;
-    }
+    if (isWindows()) { cmuxMacOnlyToast(); return; }
     recordVisit(item.id);
     try {
       const msg = await callCmux('open_cmux_terminal', '/api/open-cmux-terminal', {
@@ -1504,16 +1497,7 @@ function App() {
   };
 
   const openCmuxTerminalAtRoot = async () => {
-    // Windows: cmux 미지원 → 사용자 홈에서 WSL 터미널 열기
-    if (isWindows()) {
-      try {
-        await API.openTerminalClaude(undefined, 'home');
-        showToast('WSL 터미널 열림 (홈)', 'success');
-      } catch (e: any) {
-        showToast(`터미널 열기 실패: ${e?.message ?? e}`, 'error');
-      }
-      return;
-    }
+    if (isWindows()) { cmuxMacOnlyToast(); return; }
     try {
       // No folderPath → backend defaults to $HOME (root area).
       const msg = await callCmux('open_cmux_terminal', '/api/open-cmux-terminal', {
@@ -3408,8 +3392,26 @@ function App() {
               폴더 열기
             </button>
           )}
-          <button data-help-key="card-cmux" onClick={e=>{e.stopPropagation(); openCmuxClaude(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={isWindows() ? `tmux Claude (WSL)${bypassPermissions?' bypass':''}` : `cmux Claude${bypassPermissions?' (bypass)':''}`}><Zap style={{width:9,height:9}}/>{isWindows() ? (bypassPermissions?'tmux ⚡':'tmux') : (bypassPermissions?'cmux ⚡':'cmux')}</button>
-          <button data-help-key="card-cmux-new" onClick={e=>{e.stopPropagation(); openCmuxClaudeNew(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={isWindows() ? `tmux 새창 (WSL fresh)${bypassPermissions?' bypass':''}` : `cmux 새창${bypassPermissions?' (bypass)':''} — 기존 워크스페이스 닫고 새로 시작`}><Zap style={{width:9,height:9}}/>{isWindows() ? (bypassPermissions?'tmux ⚡↺':'tmux ↺') : (bypassPermissions?'cmux ⚡↺':'cmux ↺')}</button>
+          <button data-help-key="card-cmux" onClick={e=>{e.stopPropagation(); openCmuxClaude(item);}}
+            style={{
+              ...btnBase, gap:3, fontFamily:'inherit',
+              color: isWindows() ? '#6b6459' : '#c8a8f0',
+              borderColor: isWindows() ? 'rgba(255,240,220,0.07)' : 'rgba(200,168,240,0.25)',
+              opacity: isWindows() ? 0.55 : 1,
+              cursor: isWindows() ? 'not-allowed' : 'pointer',
+            }}
+            title={isWindows() ? 'cmux는 macOS 전용 — ⌄ 메뉴의 tmux 사용' : `cmux Claude${bypassPermissions?' (bypass)':''}`}
+          ><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡':'cmux'}{isWindows() && ' 🍎'}</button>
+          <button data-help-key="card-cmux-new" onClick={e=>{e.stopPropagation(); openCmuxClaudeNew(item);}}
+            style={{
+              ...btnBase, gap:3, fontFamily:'inherit',
+              color: isWindows() ? '#6b6459' : '#c8a8f0',
+              borderColor: isWindows() ? 'rgba(255,240,220,0.07)' : 'rgba(200,168,240,0.25)',
+              opacity: isWindows() ? 0.55 : 1,
+              cursor: isWindows() ? 'not-allowed' : 'pointer',
+            }}
+            title={isWindows() ? 'cmux는 macOS 전용 — ⌄ 메뉴의 tmux 사용' : `cmux 새창${bypassPermissions?' (bypass)':''} — 기존 워크스페이스 닫고 새로 시작`}
+          ><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡↺':'cmux ↺'}{isWindows() && ' 🍎'}</button>
           <button data-help-key="card-worktree" onClick={e=>{e.stopPropagation(); toggleWorktreePanel(item.id, item.folderPath);}} style={{...btnBase, color:expandedWorktreeIds.has(item.id)?'#e8a557':'#ede7dd', borderColor:expandedWorktreeIds.has(item.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title="워크트리 관리">
             <GitBranch style={{width:11,height:11}}/>
           </button>
