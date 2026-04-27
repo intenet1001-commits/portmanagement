@@ -427,17 +427,22 @@ function App() {
       return;
     }
     const pwHash = localStorage.getItem(PW_VERIFIED_KEY) ?? '';
+    // 현재 보고 있는 device 의 ID/이름을 함께 전달 → 로컬에서 "이어받기" 가능
+    const target = devices.find(d => d.id === selectedDeviceId);
     const payload = {
       v: 1,
       type: 'portmanager-setup',
       url: creds.url,
       key: creds.key,
       pwHash,
+      device: target?.id || selectedDeviceId || undefined,
+      deviceName: target?.name || undefined,
       copiedAt: new Date().toISOString(),
     };
     try {
       await navigator.clipboard.writeText(JSON.stringify(payload));
-      showToast('설정 복사됨 — 새 기기의 로컬 앱 → 설정 → 추가 기기 → 붙여넣기', 'success');
+      const label = target?.name ? `'${target.name}'` : '설정';
+      showToast(`${label} 복사됨 — 로컬 앱 → 설정 → 추가 기기 → 붙여넣기`, 'success');
     } catch (e: any) {
       showToast('복사 실패: ' + (e?.message ?? e), 'error');
     }

@@ -1443,7 +1443,8 @@ function App() {
   };
 
   const openCmuxClaudeNew = async (item: PortInfo, worktreePath?: string) => {
-    if (isWindows()) { showToast('cmux는 맥에서만 가능합니다', 'error'); return; }
+    // Windows: cmux 미지원 → WSL+tmux fresh 세션으로 폴백 (사용자 의도 동일)
+    if (isWindows()) { await openTmuxClaudeFresh(item); return; }
     recordVisit(item.id);
     try {
       const msg = await callCmux('open_cmux_claude_new', '/api/open-cmux-claude-new', {
@@ -1460,7 +1461,8 @@ function App() {
   };
 
   const openCmuxClaude = async (item: PortInfo, worktreePath?: string) => {
-    if (isWindows()) { showToast('cmux는 맥에서만 가능합니다', 'error'); return; }
+    // Windows: cmux 미지원 → WSL+tmux 세션으로 폴백
+    if (isWindows()) { openTmuxClaude(item); return; }
     recordVisit(item.id);
     try {
       const msg = await callCmux('open_cmux_claude', '/api/open-cmux-claude', {
@@ -1477,8 +1479,17 @@ function App() {
   };
 
   const openCmuxTerminal = async (item: PortInfo) => {
-    if (isWindows()) { showToast('cmux는 맥에서만 가능합니다', 'error'); return; }
     if (!item.folderPath) { showToast('폴더 경로가 없습니다.', 'error'); return; }
+    // Windows: cmux 미지원 → 일반 터미널(claude 없이 WSL bash) 폴백
+    if (isWindows()) {
+      try {
+        await API.openTerminalClaude(item.folderPath, getSessionName(item));
+        showToast('WSL 터미널 열림', 'success');
+      } catch (e: any) {
+        showToast(`터미널 열기 실패: ${e?.message ?? e}`, 'error');
+      }
+      return;
+    }
     recordVisit(item.id);
     try {
       const msg = await callCmux('open_cmux_terminal', '/api/open-cmux-terminal', {
@@ -1493,7 +1504,16 @@ function App() {
   };
 
   const openCmuxTerminalAtRoot = async () => {
-    if (isWindows()) { showToast('cmux는 맥에서만 가능합니다', 'error'); return; }
+    // Windows: cmux 미지원 → 사용자 홈에서 WSL 터미널 열기
+    if (isWindows()) {
+      try {
+        await API.openTerminalClaude(undefined, 'home');
+        showToast('WSL 터미널 열림 (홈)', 'success');
+      } catch (e: any) {
+        showToast(`터미널 열기 실패: ${e?.message ?? e}`, 'error');
+      }
+      return;
+    }
     try {
       // No folderPath → backend defaults to $HOME (root area).
       const msg = await callCmux('open_cmux_terminal', '/api/open-cmux-terminal', {
@@ -3388,8 +3408,8 @@ function App() {
               폴더 열기
             </button>
           )}
-          <button data-help-key="card-cmux" onClick={e=>{e.stopPropagation(); openCmuxClaude(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`cmux Claude${bypassPermissions?' (bypass)':''} — Mac 전용`}><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡':'cmux'}</button>
-          <button data-help-key="card-cmux-new" onClick={e=>{e.stopPropagation(); openCmuxClaudeNew(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`cmux 새창${bypassPermissions?' (bypass)':''} — 기존 워크스페이스 닫고 새로 시작`}><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡↺':'cmux ↺'}</button>
+          <button data-help-key="card-cmux" onClick={e=>{e.stopPropagation(); openCmuxClaude(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={isWindows() ? `tmux Claude (WSL)${bypassPermissions?' bypass':''}` : `cmux Claude${bypassPermissions?' (bypass)':''}`}><Zap style={{width:9,height:9}}/>{isWindows() ? (bypassPermissions?'tmux ⚡':'tmux') : (bypassPermissions?'cmux ⚡':'cmux')}</button>
+          <button data-help-key="card-cmux-new" onClick={e=>{e.stopPropagation(); openCmuxClaudeNew(item);}} style={{...btnBase,gap:3,fontFamily:'inherit',color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={isWindows() ? `tmux 새창 (WSL fresh)${bypassPermissions?' bypass':''}` : `cmux 새창${bypassPermissions?' (bypass)':''} — 기존 워크스페이스 닫고 새로 시작`}><Zap style={{width:9,height:9}}/>{isWindows() ? (bypassPermissions?'tmux ⚡↺':'tmux ↺') : (bypassPermissions?'cmux ⚡↺':'cmux ↺')}</button>
           <button data-help-key="card-worktree" onClick={e=>{e.stopPropagation(); toggleWorktreePanel(item.id, item.folderPath);}} style={{...btnBase, color:expandedWorktreeIds.has(item.id)?'#e8a557':'#ede7dd', borderColor:expandedWorktreeIds.has(item.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title="워크트리 관리">
             <GitBranch style={{width:11,height:11}}/>
           </button>
@@ -4790,13 +4810,15 @@ function App() {
 
         {showSetupWizard && (
           <SetupWizard
-            onComplete={async ({ supabaseUrl, supabaseAnonKey, deviceName }) => {
-              // portal.json에 저장
+            onComplete={async ({ supabaseUrl, supabaseAnonKey, deviceName, deviceId }) => {
+              // portal.json에 저장. deviceId가 wizard에서 "이어받기" 옵션으로 넘어왔으면 그것을 사용.
               try {
                 const existing = isTauri()
                   ? (await (async () => { const { invoke } = await import('@tauri-apps/api/core'); return invoke('load_portal'); })())
                   : await getPortalCredentials();
-                const next = { ...(existing as any), supabaseUrl, supabaseAnonKey, deviceName };
+                const existingObj = (existing as any) || {};
+                const finalDeviceId = deviceId || existingObj.deviceId; // wizard 이어받기 → 새 ID 채택
+                const next = { ...existingObj, supabaseUrl, supabaseAnonKey, deviceName, ...(finalDeviceId ? { deviceId: finalDeviceId } : {}) };
                 if (isTauri()) {
                   const { invoke } = await import('@tauri-apps/api/core');
                   await invoke('save_portal', { data: JSON.stringify(next) });
@@ -4804,7 +4826,8 @@ function App() {
                   await fetch('http://127.0.0.1:3001/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
                 }
                 portalConfigRef.current = next;
-                showToast(`${deviceName} 설정 완료! 동기화를 시작합니다.`, 'success');
+                const adoptedHint = deviceId ? ' (단말 ID 이어받음)' : '';
+                showToast(`${deviceName} 설정 완료${adoptedHint}! 동기화를 시작합니다.`, 'success');
               } catch (e) {
                 showToast('설정 저장 실패: ' + e, 'error');
               }

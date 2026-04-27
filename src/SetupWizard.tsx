@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 
 interface SetupWizardProps {
-  onComplete: (config: { supabaseUrl: string; supabaseAnonKey: string; deviceName: string }) => void;
+  onComplete: (config: { supabaseUrl: string; supabaseAnonKey: string; deviceName: string; deviceId?: string }) => void;
   onSkip: () => void;
 }
 
@@ -614,6 +614,10 @@ function AdditionalDeviceWizard({ onComplete, onBack }: { onComplete: SetupWizar
   const [pasteStatus, setPasteStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [pasteMessage, setPasteMessage] = useState('');
   const [pwHashFromPaste, setPwHashFromPaste] = useState('');
+  // 클립보드에서 받은 device_id+name (Vercel "새 기기" 버튼 출처). 사용자가 "이어받기" 선택 시 활용
+  const [pastedDeviceId, setPastedDeviceId] = useState<string>('');
+  const [pastedDeviceName, setPastedDeviceName] = useState<string>('');
+  const [adoptDeviceId, setAdoptDeviceId] = useState(true); // paste된 device_id 이어받을지 여부
 
   async function testConnection(url?: string, key?: string) {
     const u = url ?? supabaseUrl;
@@ -649,8 +653,21 @@ function AdditionalDeviceWizard({ onComplete, onBack }: { onComplete: SetupWizar
       setSupabaseUrl(payload.url);
       setSupabaseAnonKey(payload.key);
       if (payload.pwHash) setPwHashFromPaste(payload.pwHash);
+      // device_id+name 함께 전달된 경우 → 이어받기 옵션 활성화 + 이름 자동 채움
+      if (payload.device && typeof payload.device === 'string') {
+        setPastedDeviceId(payload.device);
+        setAdoptDeviceId(true);
+      }
+      if (payload.deviceName && typeof payload.deviceName === 'string') {
+        setPastedDeviceName(payload.deviceName);
+        if (!deviceName.trim()) setDeviceName(payload.deviceName);
+      }
       setPasteStatus('success');
-      setPasteMessage('✓ URL/Key 자동 입력됨 — 연결 테스트 자동 실행');
+      setPasteMessage(
+        payload.deviceName
+          ? `✓ '${payload.deviceName}' 단말 정보 자동 입력 — 연결 테스트 중`
+          : '✓ URL/Key 자동 입력됨 — 연결 테스트 자동 실행'
+      );
       // 자동 연결 테스트
       void testConnection(payload.url, payload.key);
     } catch (e: any) {
@@ -784,7 +801,24 @@ bun run start`;
     </div>,
 
     <div key={2} className="space-y-4">
-      <p className="text-zinc-300">이 기기의 이름을 입력하세요. 기존 기기와 다른 이름을 사용하세요.</p>
+      {pastedDeviceId ? (
+        <InfoBox color="green">
+          <p className="font-semibold mb-1">🔗 단말 이어받기 감지</p>
+          <p className="text-xs text-zinc-300 mb-2">
+            클립보드에 <strong>{pastedDeviceName || '(이름 미상)'}</strong> 단말 정보가 포함되어 있습니다.
+            이 단말 ID를 그대로 이어받으면 Vercel 포털·다른 기기에서 보던 동일한 단말로 인식됩니다.
+          </p>
+          <label className="flex items-start gap-2 cursor-pointer select-none mt-2 text-xs">
+            <input type="checkbox" checked={adoptDeviceId} onChange={e => setAdoptDeviceId(e.target.checked)}
+              className="mt-0.5 accent-emerald-500" />
+            <span className="text-zinc-200">
+              <strong>이 단말 ID 그대로 사용</strong> <span className="text-zinc-500 font-mono text-[10px]">({pastedDeviceId.slice(0,8)}…)</span><br/>
+              <span className="text-zinc-400">체크 해제 시 새 단말 ID 생성</span>
+            </span>
+          </label>
+        </InfoBox>
+      ) : null}
+      <p className="text-zinc-300">{adoptDeviceId && pastedDeviceId ? '단말 이름을 확인하세요. 기존 이름을 그대로 사용하거나 변경할 수 있습니다.' : '이 기기의 이름을 입력하세요. 기존 기기와 다른 이름을 사용하세요.'}</p>
       <OsToggle os={os} onChange={setOs} />
       <input type="text" value={deviceName} onChange={e => setDeviceName(e.target.value)}
         placeholder={os === 'mac' ? '예: 회사맥북, 집맥북' : '예: 회사PC, 집데스크탑'}
@@ -804,9 +838,20 @@ bun run start`;
       {deviceName && testResult === 'ok' && (
         <InfoBox color="green">
           <p className="font-semibold mb-1">✅ 설정 완료!</p>
-          <p className="text-xs text-zinc-300">기기: <span className="text-white">{deviceName}</span></p>
+          <p className="text-xs text-zinc-300">
+            기기: <span className="text-white">{deviceName}</span>
+            {pastedDeviceId && adoptDeviceId && (
+              <span className="ml-2 text-emerald-400">· 단말 ID 이어받음</span>
+            )}
+          </p>
         </InfoBox>
       )}
+      <div className="text-[11px] text-zinc-500 leading-relaxed bg-zinc-900/40 border border-zinc-800 rounded-lg p-3">
+        <strong className="text-zinc-400">💡 단말 ID란?</strong>{' '}
+        Supabase의 <code className="text-zinc-300 font-mono">devices</code> 테이블에서 기기를 식별하는 UUID입니다.
+        같은 ID를 여러 기기가 공유하면 데이터가 한 단말로 묶여 보입니다.
+        새 기기로 등록하려면 <strong>새 ID</strong>, 같은 컴퓨터의 다른 OS/브라우저에서 동일 단말로 보고 싶다면 <strong>이어받기</strong>를 선택하세요.
+      </div>
     </div>,
   ];
 
@@ -821,7 +866,12 @@ bun run start`;
       setStep={setStep}
       canNext={canNext}
       onBack={onBack}
-      onComplete={() => onComplete({ supabaseUrl, supabaseAnonKey, deviceName })}
+      onComplete={() => onComplete({
+        supabaseUrl,
+        supabaseAnonKey,
+        deviceName,
+        deviceId: (adoptDeviceId && pastedDeviceId) ? pastedDeviceId : undefined,
+      })}
       canComplete={!!deviceName && testResult === 'ok'}
     >
       {stepContent[step]}
@@ -1676,12 +1726,27 @@ function WizardLayout({
 export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
   const [mode, setMode] = useState<Mode>('choose');
   const [detectedOs, setDetectedOs] = useState<'mac' | 'windows' | null>(null);
+  const [clipboardHasSetup, setClipboardHasSetup] = useState(false);
+  const [clipboardDeviceName, setClipboardDeviceName] = useState<string>('');
 
   useEffect(() => {
     const p = navigator.platform.toLowerCase();
     const ua = navigator.userAgent.toLowerCase();
     if (p.includes('win') || ua.includes('windows')) setDetectedOs('windows');
     else if (p.includes('mac') || ua.includes('mac')) setDetectedOs('mac');
+
+    // 클립보드에 portmanager-setup JSON 이 있으면 추가 기기 모드 추천
+    (async () => {
+      try {
+        const raw = await navigator.clipboard.readText();
+        if (!raw?.trim()) return;
+        const j = JSON.parse(raw);
+        if (j?.v === 1 && j?.type === 'portmanager-setup' && j?.url && j?.key) {
+          setClipboardHasSetup(true);
+          if (typeof j.deviceName === 'string') setClipboardDeviceName(j.deviceName);
+        }
+      } catch { /* clipboard 권한 없거나 JSON 아님 → 무시 */ }
+    })();
   }, []);
 
   return (
@@ -1725,6 +1790,27 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                   </p>
                 )}
               </div>
+
+              {/* 클립보드에 portmanager-setup JSON 감지 시 추가 기기 모드로 원클릭 진입 */}
+              {clipboardHasSetup && (
+                <button
+                  onClick={() => setMode('additional')}
+                  className="w-full max-w-4xl bg-emerald-500/10 hover:bg-emerald-500/15 border-2 border-emerald-500/40 hover:border-emerald-500/70 rounded-2xl p-4 text-left transition-all flex items-center gap-3"
+                >
+                  <div className="w-10 h-10 bg-emerald-500/20 rounded-xl flex items-center justify-center shrink-0">
+                    <Link2 className="w-5 h-5 text-emerald-300" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-emerald-200">
+                      🎯 클립보드에 단말 정보 감지{clipboardDeviceName ? ` — '${clipboardDeviceName}'` : ''}
+                    </p>
+                    <p className="text-xs text-emerald-300/80 mt-0.5">
+                      클릭하면 추가 기기 연결 마법사로 즉시 이동, 자동 입력됩니다.
+                    </p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-emerald-300 shrink-0" />
+                </button>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 w-full max-w-4xl">
                 <button onClick={() => setMode('first')}
                   className="group bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-blue-500/50 rounded-2xl p-5 sm:p-7 text-left transition-all duration-200">
