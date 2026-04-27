@@ -1136,12 +1136,14 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       if (catsRes.error) throw new Error(catsRes.error.message);
 
       // Register this device in devices table (non-blocking)
+      // 사용자가 방금 입력한 deviceName(useState)을 data.deviceName(stale closure)보다 우선
+      const finalDeviceName = (deviceName?.trim()) || data.deviceName || null;
       supabase.from('devices').upsert(
-        { id: deviceId, name: data.deviceName ?? deviceName ?? null, last_push_at: new Date().toISOString() },
+        { id: deviceId, name: finalDeviceName, last_push_at: new Date().toISOString() },
         { onConflict: 'id' }
       ).then(() => {}).catch(() => {});
 
-      const nextData: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceId, deviceName: deviceName || data.deviceName, lastSynced: new Date().toISOString() };
+      const nextData: PortalData = { ...data, supabaseUrl: sbUrl, supabaseAnonKey: sbKey, deviceId, deviceName: finalDeviceName ?? undefined, lastSynced: new Date().toISOString() };
       await persist(nextData);
       setSyncOk(true);
       showToast(`Supabase 동기화 완료 (${data.items.length}개 항목)`, 'success');
@@ -1297,14 +1299,15 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       }));
 
       setKnownDevices(devices);
-      // Supabase devices 테이블이 기기 이름의 source of truth — 다르면 로컬을 덮어씀
+      // 자기 기기 이름은 로컬이 source of truth — 로컬에 이름이 비었을 때만 Supabase에서 자동 보강.
+      // (사용자가 명시적으로 바꾼 이름을 단말 조회 시 되돌리지 않도록.)
       const ownDevice = devices.find(d => d.device_id === data.deviceId);
-      if (ownDevice?.device_name && ownDevice.device_name !== deviceName) {
+      if (ownDevice?.device_name && !deviceName?.trim()) {
         setDeviceName(ownDevice.device_name);
         const next = { ...data, deviceName: ownDevice.device_name };
         await persist(next);
         setData(next);
-        showToast(`기기 이름 동기화: ${ownDevice.device_name}`, 'success');
+        showToast(`기기 이름 자동 인식: ${ownDevice.device_name}`, 'success');
       }
       if (devices.length === 0) {
         showToast('단말 없음 — 이 기기에서 먼저 Push를 실행하세요', 'error');

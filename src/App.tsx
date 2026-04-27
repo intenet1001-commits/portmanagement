@@ -4606,7 +4606,21 @@ function App() {
           <PortalManager
             showToast={showToast}
             openSettings={openPortalSettings}
-            onSettingsClosed={() => setOpenPortalSettings(false)}
+            onSettingsClosed={async () => {
+              setOpenPortalSettings(false);
+              // 설정 모달에서 deviceName 등이 변경됐을 수 있으므로 portalConfigRef 갱신
+              try {
+                let fresh: any = null;
+                if (isTauri()) {
+                  const { invoke } = await import('@tauri-apps/api/core');
+                  fresh = await invoke('load_portal');
+                } else {
+                  const res = await fetch('/api/portal');
+                  if (res.ok) fresh = await res.json();
+                }
+                if (fresh) portalConfigRef.current = fresh;
+              } catch { /* ignore */ }
+            }}
             actionsRef={portalActionsRef}
             isVisible={activeTab === 'portal'}
           />
