@@ -2246,6 +2246,45 @@ end try`);
       }
     }
 
+    if (url.pathname === "/api/git-init" && req.method === "POST") {
+      try {
+        const { folderPath, checkOnly = false } = await req.json();
+        if (!folderPath || !isAbsolute(folderPath as string)) {
+          return new Response(JSON.stringify({ error: "folderPath must be absolute" }), { status: 400, headers });
+        }
+        // 이미 git repo인지 확인
+        const checkProc = Bun.spawn([GIT_PATH, "rev-parse", "--git-dir"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await checkProc.exited;
+        const isGit = checkProc.exitCode === 0;
+        if (isGit) {
+          const logProc = Bun.spawn([GIT_PATH, "log", "--oneline", "-1"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+          await logProc.exited;
+          const hasCommit = logProc.exitCode === 0;
+          if (checkOnly) return new Response(JSON.stringify({ alreadyGit: true, hasCommit }), { headers });
+          if (hasCommit) return new Response(JSON.stringify({ alreadyGit: true, hasCommit: true }), { headers });
+          // git repo지만 커밋 없음 — 빈 커밋 생성
+          const commitProc = Bun.spawn([GIT_PATH, "commit", "--allow-empty", "-m", "Initial commit"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+          await commitProc.exited;
+          return new Response(JSON.stringify({ alreadyGit: true, hasCommit: commitProc.exitCode === 0 }), { headers });
+        }
+        // checkOnly 모드: git 아닌 것만 보고
+        if (checkOnly) return new Response(JSON.stringify({ alreadyGit: false, hasCommit: false }), { headers });
+        // git init
+        const initProc = Bun.spawn([GIT_PATH, "init"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await initProc.exited;
+        if (initProc.exitCode !== 0) {
+          const err = await new Response(initProc.stderr).text();
+          return new Response(JSON.stringify({ error: err.trim() || "git init failed" }), { status: 500, headers });
+        }
+        // 빈 커밋 (worktree는 최소 1개 커밋 필요)
+        const commitProc = Bun.spawn([GIT_PATH, "commit", "--allow-empty", "-m", "Initial commit"], { cwd: folderPath, stdout: "pipe", stderr: "pipe" });
+        await commitProc.exited;
+        return new Response(JSON.stringify({ initialized: true, hasCommit: commitProc.exitCode === 0 }), { headers });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers });
+      }
+    }
+
     if (url.pathname === "/api/git-worktree-add" && req.method === "POST") {
       try {
         const { folderPath, branchName, worktreePath } = await req.json();

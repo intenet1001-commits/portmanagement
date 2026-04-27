@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock, Zap, History, Laptop, Keyboard } from 'lucide-react';
+import { Server, Trash2, Plus, ExternalLink, Terminal, ArrowUpDown, Pencil, Check, X as XIcon, Play, Square, Rocket, FolderOpen, Upload, Download, Folder, FilePlus, Package, RefreshCw, FileText, RotateCw, Globe, Github, SquareTerminal, Info, Monitor, BookMarked, Cloud, CloudUpload, CloudDownload, Search, Sparkles, Settings, GitPullRequest, Copy, GitBranch, GitCommit, Star, BookOpen, ChevronDown, ChevronUp, StickyNote, Clock, Zap, History, Laptop, Keyboard, LayoutList, LayoutGrid } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { getSupabaseClient } from './lib/supabaseClient';
@@ -231,6 +231,16 @@ const API = {
     const data = await res.json();
     if (!data.success) throw new Error(data.error);
     return { path: data.path };
+  },
+
+  async gitInit(folderPath: string, opts?: { checkOnly?: boolean }): Promise<{ initialized?: boolean; alreadyGit?: boolean; hasCommit?: boolean; error?: string }> {
+    const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+    const res = await fetch(`${baseUrl}/api/git-init`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderPath, checkOnly: opts?.checkOnly ?? false }),
+    });
+    return res.json();
   },
 
   async gitWorktreeRemove(worktreePath: string): Promise<void> {
@@ -935,6 +945,10 @@ function App() {
   const [showShortcutModal, setShowShortcutModal] = useState(false);
   const [shortcutInput, setShortcutInput] = useState('');
   const [isRecordingShortcut, setIsRecordingShortcut] = useState(false);
+  const [portViewMode, setPortViewMode] = useState<'card'|'terminal'>(
+    () => (localStorage.getItem('portmanager-viewMode') as 'card'|'terminal') || 'card'
+  );
+  const [v4SelectedId, setV4SelectedId] = useState<string|null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editPort, setEditPort] = useState('');
@@ -971,6 +985,7 @@ function App() {
   const [mergePushConfirm, setMergePushConfirm] = useState<{ item: PortInfo; mainBranch: string } | null>(null);
   const [mergeLoading, setMergeLoading] = useState(false);
   const [deleteWorktreeConfirm, setDeleteWorktreeConfirm] = useState<{ item: PortInfo; wt: WorktreeInfo } | null>(null);
+  const [gitInitConfirm, setGitInitConfirm] = useState<{ item: PortInfo; branchName: string } | null>(null);
   const [commitModal, setCommitModal] = useState<{ item: PortInfo; wt: WorktreeInfo; msg: string } | null>(null);
   const [expandedWorktreeIds, setExpandedWorktreeIds] = useState<Set<string>>(new Set());
   const [worktreeLists, setWorktreeLists] = useState<Record<string, WorktreeInfo[]>>({});
@@ -1187,18 +1202,30 @@ function App() {
     });
   }, [loadWorktrees]);
 
-  const handleWorktreeAdd = useCallback(async (item: PortInfo) => {
-    const branchName = worktreeNewBranch[item.id]?.trim();
-    if (!branchName || !item.folderPath) return;
+  const executeWorktreeAdd = useCallback(async (item: PortInfo, branchName: string) => {
     try {
-      const result = await API.gitWorktreeAdd(item.folderPath, branchName);
+      const result = await API.gitWorktreeAdd(item.folderPath!, branchName);
       showToast(`워크트리 생성됨: ${result.path.split('/').pop()}`, 'success');
       setWorktreeNewBranch(prev => ({ ...prev, [item.id]: '' }));
-      await loadWorktrees(item.id, item.folderPath);
+      await loadWorktrees(item.id, item.folderPath!);
     } catch (e) {
       showToast(`워크트리 생성 실패: ${e}`, 'error');
     }
-  }, [worktreeNewBranch, loadWorktrees]);
+  }, [loadWorktrees]);
+
+  const handleWorktreeAdd = useCallback(async (item: PortInfo) => {
+    const branchName = worktreeNewBranch[item.id]?.trim();
+    if (!branchName || !item.folderPath) return;
+    // git 상태 확인 (read-only)
+    const status = await API.gitInit(item.folderPath, { checkOnly: true }).catch(() => ({ alreadyGit: false, hasCommit: false }));
+    if (status.alreadyGit && status.hasCommit) {
+      // 이미 git repo + 커밋 있음 → 바로 진행
+      await executeWorktreeAdd(item, branchName);
+    } else {
+      // git 없거나 커밋 없음 → 사용자 확인 모달
+      setGitInitConfirm({ item, branchName });
+    }
+  }, [worktreeNewBranch, executeWorktreeAdd]);
 
   const handleWorktreeRemove = useCallback((item: PortInfo, wt: WorktreeInfo) => {
     if (!item.folderPath) return;
@@ -3390,124 +3417,7 @@ function App() {
         </div>
 
         {/* Worktree panel */}
-        {expandedWorktreeIds.has(item.id) && (
-          <div style={{marginTop:4,background:'#1a1814',borderRadius:6,border:'1px solid rgba(232,165,87,0.15)',borderLeft:'2px solid rgba(232,165,87,0.35)',padding:'8px 8px 6px',display:'flex',flexDirection:'column',gap:4}}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:2}}>
-              <div style={{display:'flex',alignItems:'center',gap:4,fontSize:10,color:'#e8a557',fontWeight:700,letterSpacing:0.8,textTransform:'uppercase',opacity:0.7}}>
-                <GitBranch style={{width:9,height:9}}/> Worktrees
-              </div>
-              <button onClick={e=>{e.stopPropagation(); item.folderPath && loadWorktrees(item.id, item.folderPath);}} style={{padding:'2px 5px',background:'transparent',border:'none',cursor:'pointer',color:'#6b6459',display:'flex',alignItems:'center'}} title="새로고침">
-                <RotateCw style={{width:10,height:10}}/>
-              </button>
-            </div>
-            {worktreeLoading[item.id] ? (
-              <div style={{fontSize:10.5,color:'#6b6459',textAlign:'center',padding:'4px 0'}}>로딩 중...</div>
-            ) : (worktreeLists[item.id] ?? []).length === 0 ? (
-              <div style={{fontSize:10.5,color:'#6b6459',textAlign:'center',padding:'4px 0'}}>워크트리 없음</div>
-            ) : (
-              (worktreeLists[item.id] ?? []).map(wt => {
-                const wtName = wt.path.replace(/\/$/, '').split('/').pop() ?? wt.path;
-                const displayName = wt.branch || wtName;
-                const miniBtn: React.CSSProperties = {padding:'3px 7px',borderRadius:4,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#a39a8c',cursor:'pointer',fontSize:10,fontFamily:'inherit'};
-                const wtPortEntry = ports.find(p =>
-                  p.worktreePath === wt.path ||
-                  (wt.branch && p.worktreePath === wt.branch) ||
-                  (p.worktreePath && wt.path.endsWith('/' + p.worktreePath.replace(/^\/+/, ''))) ||
-                  p.folderPath === wt.path
-                );
-                const usedPorts = new Set(ports.map(p => p.port).filter((p): p is number => p != null));
-                // wtActualPorts: CWD 기반으로 감지된 실제 포트 (없으면 해시 포트 사용)
-                const detectedPort = wtActualPorts[wt.path];
-                const wtPort = detectedPort ?? (wtPortEntry?.port ?? worktreePortFromPath(wt.path, usedPorts));
-                const isWtRunning = detectedPort != null || (wtPortEntry?.isRunning ?? wtPortStatuses[wtPort] ?? false);
-                const wtClaudeBypass = () => {
-                  const branchName = wt.branch || wt.path.replace(/\/$/, '').split('/').pop()!;
-                  const sessionName = `${item.name.replace(/\s+/g,'-')}-${branchName}`;
-                  const baseUrl = isTauri() ? 'http://localhost:3001' : '';
-                  fetch(`${baseUrl}/api/open-tmux-claude-bypass`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ sessionName, folderPath: item.folderPath, worktreePath: wt.path, branch: branchName, bypass: bypassPermissions }),
-                  })
-                    .then(() => showToast(`Claude${bypassPermissions ? ' ⚡' : ''} 실행: ${displayName}`, 'success'))
-                    .catch(err => showToast(`Claude 실행 실패: ${err}`, 'error'));
-                };
-                return (
-                  <div key={wt.path} style={{
-                    padding:'5px 6px', borderRadius:5,
-                    background: wt.is_main ? 'rgba(232,165,87,0.04)' : 'rgba(255,240,220,0.02)',
-                    border:'1px solid rgba(255,240,220,0.05)',
-                    borderLeft: wt.is_main ? '2px solid rgba(232,165,87,0.35)' : '1px solid rgba(255,240,220,0.05)',
-                    display:'flex', flexDirection:'column', gap:4,
-                  }}>
-                    {/* Branch name row */}
-                    <div style={{display:'flex',alignItems:'center',gap:5}}>
-                      <GitBranch style={{width:9,height:9,color:wt.is_main?'#6b6459':'#7ba7c9',flexShrink:0}}/>
-                      <span style={{fontSize:11,fontWeight:600,color:wt.is_main?'#ede7dd':'#7ba7c9',fontFamily:'JetBrains Mono, monospace',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{displayName}</span>
-                      {wt.is_main && <span style={{fontSize:9,color:'#6b6459',background:'rgba(255,240,220,0.06)',padding:'1px 4px',borderRadius:3}}>main</span>}
-                    </div>
-                    {/* Action buttons row */}
-                    <div style={{display:'flex',gap:3,flexWrap:'wrap'}}>
-                    {wt.is_main ? <>
-                      <button onClick={e=>{e.stopPropagation(); item.isRunning ? stopCommand(item) : executeCommand(item);}} style={{...miniBtn,color:item.isRunning?'#c96a5a':'#8fb96e',borderColor:item.isRunning?'rgba(201,106,90,0.2)':'rgba(143,185,110,0.2)'}} title={item.isRunning ? `포트 ${item.port}` : undefined}>
-                        {item.isRunning ? '중지' : `실행(${item.port})`}
-                      </button>
-                      <button onClick={e=>{e.stopPropagation(); item.port && window.open(`http://localhost:${item.port}`, '_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
-                      <button onClick={e=>{e.stopPropagation(); wt.path && API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
-                      <button onClick={e=>{e.stopPropagation(); forceRestartCommand(item);}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
-                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`tmux Claude${bypassPermissions?' (bypass)':''}`}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>{bypassPermissions?'Claude ⚡':'Claude'}</button>
-                      <button onClick={e=>{e.stopPropagation(); setCommitModal({item,wt,msg:''});}} style={miniBtn}>커밋</button>
-                      <button onClick={e=>{e.stopPropagation();
-                        const baseUrl = isTauri() ? 'http://localhost:3001' : '';
-                        fetch(`${baseUrl}/api/git-push`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({folderPath:item.folderPath}) })
-                          .then(r=>r.json()).then(d=>{ if(d.success) showToast('푸시 완료','success'); else showToast(`푸시 실패: ${d.error}`,'error'); })
-                          .catch(()=>showToast('푸시 실패','error'));
-                      }} style={miniBtn}>푸시</button>
-                    </> : <>
-                      <button onClick={e=>{e.stopPropagation();
-                        if (wtPortEntry) { isWtRunning ? stopCommand(wtPortEntry) : executeCommand(wtPortEntry); }
-                        else { executeCommand({...item, id:`${item.id}_wt_${wtName}`, port:wtPort, worktreePath:wt.path}); }
-                      }} style={{...miniBtn,color:isWtRunning?'#c96a5a':'#8fb96e',borderColor:isWtRunning?'rgba(201,106,90,0.2)':'rgba(143,185,110,0.2)'}} title={isWtRunning ? `포트 ${wtPort}` : undefined}>
-                        {isWtRunning ? '중지' : `실행(${wtPort})`}
-                      </button>
-                      <button onClick={e=>{e.stopPropagation(); window.open(`http://localhost:${wtPort}`, '_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
-                      <button onClick={e=>{e.stopPropagation();
-                        if (wtPortEntry) forceRestartCommand(wtPortEntry);
-                        else forceRestartCommand({...item, id:`${item.id}_wt_${wtName}`, port:wtPort, worktreePath:wt.path});
-                      }} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
-                      <button onClick={e=>{e.stopPropagation(); API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
-                      <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title={`tmux Claude${bypassPermissions?' (bypass)':''}`}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>{bypassPermissions?'Claude ⚡':'Claude'}</button>
-                      <button onClick={e=>{e.stopPropagation(); setCommitModal({item,wt,msg:''});}} style={miniBtn}>커밋</button>
-                      <button onClick={e=>{e.stopPropagation();
-                        const baseUrl = isTauri() ? 'http://localhost:3001' : '';
-                        fetch(`${baseUrl}/api/git-push`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({folderPath:wt.path}) })
-                          .then(r=>r.json()).then(d=>{ if(d.success) showToast(`푸시 완료: ${displayName}`,'success'); else showToast(`푸시 실패: ${d.error}`,'error'); })
-                          .catch(()=>showToast('푸시 실패','error'));
-                      }} style={miniBtn}>푸시</button>
-                      <button onClick={e=>{e.stopPropagation(); handleWorktreeMerge(item, wt);}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}}>머지</button>
-                      <button onClick={e=>{e.stopPropagation(); handleWorktreeRemove(item, wt);}} style={{...miniBtn,color:'#c96a5a',borderColor:'rgba(201,106,90,0.2)'}}>삭제</button>
-                    </>}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-            <div style={{display:'flex',gap:4,marginTop:2}}>
-              <input
-                type="text"
-                value={worktreeNewBranch[item.id] ?? ''}
-                onChange={e => setWorktreeNewBranch(prev => ({...prev, [item.id]: e.target.value}))}
-                onKeyDown={e => { if(e.key==='Enter') { e.stopPropagation(); handleWorktreeAdd(item); } }}
-                onClick={e => e.stopPropagation()}
-                placeholder="브랜치명"
-                style={{flex:1,padding:'4px 7px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:4,color:'#ede7dd',fontSize:10.5,outline:'none',fontFamily:'inherit'}}
-              />
-              <button onClick={e=>{e.stopPropagation(); handleWorktreeAdd(item);}} style={{padding:'4px 8px',background:'rgba(232,165,87,0.1)',border:'1px solid rgba(232,165,87,0.25)',borderRadius:4,color:'#e8a557',fontSize:10,cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>
-                + 추가
-              </button>
-            </div>
-          </div>
-        )}
+        {expandedWorktreeIds.has(item.id) && renderWorktreePanel(item)}
 
         {/* Secondary menu */}
         {menuOpen && v3MenuRect && (
@@ -3567,6 +3477,265 @@ function App() {
             ))}
           </div>
           </>
+        )}
+      </div>
+    );
+  };
+
+  const renderWorktreePanel = (portItem: PortInfo) => (
+    <div style={{marginTop:4,background:'#1a1814',borderRadius:6,border:'1px solid rgba(232,165,87,0.15)',borderLeft:'2px solid rgba(232,165,87,0.35)',padding:'8px 8px 6px',display:'flex',flexDirection:'column',gap:4}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:2}}>
+        <div style={{display:'flex',alignItems:'center',gap:4,fontSize:10,color:'#e8a557',fontWeight:700,letterSpacing:0.8,textTransform:'uppercase' as const,opacity:0.7}}>
+          <GitBranch style={{width:9,height:9}}/> Worktrees
+        </div>
+        <button onClick={e=>{e.stopPropagation(); portItem.folderPath && loadWorktrees(portItem.id, portItem.folderPath);}} style={{padding:'2px 5px',background:'transparent',border:'none',cursor:'pointer',color:'#6b6459',display:'flex',alignItems:'center'}} title="새로고침">
+          <RotateCw style={{width:10,height:10}}/>
+        </button>
+      </div>
+      {worktreeLoading[portItem.id] ? (
+        <div style={{fontSize:10.5,color:'#6b6459',textAlign:'center',padding:'4px 0'}}>로딩 중...</div>
+      ) : (worktreeLists[portItem.id] ?? []).length === 0 ? (
+        <div style={{fontSize:10.5,color:'#6b6459',textAlign:'center',padding:'4px 0'}}>워크트리 없음</div>
+      ) : (
+        (worktreeLists[portItem.id] ?? []).map(wt => {
+          const wtName = wt.path.replace(/\/$/, '').split('/').pop() ?? wt.path;
+          const displayName = wt.branch || wtName;
+          const miniBtn: React.CSSProperties = {padding:'3px 7px',borderRadius:4,background:'transparent',border:'1px solid rgba(255,240,220,0.07)',color:'#a39a8c',cursor:'pointer',fontSize:10,fontFamily:'inherit'};
+          const wtPortEntry = ports.find(p =>
+            p.worktreePath === wt.path ||
+            (wt.branch && p.worktreePath === wt.branch) ||
+            (p.worktreePath && wt.path.endsWith('/' + p.worktreePath.replace(/^\/+/, ''))) ||
+            p.folderPath === wt.path
+          );
+          const usedPorts = new Set(ports.map(p => p.port).filter((p): p is number => p != null));
+          const detectedPort = wtActualPorts[wt.path];
+          const wtPort = detectedPort ?? (wtPortEntry?.port ?? worktreePortFromPath(wt.path, usedPorts));
+          const isWtRunning = detectedPort != null || (wtPortEntry?.isRunning ?? wtPortStatuses[wtPort] ?? false);
+          const wtClaudeBypass = () => {
+            const branchName = wt.branch || wt.path.replace(/\/$/, '').split('/').pop()!;
+            const sessionName = `${portItem.name.replace(/\s+/g,'-')}-${branchName}`;
+            const baseUrl = isTauri() ? 'http://localhost:3001' : '';
+            fetch(`${baseUrl}/api/open-tmux-claude-bypass`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ sessionName, folderPath: portItem.folderPath, worktreePath: wt.path, branch: branchName, bypass: bypassPermissions }),
+            })
+              .then(() => showToast(`Claude${bypassPermissions ? ' ⚡' : ''} 실행: ${displayName}`, 'success'))
+              .catch(err => showToast(`Claude 실행 실패: ${err}`, 'error'));
+          };
+          return (
+            <div key={wt.path} style={{padding:'5px 6px',borderRadius:5,background:wt.is_main?'rgba(232,165,87,0.04)':'rgba(255,240,220,0.02)',border:'1px solid rgba(255,240,220,0.05)',borderLeft:wt.is_main?'2px solid rgba(232,165,87,0.35)':'1px solid rgba(255,240,220,0.05)',display:'flex',flexDirection:'column',gap:4}}>
+              <div style={{display:'flex',alignItems:'center',gap:5}}>
+                <GitBranch style={{width:9,height:9,color:wt.is_main?'#6b6459':'#7ba7c9',flexShrink:0}}/>
+                <span style={{fontSize:11,fontWeight:600,color:wt.is_main?'#ede7dd':'#7ba7c9',fontFamily:'JetBrains Mono, monospace',flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{displayName}</span>
+                {wt.is_main && <span style={{fontSize:9,color:'#6b6459',background:'rgba(255,240,220,0.06)',padding:'1px 4px',borderRadius:3}}>main</span>}
+              </div>
+              <div style={{display:'flex',gap:3,flexWrap:'wrap' as const}}>
+              {wt.is_main ? <>
+                <button onClick={e=>{e.stopPropagation(); portItem.isRunning ? stopCommand(portItem) : executeCommand(portItem);}} style={{...miniBtn,color:portItem.isRunning?'#c96a5a':'#8fb96e',borderColor:portItem.isRunning?'rgba(201,106,90,0.2)':'rgba(143,185,110,0.2)'}} title={portItem.isRunning?`포트 ${portItem.port}`:undefined}>
+                  {portItem.isRunning ? '중지' : `실행(${portItem.port})`}
+                </button>
+                <button onClick={e=>{e.stopPropagation(); portItem.port && window.open(`http://localhost:${portItem.port}`,'_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
+                <button onClick={e=>{e.stopPropagation(); wt.path && API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
+                <button onClick={e=>{e.stopPropagation(); forceRestartCommand(portItem);}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
+                <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>{bypassPermissions?'Claude ⚡':'Claude'}</button>
+                <button onClick={e=>{e.stopPropagation(); setCommitModal({item:portItem,wt,msg:''});}} style={miniBtn}>커밋</button>
+                <button onClick={e=>{e.stopPropagation(); const baseUrl=isTauri()?'http://localhost:3001':''; fetch(`${baseUrl}/api/git-push`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folderPath:portItem.folderPath})}).then(r=>r.json()).then(d=>{if(d.success)showToast('푸시 완료','success');else showToast(`푸시 실패: ${d.error}`,'error');}).catch(()=>showToast('푸시 실패','error'));}} style={miniBtn}>푸시</button>
+              </> : <>
+                <button onClick={e=>{e.stopPropagation(); if(wtPortEntry){isWtRunning?stopCommand(wtPortEntry):executeCommand(wtPortEntry);}else{executeCommand({...portItem,id:`${portItem.id}_wt_${wtName}`,port:wtPort,worktreePath:wt.path});}}} style={{...miniBtn,color:isWtRunning?'#c96a5a':'#8fb96e',borderColor:isWtRunning?'rgba(201,106,90,0.2)':'rgba(143,185,110,0.2)'}} title={isWtRunning?`포트 ${wtPort}`:undefined}>
+                  {isWtRunning ? '중지' : `실행(${wtPort})`}
+                </button>
+                <button onClick={e=>{e.stopPropagation(); window.open(`http://localhost:${wtPort}`,'_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
+                <button onClick={e=>{e.stopPropagation(); if(wtPortEntry)forceRestartCommand(wtPortEntry);else forceRestartCommand({...portItem,id:`${portItem.id}_wt_${wtName}`,port:wtPort,worktreePath:wt.path});}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
+                <button onClick={e=>{e.stopPropagation(); API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
+                <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>{bypassPermissions?'Claude ⚡':'Claude'}</button>
+                <button onClick={e=>{e.stopPropagation(); setCommitModal({item:portItem,wt,msg:''});}} style={miniBtn}>커밋</button>
+                <button onClick={e=>{e.stopPropagation(); const baseUrl=isTauri()?'http://localhost:3001':''; fetch(`${baseUrl}/api/git-push`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folderPath:wt.path})}).then(r=>r.json()).then(d=>{if(d.success)showToast(`푸시 완료: ${displayName}`,'success');else showToast(`푸시 실패: ${d.error}`,'error');}).catch(()=>showToast('푸시 실패','error'));}} style={miniBtn}>푸시</button>
+                <button onClick={e=>{e.stopPropagation(); handleWorktreeMerge(portItem,wt);}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}}>머지</button>
+                <button onClick={e=>{e.stopPropagation(); handleWorktreeRemove(portItem,wt);}} style={{...miniBtn,color:'#c96a5a',borderColor:'rgba(201,106,90,0.2)'}}>삭제</button>
+              </>}
+              </div>
+            </div>
+          );
+        })
+      )}
+      <div style={{display:'flex',gap:4,marginTop:2}}>
+        <input type="text" value={worktreeNewBranch[portItem.id] ?? ''} onChange={e=>setWorktreeNewBranch(prev=>({...prev,[portItem.id]:e.target.value}))} onKeyDown={e=>{if(e.key==='Enter'){e.stopPropagation();handleWorktreeAdd(portItem);}}} onClick={e=>e.stopPropagation()} placeholder="브랜치명" style={{flex:1,padding:'4px 7px',background:'#15120f',border:'1px solid rgba(255,240,220,0.07)',borderRadius:4,color:'#ede7dd',fontSize:10.5,outline:'none',fontFamily:'inherit'}}/>
+        <button onClick={e=>{e.stopPropagation(); handleWorktreeAdd(portItem);}} style={{padding:'4px 8px',background:'rgba(232,165,87,0.1)',border:'1px solid rgba(232,165,87,0.25)',borderRadius:4,color:'#e8a557',fontSize:10,cursor:'pointer',fontFamily:'inherit',whiteSpace:'nowrap'}}>+ 추가</button>
+      </div>
+    </div>
+  );
+
+  const renderV4View = () => {
+    const sel = v4SelectedId ? v3Ports.find(p => p.id === v4SelectedId) ?? null : null;
+    const monoFont = 'JetBrains Mono, monospace';
+    const rowBtn = {padding:'5px 10px',background:'transparent',border:'1px solid rgba(255,240,220,0.1)',borderRadius:5,color:'#a39a8c',cursor:'pointer',fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif',display:'flex',alignItems:'center',gap:4} as const;
+
+    const renderRow = (item: PortInfo) => {
+      const active = item.id === v4SelectedId;
+      return (
+        <div key={item.id} onClick={() => setV4SelectedId(item.id)} style={{
+          display:'flex',alignItems:'center',gap:8,padding:'0 14px',height:38,cursor:'pointer',
+          fontFamily:monoFont,fontSize:12,
+          background:active ? 'rgba(232,165,87,0.08)' : 'transparent',
+          borderLeft:`2px solid ${active ? '#e8a557' : 'transparent'}`,
+          color:active ? '#ede7dd' : '#a39a8c',
+          transition:'background .1s',
+        }}>
+          <span style={{fontSize:7,color:item.isRunning ? '#8fb96e' : '#6b6459'}}>●</span>
+          <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.name}</span>
+          {item.port ? <span style={{color:'#e8a557',fontSize:11}}>:{item.port}</span> : <span style={{color:'#4b4540',fontSize:11}}>—</span>}
+        </div>
+      );
+    };
+
+    return (
+      <div style={{flex:1,display:'flex',overflow:'hidden'}}>
+        {/* 좌측 목록 패널 */}
+        <div style={{width:300,flexShrink:0,borderRight:'1px solid rgba(255,240,220,0.07)',display:'flex',flexDirection:'column',background:'#1c1916'}}>
+          <div style={{padding:'10px 12px',borderBottom:'1px solid rgba(255,240,220,0.07)'}}>
+            <div style={{position:'relative'}}>
+              <Search style={{position:'absolute',left:8,top:'50%',transform:'translateY(-50%)',width:12,height:12,color:'#6b6459'}} />
+              <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Jump to project…" style={{
+                width:'100%',padding:'6px 8px 6px 28px',background:'#0a0a0b',
+                border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,
+                color:'#ede7dd',fontSize:12,fontFamily:monoFont,outline:'none',boxSizing:'border-box' as const,
+              }}/>
+            </div>
+          </div>
+          <div style={{flex:1,overflowY:'auto'}}>
+            {v3Running.length > 0 && <>
+              <div style={{padding:'8px 14px 4px',fontSize:10,fontFamily:monoFont,color:'#6b6459',textTransform:'uppercase' as const,letterSpacing:0.5,display:'flex',alignItems:'center',gap:5}}>
+                <span style={{width:5,height:5,borderRadius:3,background:'#8fb96e',display:'inline-block'}}/>
+                Running · {v3Running.length}
+              </div>
+              {v3Running.map(renderRow)}
+            </>}
+            {v3Idle.length > 0 && <>
+              <div style={{padding:'8px 14px 4px',fontSize:10,fontFamily:monoFont,color:'#6b6459',textTransform:'uppercase' as const,letterSpacing:0.5,display:'flex',alignItems:'center',gap:5}}>
+                <span style={{width:5,height:5,borderRadius:3,background:'#4b4540',display:'inline-block'}}/>
+                Idle · {v3Idle.length}
+              </div>
+              {v3Idle.map(renderRow)}
+            </>}
+            {v3Ports.length === 0 && (
+              <div style={{padding:'40px 0',textAlign:'center',color:'#4b4540',fontSize:12,fontFamily:monoFont}}>no projects</div>
+            )}
+          </div>
+        </div>
+
+        {/* 우측 상세 패널 */}
+        {sel ? (
+          editingId === sel.id ? (
+            /* 수정 폼 */
+            <div style={{flex:1,overflowY:'auto',padding:'28px 32px',display:'flex',flexDirection:'column',gap:6}}>
+              <div style={{fontSize:12,color:'#a39a8c',marginBottom:4}}>수정: {sel.name}</div>
+              <div style={{display:'flex',gap:6}}>
+                <input type="text" value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={handleEditKeyPress} style={{...inpV3,flex:1}} placeholder="프로젝트 이름" autoFocus />
+                <input type="number" value={editPort} onChange={e=>setEditPort(e.target.value)} onKeyDown={handleEditKeyPress} style={{...inpV3,width:70,flex:'none'}} placeholder="포트" />
+                <button onClick={saveEdit} style={{padding:'5px 8px',background:'rgba(143,185,110,0.14)',border:'1px solid rgba(143,185,110,0.3)',borderRadius:6,cursor:'pointer',display:'flex',alignItems:'center'}}><Check className="w-3.5 h-3.5" style={{color:'#8fb96e'}}/></button>
+                <button onClick={cancelEdit} style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:6,cursor:'pointer',display:'flex',alignItems:'center'}}><XIcon className="w-3.5 h-3.5" style={{color:'#6b6459'}}/></button>
+              </div>
+              <input type="text" value={editCommandPath} onChange={e=>setEditCommandPath(e.target.value)} onKeyDown={handleEditKeyPress} style={inpV3} placeholder={`${execFileExt()} 파일 경로`} />
+              <input type="text" value={editTerminalCommand} onChange={e=>setEditTerminalCommand(e.target.value)} onKeyDown={handleEditKeyPress} style={inpV3} placeholder="터미널 명령어" />
+              <input type="text" value={editFolderPath} onChange={e=>setEditFolderPath(e.target.value)} onKeyDown={handleEditKeyPress} style={inpV3} placeholder="폴더 경로" />
+              <input type="text" value={editDeployUrl} onChange={e=>setEditDeployUrl(e.target.value)} onKeyDown={handleEditKeyPress} style={inpV3} placeholder="배포 주소" />
+              <input type="text" value={editGithubUrl} onChange={e=>setEditGithubUrl(e.target.value)} onKeyDown={handleEditKeyPress} style={inpV3} placeholder="GitHub 주소" />
+              <div style={{display:'flex',gap:6}}>
+                <input type="text" value={editCategory} onChange={e=>setEditCategory(e.target.value)} onKeyDown={handleEditKeyPress} style={{...inpV3,flex:1}} placeholder="카테고리" />
+                <input type="text" value={editDescription} onChange={e=>setEditDescription(e.target.value)} onKeyDown={handleEditKeyPress} style={{...inpV3,flex:2}} placeholder="프로젝트 설명" />
+              </div>
+            </div>
+          ) : (
+          <div style={{flex:1,overflowY:'auto',padding:'28px 32px'}}>
+            {/* 헤더 */}
+            <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:6}}>
+              <span style={{width:8,height:8,borderRadius:4,background:sel.isRunning?'#8fb96e':'#6b6459',flexShrink:0}}/>
+              <h2 style={{margin:0,fontSize:20,fontWeight:600,letterSpacing:-0.3,color:'#ede7dd'}}>{sel.name}</h2>
+              {sel.port && <span style={{fontSize:15,fontFamily:monoFont,color:'#e8a557'}}>:{sel.port}</span>}
+              {sel.favorite && <Star style={{width:13,height:13,color:'#e8a557',fill:'#e8a557'}}/>}
+            </div>
+
+            {/* 메타 정보 */}
+            <div style={{display:'flex',flexDirection:'column',gap:5,marginBottom:24,fontSize:12,fontFamily:monoFont}}>
+              {sel.folderPath && <div style={{display:'flex',gap:10}}><span style={{color:'#4b4540',minWidth:72,flexShrink:0}}>folder</span><span style={{color:'#a39a8c',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.folderPath}</span></div>}
+              {sel.commandPath && <div style={{display:'flex',gap:10}}><span style={{color:'#4b4540',minWidth:72,flexShrink:0}}>command</span><span style={{color:'#a39a8c',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.commandPath}</span></div>}
+              {sel.terminalCommand && <div style={{display:'flex',gap:10}}><span style={{color:'#4b4540',minWidth:72,flexShrink:0}}>terminal</span><span style={{color:'#a39a8c',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.terminalCommand}</span></div>}
+              {sel.deployUrl && <div style={{display:'flex',gap:10}}><span style={{color:'#4b4540',minWidth:72,flexShrink:0}}>deploy</span><span style={{color:'#7ba7c9',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.deployUrl}</span></div>}
+              {sel.githubUrl && <div style={{display:'flex',gap:10}}><span style={{color:'#4b4540',minWidth:72,flexShrink:0}}>github</span><span style={{color:'#7ba7c9',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{sel.githubUrl}</span></div>}
+            </div>
+
+            {/* 실행 제어 */}
+            <div style={{display:'flex',gap:6,flexWrap:'wrap' as const,marginBottom:8}}>
+              <button onClick={() => sel.isRunning ? stopCommand(sel) : executeCommand(sel)} style={{
+                ...rowBtn,
+                background:sel.isRunning ? 'rgba(201,106,90,0.14)' : 'rgba(143,185,110,0.14)',
+                color:sel.isRunning ? '#c96a5a' : '#8fb96e',
+                border:'none',fontWeight:600,padding:'6px 14px',
+              }}>
+                {sel.isRunning ? <><Square style={{width:10,height:10}}/>Stop</> : <><Play style={{width:10,height:10}}/>Run</>}
+              </button>
+              <button onClick={() => forceRestartCommand(sel)} style={rowBtn} title="프로세스 강제 종료 후 재실행">
+                <RotateCw style={{width:11,height:11}}/>강제 재실행
+              </button>
+              <button onClick={() => toggleWorktreePanel(sel.id, sel.folderPath)} style={{...rowBtn,color:expandedWorktreeIds.has(sel.id)?'#e8a557':'#a39a8c',borderColor:expandedWorktreeIds.has(sel.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.1)'}} title="워크트리 관리">
+                <GitBranch style={{width:11,height:11}}/>워크트리
+              </button>
+            </div>
+
+            {/* 열기 */}
+            <div style={{display:'flex',gap:6,flexWrap:'wrap' as const,marginBottom:8}}>
+              {sel.folderPath && <button onClick={() => API.openFolder(sel.folderPath!).catch(()=>{})} style={rowBtn}><FolderOpen style={{width:11,height:11}}/>폴더 열기</button>}
+              <button onClick={() => handleViewPortLog(sel.id, sel.name)} style={rowBtn}><FileText style={{width:11,height:11}}/>로그 보기</button>
+              {sel.port && <button onClick={() => API.openInChrome(`http://localhost:${sel.port}`).catch(()=>{})} style={rowBtn}><Laptop style={{width:11,height:11}}/>localhost</button>}
+              {sel.deployUrl && <button onClick={() => API.openInChrome(sel.deployUrl!).catch(()=>{})} style={rowBtn}><Globe style={{width:11,height:11}}/>배포 주소</button>}
+              {sel.githubUrl && <button onClick={() => API.openInChrome(sel.githubUrl!).catch(()=>{})} style={rowBtn}><Github style={{width:11,height:11}}/>GitHub</button>}
+              <button onClick={() => toggleFavorite(sel)} style={{...rowBtn,color:sel.favorite?'#e8a557':'#a39a8c',borderColor:sel.favorite?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.1)'}}>
+                <Star style={{width:11,height:11,fill:sel.favorite?'#e8a557':'none'}}/>즐겨찾기
+              </button>
+            </div>
+
+            {/* Claude 실행 */}
+            <div style={{display:'flex',gap:6,flexWrap:'wrap' as const,marginBottom:8}}>
+              <div style={{width:'100%',fontSize:10,color:'rgba(200,168,240,0.5)',fontWeight:600,letterSpacing:0.5,textTransform:'uppercase' as const,marginBottom:2}}>
+                Claude {bypassPermissions?'⚡bypass':''}
+              </div>
+              <button onClick={() => openCmuxClaude(sel)} style={{...rowBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title="cmux 앱으로 Claude 실행 (macOS)">
+                <Terminal style={{width:11,height:11}}/>cmux
+              </button>
+              <button onClick={() => openCmuxClaudeNew(sel)} style={{...rowBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title="cmux 새 워크스페이스">
+                <Terminal style={{width:11,height:11}}/>cmux ↺ 새창
+              </button>
+              <button onClick={() => openCmuxTerminal(sel)} style={rowBtn} title="cmux 터미널 (Claude 없이)">
+                <Terminal style={{width:11,height:11}}/>cmux 터미널
+              </button>
+              <button onClick={() => openTerminalClaude(sel)} style={{...rowBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title="Terminal.app으로 Claude 실행">
+                <Zap style={{width:11,height:11}}/>Terminal Claude
+              </button>
+              <button onClick={() => openTmuxClaude(sel)} style={{...rowBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title="tmux 세션으로 Claude 실행">
+                <SquareTerminal style={{width:11,height:11}}/>tmux
+              </button>
+              <button onClick={() => openTmuxClaudeNew(sel)} style={{...rowBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title="기존 tmux 삭제 후 새창">
+                <SquareTerminal style={{width:11,height:11}}/>tmux ↺ 새창
+              </button>
+            </div>
+
+            {/* 편집/삭제 */}
+            <div style={{display:'flex',gap:6,flexWrap:'wrap' as const}}>
+              <button onClick={() => startEdit(sel)} style={rowBtn}><Pencil style={{width:11,height:11}}/>수정</button>
+              <button onClick={() => setDeleteConfirmId(sel.id)} style={{...rowBtn,color:'#c96a5a',borderColor:'rgba(201,106,90,0.2)'}}>
+                <Trash2 style={{width:11,height:11}}/>삭제
+              </button>
+            </div>
+
+            {/* 워크트리 패널 */}
+            {expandedWorktreeIds.has(sel.id) && <div style={{marginTop:8}}>{renderWorktreePanel(sel)}</div>}
+          </div>
+          )
+        ) : (
+          <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:10,color:'#4b4540'}}>
+            <SquareTerminal style={{width:36,height:36,opacity:0.2}}/>
+            <p style={{fontSize:12,margin:0,fontFamily:'JetBrains Mono, monospace'}}>select a project</p>
+          </div>
         )}
       </div>
     );
@@ -3686,6 +3855,49 @@ function App() {
                 className="px-4 py-1.5 text-xs bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 rounded-lg transition-colors"
               >
                 삭제
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gitInitConfirm && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setGitInitConfirm(null)}>
+          <div className="bg-[#1c1916] rounded-xl border border-stone-700/50 w-full max-w-sm p-6 space-y-4"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="bg-amber-500/15 p-2 rounded-lg border border-amber-500/30">
+                <GitBranch className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-sm">Git 초기화 필요</h3>
+                <p className="text-zinc-400 text-xs mt-0.5">{gitInitConfirm.item.name}</p>
+              </div>
+            </div>
+            <div className="bg-[#221f1b]/60 rounded-lg p-3 border border-stone-800/40 space-y-1">
+              <p className="text-xs text-[#ede7dd]/90">이 프로젝트는 Git 저장소가 아닙니다.</p>
+              <p className="text-xs text-zinc-400"><span className="text-amber-400 font-mono">git init</span> 후 빈 커밋을 생성하고 워크트리 <span className="text-amber-400 font-mono">{gitInitConfirm.branchName}</span>을 추가할까요?</p>
+              {gitInitConfirm.item.folderPath && <p className="text-xs text-zinc-600 font-mono break-all">{gitInitConfirm.item.folderPath}</p>}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setGitInitConfirm(null)}
+                className="px-4 py-1.5 text-xs text-zinc-400 hover:text-white border border-stone-700/50 hover:border-zinc-500 rounded-lg transition-colors">
+                취소
+              </button>
+              <button onClick={async () => {
+                const { item, branchName } = gitInitConfirm;
+                setGitInitConfirm(null);
+                try {
+                  const result = await API.gitInit(item.folderPath!);
+                  if (result.error) { showToast(`Git 초기화 실패: ${result.error}`, 'error'); return; }
+                  showToast('Git 초기화 완료', 'success');
+                  await executeWorktreeAdd(item, branchName);
+                } catch (e) {
+                  showToast(`Git 초기화 실패: ${e}`, 'error');
+                }
+              }} className="px-4 py-1.5 text-xs bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 rounded-lg transition-colors">
+                Git 초기화 후 추가
               </button>
             </div>
           </div>
@@ -4778,6 +4990,14 @@ function App() {
                     </button>
                   </>
                 )}
+                {/* 뷰 토글 버튼 */}
+                <button
+                  onClick={() => { const next = portViewMode === 'card' ? 'terminal' : 'card'; setPortViewMode(next); localStorage.setItem('portmanager-viewMode', next); }}
+                  title={portViewMode === 'card' ? '터미널 뷰로 전환' : '카드 뷰로 전환'}
+                  style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}
+                >
+                  {portViewMode === 'card' ? <LayoutList style={{width:13,height:13}}/> : <LayoutGrid style={{width:13,height:13}}/>}
+                </button>
                 {!isDeployedWeb() && (
                   <button
                     data-help-key="header-new-project"
@@ -4795,8 +5015,11 @@ function App() {
                 )}
               </div>
 
+              {/* V4 터미널 뷰 */}
+              {portViewMode === 'terminal' && renderV4View()}
+
               {/* Card grid */}
-              <div style={{flex:1,overflowY:'auto',padding:'16px 28px 28px'}}>
+              {portViewMode === 'card' && <div style={{flex:1,overflowY:'auto',padding:'16px 28px 28px'}}>
                 {v3Running.length > 0 && (
                   <div style={{marginBottom:24}}>
                     <div data-help-key="section-header-running" style={{
@@ -4842,7 +5065,7 @@ function App() {
                     © {new Date().getFullYear()} CS & Company. All rights reserved.
                   </p>
                 </div>
-              </div>
+              </div>}
             </div>
           </div>
         )}
