@@ -2177,15 +2177,22 @@ pub fn run() {
     .build(tauri::generate_context!())
     .expect("error while building tauri application")
     .run(|app_handle, event| {
-      // macOS: Dock 아이콘 클릭 시 숨겨진 창 복원
-      if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
-        if !has_visible_windows {
-          if let Some(window) = app_handle.get_webview_window("main") {
-            let _ = window.show();
-            let _ = window.unminimize();
-            let _ = window.set_focus();
+      // macOS 전용: Dock 아이콘 클릭 시 숨겨진 창 복원 (Reopen variant 는 macOS 만 존재)
+      #[cfg(target_os = "macos")]
+      {
+        if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+          if !has_visible_windows {
+            if let Some(window) = app_handle.get_webview_window("main") {
+              let _ = window.show();
+              let _ = window.unminimize();
+              let _ = window.set_focus();
+            }
           }
         }
+      }
+      #[cfg(not(target_os = "macos"))]
+      {
+        let _ = (app_handle, event); // Windows/Linux 미사용 인자 경고 억제
       }
     });
 }
