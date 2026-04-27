@@ -1765,10 +1765,21 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
             onResetDevice={() => setViewingDeviceId('')}
             onCopyDeviceId={() => { if (data.deviceId) { navigator.clipboard.writeText(data.deviceId); showToast('Device ID 복사됨', 'success'); } }}
             onChangeDeviceId={async (newId) => {
-              const next = { ...data, deviceId: newId };
+              // 새 deviceId 에 해당하는 이름을 knownDevices(=Supabase devices 조회 결과)에서 찾아 함께 적용.
+              // 못 찾으면 기존 deviceName 유지하되, Supabase 단일 조회로 한번 더 시도.
+              let resolvedName: string | undefined = knownDevices.find(d => d.device_id === newId)?.device_name;
+              if (!resolvedName && sbUrl && sbKey) {
+                try {
+                  const sb = getSupabaseClient(sbUrl, sbKey);
+                  const { data: dev } = await sb.from('devices').select('name').eq('id', newId).maybeSingle();
+                  if (dev?.name) resolvedName = dev.name;
+                } catch { /* ignore */ }
+              }
+              const next: PortalData = { ...data, deviceId: newId, deviceName: resolvedName ?? data.deviceName };
               await persist(next);
               setData(next);
-              showToast('Device ID 변경됨', 'success');
+              if (resolvedName) setDeviceName(resolvedName);
+              showToast(resolvedName ? `기기 변경: ${resolvedName}` : 'Device ID 변경됨', 'success');
             }}
             onDeleteDevice={deleteKnownDevice}
             deletingDeviceId={deletingDeviceId}
