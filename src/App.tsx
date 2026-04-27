@@ -4990,14 +4990,21 @@ function App() {
                     </button>
                   </>
                 )}
-                {/* 뷰 토글 버튼 */}
-                <button
-                  onClick={() => { const next = portViewMode === 'card' ? 'terminal' : 'card'; setPortViewMode(next); localStorage.setItem('portmanager-viewMode', next); }}
-                  title={portViewMode === 'card' ? '터미널 뷰로 전환' : '카드 뷰로 전환'}
-                  style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}
-                >
-                  {portViewMode === 'card' ? <LayoutList style={{width:13,height:13}}/> : <LayoutGrid style={{width:13,height:13}}/>}
-                </button>
+                {/* 뷰 토글 — 카드 / 터미널 세그먼트 */}
+                <div data-help-key="view-mode-toggle" style={{display:'flex',background:'#1c1916',borderRadius:5,padding:2,border:'1px solid rgba(255,240,220,0.07)'}}>
+                  {([['card','카드',LayoutGrid],['terminal','터미널',LayoutList]] as const).map(([mode,label,Icon])=>(
+                    <button key={mode} onClick={()=>{setPortViewMode(mode);localStorage.setItem('portmanager-viewMode',mode);}} title={mode==='card'?'카드 그리드 뷰':'터미널 스플릿 뷰'} style={{
+                      padding:'3px 8px',fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif',
+                      background:portViewMode===mode?'#2a2520':'transparent',
+                      color:portViewMode===mode?'#ede7dd':'#a39a8c',
+                      border:'none',borderRadius:3,cursor:'pointer',
+                      display:'flex',alignItems:'center',gap:4,
+                      fontWeight:portViewMode===mode?500:400,
+                    }}>
+                      <Icon style={{width:12,height:12}}/>{label}
+                    </button>
+                  ))}
+                </div>
                 {!isDeployedWeb() && (
                   <button
                     data-help-key="header-new-project"
