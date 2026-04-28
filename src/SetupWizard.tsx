@@ -1944,7 +1944,7 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                 </div>
                 <div className="bg-zinc-950 rounded-lg p-3 text-[11px] text-zinc-400 font-mono leading-relaxed max-h-24 overflow-hidden relative">
                   <span className="text-zinc-500">## 1. Rust/Cargo 설치 확인 및 설치</span>{'\n'}
-                  <span className="text-zinc-400">which cargo 2>/dev/null && cargo --version || {'{'} curl ... rustup.rs | sh {'}'}</span>{'\n'}
+                  <span className="text-zinc-400">{'which cargo 2>/dev/null && cargo --version || { curl ... rustup.rs | sh }'}</span>{'\n'}
                   <span className="text-zinc-500">## 2. cmux 설치 → ## 3. 앱 실행 → ## 4. Socket Control allowAll</span>{'\n'}
                   <span className="text-zinc-500">## 5. cmux 재시작 → ## 6. cargo --version + cmux ping 확인</span>
                   <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-zinc-950 to-transparent" />
