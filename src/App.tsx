@@ -5056,6 +5056,9 @@ function App() {
                     <button data-help-key="header-build-dmg" onClick={handleBuildDmg} disabled={isBuilding} title="DMG 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
                       <Package style={{width:13,height:13}} className={isBuilding && buildType==='dmg' ? 'animate-spin' : ''} />
                     </button>
+                    <button data-help-key="header-open-build-folder" onClick={() => API.openBuildFolder().catch(e => showToast('폴더 열기 실패: ' + e.message, 'error'))} title="DMG 빌드 폴더 열기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                      <FolderOpen style={{width:13,height:13}} />
+                    </button>
                   </>
                 )}
                 {/* 뷰 토글 — 카드 / 터미널 세그먼트 */}
