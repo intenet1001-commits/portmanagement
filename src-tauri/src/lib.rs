@@ -767,20 +767,26 @@ fn export_dmg() -> Result<String, String> {
 
     let mut dmg_file: Option<String> = None;
 
-    for dmg_dir in dmg_paths {
+    'outer: for dmg_dir in dmg_paths {
         if let Ok(entries) = fs::read_dir(&dmg_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if let Some(ext) = path.extension() {
-                    if ext == "dmg" && !path.file_name().unwrap().to_str().unwrap().starts_with("rw.") {
-                        dmg_file = Some(path.to_string_lossy().to_string());
-                        break;
+            let mut candidates: Vec<(std::time::SystemTime, String)> = entries
+                .flatten()
+                .filter_map(|e| {
+                    let p = e.path();
+                    let name = p.file_name()?.to_str()?.to_string();
+                    if p.extension()? == "dmg" && !name.starts_with("rw.") {
+                        let mtime = p.metadata().ok()?.modified().ok()?;
+                        Some((mtime, p.to_string_lossy().to_string()))
+                    } else {
+                        None
                     }
-                }
+                })
+                .collect();
+            if !candidates.is_empty() {
+                candidates.sort_by(|a, b| b.0.cmp(&a.0)); // 최신순
+                dmg_file = Some(candidates.remove(0).1);
+                break 'outer;
             }
-        }
-        if dmg_file.is_some() {
-            break;
         }
     }
 

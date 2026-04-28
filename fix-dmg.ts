@@ -44,6 +44,18 @@ async function fixDmg() {
     }
 
     // 2) fallback: src-tauri/target/ 경로에서 최신 DMG 찾아 cargo-targets로 복사
+    // DMG_DIR에 최근 10분 내 생성된 DMG가 이미 있으면 건너뜀 (main 빌드 성공 케이스)
+    const TEN_MIN = 10 * 60 * 1000;
+    if (existsSync(DMG_DIR)) {
+      const recentDmg = readdirSync(DMG_DIR)
+        .filter(f => f.endsWith(".dmg") && !f.startsWith("rw."))
+        .find(f => Date.now() - statSync(join(DMG_DIR, f)).mtime.getTime() < TEN_MIN);
+      if (recentDmg) {
+        console.log(`[FixDMG] ✅ Recent DMG already exists: ${recentDmg} — skipping fallback`);
+        return;
+      }
+    }
+
     if (existsSync(FALLBACK_DMG_DIR)) {
       const fallbackFiles = readdirSync(FALLBACK_DMG_DIR).filter(f => f.endsWith(".dmg") && !f.startsWith("rw."));
       if (fallbackFiles.length > 0) {
