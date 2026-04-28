@@ -1846,6 +1846,43 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                 )}
               </div>
 
+              {/* ⚡ 새 기기 퀵 설치 프롬프트 — 카드 위에 배치 */}
+              <div className="w-full max-w-4xl bg-zinc-900 border border-yellow-500/20 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-yellow-400" />
+                      새 기기 빠른 설치
+                      <span className="text-[10px] font-normal text-yellow-400/70 bg-yellow-400/10 border border-yellow-400/20 px-2 py-0.5 rounded-full">Claude Code 자동 실행</span>
+                    </p>
+                    <p className="text-xs text-zinc-500 mt-0.5">프롬프트 복사 → Claude Code 붙여넣기 → Rust · cmux · 소켓 설정 자동 완료</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(QUICK_INSTALL_PROMPT);
+                      setQuickInstallCopied(true);
+                      setTimeout(() => setQuickInstallCopied(false), 2000);
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-all shrink-0 ${
+                      quickInstallCopied
+                        ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                        : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-600 text-zinc-300 hover:text-white'
+                    }`}
+                  >
+                    {quickInstallCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {quickInstallCopied ? '복사됨!' : '프롬프트 복사'}
+                  </button>
+                </div>
+                <div className="bg-zinc-950 rounded-lg p-3 text-[11px] text-zinc-400 font-mono leading-relaxed max-h-20 overflow-hidden relative">
+                  <span className="text-zinc-500">1. Rust/Cargo 설치 확인 · 미설치 시 rustup 자동 설치</span>{'\n'}
+                  <span className="text-zinc-500">2. cmux 설치 확인 · 미설치 시 brew cask 자동 설치</span>{'\n'}
+                  <span className="text-zinc-500">3. cmux Socket Control → allowAll 설정 후 재시작</span>{'\n'}
+                  <span className="text-zinc-500">4. cargo --version + cmux ping 으로 전체 연결 확인</span>
+                  <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-zinc-950 to-transparent" />
+                </div>
+                <p className="text-[11px] text-zinc-600">단계별 수동 설치는 아래 <span className="text-purple-400">터미널 도구 가이드</span> 카드를 이용하세요.</p>
+              </div>
+
               {/* 클립보드에 portmanager-setup JSON 감지 시 추가 기기 모드로 원클릭 진입 */}
               {clipboardHasSetup && (
                 <button
@@ -1909,48 +1946,13 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                   <div className="w-10 h-10 bg-purple-500/10 border border-purple-500/20 rounded-xl flex items-center justify-center mb-3 sm:mb-4 group-hover:bg-purple-500/20 transition-all">
                     <Terminal className="w-5 h-5 text-purple-400" />
                   </div>
-                  <h3 className="text-base font-semibold text-white mb-1">⚡ tmux / cmux 설치</h3>
-                  <p className="text-sm text-zinc-500 leading-relaxed">터미널 멀티플렉서 설정<br />AI 에이전트 전용 터미널</p>
+                  <h3 className="text-base font-semibold text-white mb-1">터미널 도구 가이드</h3>
+                  <p className="text-sm text-zinc-500 leading-relaxed">tmux · cmux 단계별 설치<br />Socket Control · CLAUDE.md 설정</p>
                   <div className="flex items-center gap-1 text-purple-400 text-xs mt-3 sm:mt-4 group-hover:gap-2 transition-all">
-                    시작하기 <ChevronRight className="w-3.5 h-3.5" />
+                    상세 가이드 <ChevronRight className="w-3.5 h-3.5" />
                   </div>
                 </button>
               </div>
-              {/* ⚡ 새 기기 퀵 설치 프롬프트 */}
-              <div className="w-full max-w-4xl bg-zinc-900 border border-zinc-700 rounded-2xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-white flex items-center gap-2">
-                      <Zap className="w-4 h-4 text-yellow-400" />
-                      새 기기 빠른 설치
-                    </p>
-                    <p className="text-xs text-zinc-500 mt-0.5">Claude Code에 붙여넣기 하나로 Rust + cmux + 소켓 설정 완료</p>
-                  </div>
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(QUICK_INSTALL_PROMPT);
-                      setQuickInstallCopied(true);
-                      setTimeout(() => setQuickInstallCopied(false), 2000);
-                    }}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-all shrink-0 ${
-                      quickInstallCopied
-                        ? 'bg-green-500/10 border-green-500/30 text-green-400'
-                        : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-600 text-zinc-300 hover:text-white'
-                    }`}
-                  >
-                    {quickInstallCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    {quickInstallCopied ? '복사됨!' : '프롬프트 복사'}
-                  </button>
-                </div>
-                <div className="bg-zinc-950 rounded-lg p-3 text-[11px] text-zinc-400 font-mono leading-relaxed max-h-24 overflow-hidden relative">
-                  <span className="text-zinc-500">## 1. Rust/Cargo 설치 확인 및 설치</span>{'\n'}
-                  <span className="text-zinc-400">{'which cargo 2>/dev/null && cargo --version || { curl ... rustup.rs | sh }'}</span>{'\n'}
-                  <span className="text-zinc-500">## 2. cmux 설치 → ## 3. 앱 실행 → ## 4. Socket Control allowAll</span>{'\n'}
-                  <span className="text-zinc-500">## 5. cmux 재시작 → ## 6. cargo --version + cmux ping 확인</span>
-                  <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-zinc-950 to-transparent" />
-                </div>
-              </div>
-
               {/* Portal 배포는 1st 완료 후 "다음 액션"으로 안내 → choose에서는 제외 */}
               <p className="text-[11px] text-zinc-600 mt-2">
                 💡 다른 기기 연결을 위한 <span className="text-violet-400">북마크 포털 배포</span>는 1st 기기 완료 후 안내됩니다
@@ -2088,15 +2090,9 @@ function TerminalToolsWizard({ onBack }: { onBack: () => void }) {
               설치 완료 후 포트 관리기 카드의 더보기 메뉴 → <strong>cmux ⚡ (Mac)</strong> 버튼으로 cmux에서 Claude를 실행합니다.
             </InfoBox>
 
-            <div className="space-y-4">
-              <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
-                ⚡ 퀵 설치 프롬프트 <span className="text-zinc-500 text-xs font-normal">새 기기 일회성 실행</span>
-              </h3>
-              <p className="text-xs text-zinc-500">아래 프롬프트를 Claude Code에 붙여넣으면 설치 → Socket Control 설정 → 연결 확인까지 자동으로 진행합니다.</p>
-              <CodeBlock
-                label="Claude Code에 붙여넣기"
-                code={`portmanagement 새 기기 환경 설정을 진행해줘. 아래 단계를 순서대로 실행하고 각 결과를 확인해줘.\n\n## 1. Rust/Cargo 설치 확인 및 설치\nwhich cargo 2>/dev/null && cargo --version && echo "✅ Rust 이미 설치됨" || {\n  echo "Rust 설치 중..."\n  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y\n  source ~/.cargo/env\n  cargo --version\n}\n\n## 2. cmux 설치 확인 및 설치\nwhich cmux 2>/dev/null && cmux --version && echo "✅ cmux 이미 설치됨" || {\n  brew tap manaflow-ai/cmux && brew install --cask cmux\n}\n\n## 3. cmux 앱 실행\nopen -a cmux && sleep 3\n\n## 4. Socket Control → Allow All 설정\n# 기본 cmuxOnly 모드는 외부 앱(API 서버)의 소켓 접근을 차단함\ndefaults write com.cmuxterm.app socketControlMode -string "allowAll"\n\n## 5. cmux 재시작 (설정 적용)\npkill -f "cmux.app/Contents/MacOS/cmux" 2>/dev/null\nsleep 2\nopen -a cmux\nsleep 4\n\n## 6. 전체 연결 확인\nsource ~/.cargo/env 2>/dev/null\ncargo --version   # Rust 확인\ncmux ping         # PONG 응답이면 cmux 성공\n\n완료 여부와 각 항목 버전을 알려줘.`}
-              />
+            <div className="bg-zinc-800/50 border border-yellow-500/20 rounded-xl p-3 flex items-center gap-3 text-xs text-zinc-400">
+              <Zap className="w-4 h-4 text-yellow-400 shrink-0" />
+              <span>Rust + cmux 자동 설치 프롬프트는 <strong className="text-zinc-300">세팅 첫 화면 → 새 기기 빠른 설치</strong>에서 복사할 수 있습니다.</span>
             </div>
 
             <div className="space-y-4">
