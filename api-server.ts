@@ -64,9 +64,11 @@ function resolveCmuxCli(): string | null {
   const bundled = '/Applications/cmux.app/Contents/Resources/bin/cmux';
   const homeBundled = `${homedir()}/Applications/cmux.app/Contents/Resources/bin/cmux`;
   const homebrew = '/opt/homebrew/bin/cmux';
+  const usrLocal = '/usr/local/bin/cmux';
   if (existsSync(bundled)) return bundled;
   if (existsSync(homeBundled)) return homeBundled;
   if (existsSync(homebrew)) return homebrew;
+  if (existsSync(usrLocal)) return usrLocal;
   return null;
 }
 

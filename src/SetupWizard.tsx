@@ -1967,6 +1967,27 @@ function TerminalToolsWizard({ onBack }: { onBack: () => void }) {
             </div>
 
             <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
+                Socket Control 설정 <span className="text-red-400 text-xs font-normal bg-red-400/10 px-1.5 py-0.5 rounded">필수</span>
+              </h3>
+              <InfoBox color="amber">
+                cmux는 기본으로 <strong>cmuxOnly 모드</strong>입니다 — 외부 앱(포트 관리기 API 서버 등)의 소켓 연결을 차단합니다. 아래 명령으로 <strong>Allow All</strong>로 변경 후 재시작해야 버튼이 정상 작동합니다.
+              </InfoBox>
+              <CodeBlock
+                label="① Socket Control → Allow All 설정"
+                code={`defaults write com.cmuxterm.app socketControlMode -string "allowAll"`}
+              />
+              <CodeBlock
+                label="② cmux 재시작 (설정 적용)"
+                code={`pkill -f "cmux.app/Contents/MacOS/cmux" 2>/dev/null; sleep 2; open -a cmux; sleep 4`}
+              />
+              <CodeBlock
+                label="③ 연결 확인 — PONG 응답이면 성공"
+                code="cmux ping"
+              />
+            </div>
+
+            <div className="space-y-4">
               <h3 className="text-sm font-semibold text-zinc-300">주요 CLI 명령어</h3>
               <CodeBlock code="cmux send 'claude --dangerously-skip-permissions'" label="Claude 실행 명령 전송" />
               <CodeBlock code="cmux read-screen" label="현재 패인 출력 읽기" />
@@ -1978,11 +1999,22 @@ function TerminalToolsWizard({ onBack }: { onBack: () => void }) {
             </InfoBox>
 
             <div className="space-y-4">
-              <h3 className="text-sm font-semibold text-zinc-300">Claude Code에 지시할 프롬프트</h3>
-              <p className="text-xs text-zinc-500">cmux 안에서 Claude를 실행할 때, 아래 내용을 프로젝트 <strong className="text-zinc-300">CLAUDE.md</strong>에 추가하세요. Claude가 tmux 대신 cmux CLI를 사용하게 됩니다.</p>
+              <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
+                ⚡ 퀵 설치 프롬프트 <span className="text-zinc-500 text-xs font-normal">새 기기 일회성 실행</span>
+              </h3>
+              <p className="text-xs text-zinc-500">아래 프롬프트를 Claude Code에 붙여넣으면 설치 → Socket Control 설정 → 연결 확인까지 자동으로 진행합니다.</p>
+              <CodeBlock
+                label="Claude Code에 붙여넣기"
+                code={`portmanagement cmux 퀵 설치를 진행해줘. 아래 단계를 순서대로 실행하고, 각 단계 결과를 확인해줘.\n\n## 1. cmux 설치 확인\nwhich cmux 2>/dev/null && cmux --version || echo "설치 필요"\n\n## 2. 미설치 시 설치\nbrew tap manaflow-ai/cmux && brew install --cask cmux\n\n## 3. cmux 앱 실행\nopen -a cmux && sleep 3\n\n## 4. Socket Control → Allow All 설정\n# 기본값 cmuxOnly 모드는 외부 앱(API 서버)의 소켓 접근을 차단함\ndefaults write com.cmuxterm.app socketControlMode -string "allowAll"\n\n## 5. cmux 재시작 (설정 적용)\npkill -f "cmux.app/Contents/MacOS/cmux" 2>/dev/null\nsleep 2\nopen -a cmux\nsleep 4\n\n## 6. 연결 확인\ncmux ping\n# PONG 응답이면 성공. 실패 시: cmux 앱 열고 Settings → Socket Control → Allow All 확인\n\n설치 완료 여부를 알려줘.`}
+              />
+            </div>
+
+            <div className="space-y-4">
+              <h3 className="text-sm font-semibold text-zinc-300">CLAUDE.md에 추가</h3>
+              <p className="text-xs text-zinc-500">cmux 안에서 Claude를 실행할 때, 아래 내용을 프로젝트 <strong className="text-zinc-300">CLAUDE.md</strong>에 추가하세요. Claude가 tmux 대신 cmux CLI를 사용하고 소켓 문제 시 스스로 복구합니다.</p>
               <CodeBlock
                 label="CLAUDE.md에 추가"
-                code={`# cmux 환경\n이 환경은 cmux입니다. tmux가 아닌 cmux CLI를 사용하세요.\n\n## 계층 구조\nWindow > Workspace > Pane > Surface\n\n## 환경변수 (자동 설정)\n- CMUX_WORKSPACE_ID\n- CMUX_SURFACE_ID\n- CMUX_SOCKET_PATH\n\n## 핵심 명령어\ncmux identify              # 현재 컨텍스트 확인\ncmux tree --all            # 전체 구조 확인\ncmux read-screen --lines 50       # 현재 패인 출력 읽기\ncmux send --surface S "cmd\\n"    # 다른 패인에 명령 전송\ncmux browser snapshot -i          # DOM 스냅샷 (Playwright 불필요)\ncmux notify --title "완료" --body "작업 완료"  # 알림\n\n## tmux → cmux 치환\n- tmux send-keys  →  cmux send\n- tmux capture-pane  →  cmux read-screen`}
+                code={`# cmux 환경\n이 환경은 cmux입니다. tmux가 아닌 cmux CLI를 사용하세요.\n\n## 계층 구조\nWindow > Workspace > Pane > Surface\n\n## 환경변수 (자동 설정)\n- CMUX_WORKSPACE_ID\n- CMUX_SURFACE_ID\n- CMUX_SOCKET_PATH\n\n## 핵심 명령어\ncmux identify              # 현재 컨텍스트 확인\ncmux tree --all            # 전체 구조 확인\ncmux read-screen --lines 50       # 현재 패인 출력 읽기\ncmux send --surface S "cmd\\n"    # 다른 패인에 명령 전송\ncmux browser snapshot -i          # DOM 스냅샷 (Playwright 불필요)\ncmux notify --title "완료" --body "작업 완료"  # 알림\n\n## tmux → cmux 치환\n- tmux send-keys  →  cmux send\n- tmux capture-pane  →  cmux read-screen\n\n## 소켓 연결 문제 시\ncmux ping 실패 시 아래 명령으로 복구:\ndefaults write com.cmuxterm.app socketControlMode -string "allowAll"\npkill -f "cmux.app/Contents/MacOS/cmux"; sleep 2; open -a cmux; sleep 4\ncmux ping  # PONG 확인`}
               />
               <p className="text-xs text-zinc-500">
                 <span className="text-zinc-400">예시 지시:</span> "오른쪽 패인(surface:4)에서 서버가 돌아가고 있어. cmux read-screen으로 서버 로그를 읽어서 상태를 알려줘."
