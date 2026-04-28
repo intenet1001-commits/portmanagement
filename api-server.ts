@@ -926,7 +926,7 @@ const server = Bun.serve({
 
         // bash를 통해 cargo 환경을 설정하고 실행
         buildProcess = spawn({
-          cmd: ["/bin/bash", "-c", `source "$HOME/.cargo/env" && cd "${import.meta.dir}" && bun run ${buildCommand}`],
+          cmd: ["/bin/bash", "-c", `[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"; cd "${import.meta.dir}" && bun run ${buildCommand}`],
           stdout: "pipe",
           stderr: "pipe",
         });
