@@ -789,13 +789,34 @@ fn export_dmg() -> Result<String, String> {
             let home = std::env::var("HOME").unwrap_or_default();
             let desktop = format!("{}/Desktop", home);
 
-            // 원본 파일명 추출 (버전 정보 포함)
+            // 원본 파일명 추출 후 vN 형식으로 단순화
+            // "CS_Manager_51.0.0_aarch64.dmg" → "CS_Manager_v51.dmg"
             let dmg_filename = Path::new(&dmg_path)
                 .file_name()
                 .and_then(|n| n.to_str())
-                .unwrap_or("포트관리기.dmg");
+                .unwrap_or("CS_Manager.dmg");
 
-            let dest_path = format!("{}/{}", desktop, dmg_filename);
+            let release_name = {
+                let base = dmg_filename.trim_end_matches(".dmg");
+                let parts: Vec<&str> = base.split('_').collect();
+                let mut found = None;
+                let mut product_end = parts.len();
+                for (i, part) in parts.iter().enumerate() {
+                    let segs: Vec<&str> = part.split('.').collect();
+                    if segs.len() == 3 && segs.iter().all(|s| s.parse::<u64>().is_ok()) {
+                        found = Some(segs[0].to_string());
+                        product_end = i;
+                        break;
+                    }
+                }
+                if let Some(major) = found {
+                    format!("{}_v{}.dmg", parts[..product_end].join("_"), major)
+                } else {
+                    dmg_filename.to_string()
+                }
+            };
+
+            let dest_path = format!("{}/{}", desktop, release_name);
 
             // 기존 파일이 있으면 삭제
             if Path::new(&dest_path).exists() {
