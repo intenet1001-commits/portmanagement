@@ -1135,7 +1135,7 @@ function MacEnvWizard({ onBack }: { onBack: () => void }) {
   const [step, setStep] = useState(0);
   const [claudeStatus, setClaudeStatus] = useState<'checking' | 'installed' | 'missing' | 'unknown'>('checking');
   const [tmuxStatus, setTmuxStatus] = useState<'checking' | 'installed' | 'missing' | 'unknown'>('checking');
-  const totalSteps = 4;
+  const totalSteps = 5;
 
   useEffect(() => {
     fetch('/api/check-claude').then(r => r.json()).then(d => setClaudeStatus(d.installed ? 'installed' : 'missing')).catch(() => setClaudeStatus('unknown'));
@@ -1176,6 +1176,25 @@ function MacEnvWizard({ onBack }: { onBack: () => void }) {
               <CmdBlock cmd="claude" label="④ 첫 실행 → Anthropic 계정 인증" />
             </>
           )}
+        </div>
+      ),
+    },
+    {
+      title: 'Rust 설치 (DMG 빌드 필수)',
+      content: (
+        <div className="space-y-4">
+          <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-300">
+            ⚠️ Tauri 앱 빌드(DMG 생성)에 Rust가 필요합니다. 설치하지 않으면 빌드 버튼이 실패합니다.
+          </div>
+          <CmdBlock
+            cmd="curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y"
+            label="① Rust 설치 (rustup)"
+          />
+          <CmdBlock cmd="source ~/.cargo/env" label="② 환경 변수 적용 (현재 터미널)" />
+          <CmdBlock cmd="cargo --version" label="③ 설치 확인 — cargo 1.7x 이상이면 성공" />
+          <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-3 text-xs text-zinc-400">
+            이미 설치되어 있다면 그냥 다음으로 넘어가세요.
+          </div>
         </div>
       ),
     },
@@ -2005,7 +2024,7 @@ function TerminalToolsWizard({ onBack }: { onBack: () => void }) {
               <p className="text-xs text-zinc-500">아래 프롬프트를 Claude Code에 붙여넣으면 설치 → Socket Control 설정 → 연결 확인까지 자동으로 진행합니다.</p>
               <CodeBlock
                 label="Claude Code에 붙여넣기"
-                code={`portmanagement cmux 퀵 설치를 진행해줘. 아래 단계를 순서대로 실행하고, 각 단계 결과를 확인해줘.\n\n## 1. cmux 설치 확인\nwhich cmux 2>/dev/null && cmux --version || echo "설치 필요"\n\n## 2. 미설치 시 설치\nbrew tap manaflow-ai/cmux && brew install --cask cmux\n\n## 3. cmux 앱 실행\nopen -a cmux && sleep 3\n\n## 4. Socket Control → Allow All 설정\n# 기본값 cmuxOnly 모드는 외부 앱(API 서버)의 소켓 접근을 차단함\ndefaults write com.cmuxterm.app socketControlMode -string "allowAll"\n\n## 5. cmux 재시작 (설정 적용)\npkill -f "cmux.app/Contents/MacOS/cmux" 2>/dev/null\nsleep 2\nopen -a cmux\nsleep 4\n\n## 6. 연결 확인\ncmux ping\n# PONG 응답이면 성공. 실패 시: cmux 앱 열고 Settings → Socket Control → Allow All 확인\n\n설치 완료 여부를 알려줘.`}
+                code={`portmanagement 새 기기 환경 설정을 진행해줘. 아래 단계를 순서대로 실행하고 각 결과를 확인해줘.\n\n## 1. Rust/Cargo 설치 확인 및 설치\nwhich cargo 2>/dev/null && cargo --version && echo "✅ Rust 이미 설치됨" || {\n  echo "Rust 설치 중..."\n  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y\n  source ~/.cargo/env\n  cargo --version\n}\n\n## 2. cmux 설치 확인 및 설치\nwhich cmux 2>/dev/null && cmux --version && echo "✅ cmux 이미 설치됨" || {\n  brew tap manaflow-ai/cmux && brew install --cask cmux\n}\n\n## 3. cmux 앱 실행\nopen -a cmux && sleep 3\n\n## 4. Socket Control → Allow All 설정\n# 기본 cmuxOnly 모드는 외부 앱(API 서버)의 소켓 접근을 차단함\ndefaults write com.cmuxterm.app socketControlMode -string "allowAll"\n\n## 5. cmux 재시작 (설정 적용)\npkill -f "cmux.app/Contents/MacOS/cmux" 2>/dev/null\nsleep 2\nopen -a cmux\nsleep 4\n\n## 6. 전체 연결 확인\nsource ~/.cargo/env 2>/dev/null\ncargo --version   # Rust 확인\ncmux ping         # PONG 응답이면 cmux 성공\n\n완료 여부와 각 항목 버전을 알려줘.`}
               />
             </div>
 
