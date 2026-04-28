@@ -1742,11 +1742,47 @@ function WizardLayout({
 
 // ─── Main SetupWizard ──────────────────────────────────────────────────────────
 
+const QUICK_INSTALL_PROMPT = `portmanagement 새 기기 환경 설정을 진행해줘. 아래 단계를 순서대로 실행하고 각 결과를 확인해줘.
+
+## 1. Rust/Cargo 설치 확인 및 설치
+which cargo 2>/dev/null && cargo --version && echo "✅ Rust 이미 설치됨" || {
+  echo "Rust 설치 중..."
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+  source ~/.cargo/env
+  cargo --version
+}
+
+## 2. cmux 설치 확인 및 설치
+which cmux 2>/dev/null && cmux --version && echo "✅ cmux 이미 설치됨" || {
+  brew tap manaflow-ai/cmux && brew install --cask cmux
+}
+
+## 3. cmux 앱 실행
+open -a cmux && sleep 3
+
+## 4. Socket Control → Allow All 설정
+# 기본 cmuxOnly 모드는 외부 앱(API 서버)의 소켓 접근을 차단함
+defaults write com.cmuxterm.app socketControlMode -string "allowAll"
+
+## 5. cmux 재시작 (설정 적용)
+pkill -f "cmux.app/Contents/MacOS/cmux" 2>/dev/null
+sleep 2
+open -a cmux
+sleep 4
+
+## 6. 전체 연결 확인
+source ~/.cargo/env 2>/dev/null
+cargo --version   # Rust 확인
+cmux ping         # PONG 응답이면 cmux 성공
+
+완료 여부와 각 항목 버전을 알려줘.`;
+
 export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
   const [mode, setMode] = useState<Mode>('choose');
   const [detectedOs, setDetectedOs] = useState<'mac' | 'windows' | null>(null);
   const [clipboardHasSetup, setClipboardHasSetup] = useState(false);
   const [clipboardDeviceName, setClipboardDeviceName] = useState<string>('');
+  const [quickInstallCopied, setQuickInstallCopied] = useState(false);
 
   useEffect(() => {
     const p = navigator.platform.toLowerCase();
@@ -1880,6 +1916,41 @@ export default function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                   </div>
                 </button>
               </div>
+              {/* ⚡ 새 기기 퀵 설치 프롬프트 */}
+              <div className="w-full max-w-4xl bg-zinc-900 border border-zinc-700 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Zap className="w-4 h-4 text-yellow-400" />
+                      새 기기 빠른 설치
+                    </p>
+                    <p className="text-xs text-zinc-500 mt-0.5">Claude Code에 붙여넣기 하나로 Rust + cmux + 소켓 설정 완료</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(QUICK_INSTALL_PROMPT);
+                      setQuickInstallCopied(true);
+                      setTimeout(() => setQuickInstallCopied(false), 2000);
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border transition-all shrink-0 ${
+                      quickInstallCopied
+                        ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                        : 'bg-zinc-800 hover:bg-zinc-700 border-zinc-600 text-zinc-300 hover:text-white'
+                    }`}
+                  >
+                    {quickInstallCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    {quickInstallCopied ? '복사됨!' : '프롬프트 복사'}
+                  </button>
+                </div>
+                <div className="bg-zinc-950 rounded-lg p-3 text-[11px] text-zinc-400 font-mono leading-relaxed max-h-24 overflow-hidden relative">
+                  <span className="text-zinc-500">## 1. Rust/Cargo 설치 확인 및 설치</span>{'\n'}
+                  <span className="text-zinc-400">which cargo 2>/dev/null && cargo --version || {'{'} curl ... rustup.rs | sh {'}'}</span>{'\n'}
+                  <span className="text-zinc-500">## 2. cmux 설치 → ## 3. 앱 실행 → ## 4. Socket Control allowAll</span>{'\n'}
+                  <span className="text-zinc-500">## 5. cmux 재시작 → ## 6. cargo --version + cmux ping 확인</span>
+                  <div className="absolute bottom-0 left-0 right-0 h-6 bg-gradient-to-t from-zinc-950 to-transparent" />
+                </div>
+              </div>
+
               {/* Portal 배포는 1st 완료 후 "다음 액션"으로 안내 → choose에서는 제외 */}
               <p className="text-[11px] text-zinc-600 mt-2">
                 💡 다른 기기 연결을 위한 <span className="text-violet-400">북마크 포털 배포</span>는 1st 기기 완료 후 안내됩니다
