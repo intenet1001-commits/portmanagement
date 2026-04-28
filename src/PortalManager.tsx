@@ -50,17 +50,17 @@ type ColorKey = 'blue' | 'green' | 'purple' | 'amber' | 'rose' | 'cyan' | 'orang
 
 // ─── Color System ─────────────────────────────────────────────────────────────
 
-const COLORS: Record<ColorKey, { bg: string; text: string; border: string; dot: string; activeBg: string }> = {
-  blue:   { bg: 'bg-blue-500/10',   text: 'text-blue-400',   border: 'border-blue-500/30',   dot: 'bg-blue-500',   activeBg: 'bg-blue-500/20' },
-  green:  { bg: 'bg-green-500/10',  text: 'text-green-400',  border: 'border-green-500/30',  dot: 'bg-green-500',  activeBg: 'bg-green-500/20' },
-  purple: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/30', dot: 'bg-purple-500', activeBg: 'bg-purple-500/20' },
-  amber:  { bg: 'bg-amber-500/10',  text: 'text-amber-400',  border: 'border-amber-500/30',  dot: 'bg-amber-500',  activeBg: 'bg-amber-500/20' },
-  rose:   { bg: 'bg-rose-500/10',   text: 'text-rose-400',   border: 'border-rose-500/30',   dot: 'bg-rose-500',   activeBg: 'bg-rose-500/20' },
-  cyan:   { bg: 'bg-cyan-500/10',   text: 'text-cyan-400',   border: 'border-cyan-500/30',   dot: 'bg-cyan-500',   activeBg: 'bg-cyan-500/20' },
-  orange: { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/30', dot: 'bg-orange-500', activeBg: 'bg-orange-500/20' },
-  teal:   { bg: 'bg-teal-500/10',   text: 'text-teal-400',   border: 'border-teal-500/30',   dot: 'bg-teal-500',   activeBg: 'bg-teal-500/20' },
-  indigo: { bg: 'bg-indigo-500/10', text: 'text-indigo-400', border: 'border-indigo-500/30', dot: 'bg-indigo-500', activeBg: 'bg-indigo-500/20' },
-  pink:   { bg: 'bg-pink-500/10',   text: 'text-pink-400',   border: 'border-pink-500/30',   dot: 'bg-pink-500',   activeBg: 'bg-pink-500/20' },
+const COLORS: Record<ColorKey, { bg: string; text: string; border: string; dot: string; activeBg: string; hairline: string; tint: string }> = {
+  blue:   { bg: 'bg-blue-500/10',   text: 'text-blue-400',   border: 'border-blue-500/30',   dot: 'bg-blue-500',   activeBg: 'bg-blue-500/20',   hairline: 'rgba(59,130,246,0.55)',  tint: 'rgba(59,130,246,0.06)' },
+  green:  { bg: 'bg-green-500/10',  text: 'text-green-400',  border: 'border-green-500/30',  dot: 'bg-green-500',  activeBg: 'bg-green-500/20',  hairline: 'rgba(34,197,94,0.55)',   tint: 'rgba(34,197,94,0.06)' },
+  purple: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/30', dot: 'bg-purple-500', activeBg: 'bg-purple-500/20', hairline: 'rgba(168,85,247,0.55)',  tint: 'rgba(168,85,247,0.06)' },
+  amber:  { bg: 'bg-amber-500/10',  text: 'text-amber-400',  border: 'border-amber-500/30',  dot: 'bg-amber-500',  activeBg: 'bg-amber-500/20',  hairline: 'rgba(245,158,11,0.55)', tint: 'rgba(245,158,11,0.06)' },
+  rose:   { bg: 'bg-rose-500/10',   text: 'text-rose-400',   border: 'border-rose-500/30',   dot: 'bg-rose-500',   activeBg: 'bg-rose-500/20',   hairline: 'rgba(244,63,94,0.55)',   tint: 'rgba(244,63,94,0.06)' },
+  cyan:   { bg: 'bg-cyan-500/10',   text: 'text-cyan-400',   border: 'border-cyan-500/30',   dot: 'bg-cyan-500',   activeBg: 'bg-cyan-500/20',   hairline: 'rgba(6,182,212,0.55)',   tint: 'rgba(6,182,212,0.06)' },
+  orange: { bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/30', dot: 'bg-orange-500', activeBg: 'bg-orange-500/20', hairline: 'rgba(249,115,22,0.55)',  tint: 'rgba(249,115,22,0.06)' },
+  teal:   { bg: 'bg-teal-500/10',   text: 'text-teal-400',   border: 'border-teal-500/30',   dot: 'bg-teal-500',   activeBg: 'bg-teal-500/20',   hairline: 'rgba(20,184,166,0.55)',  tint: 'rgba(20,184,166,0.06)' },
+  indigo: { bg: 'bg-indigo-500/10', text: 'text-indigo-400', border: 'border-indigo-500/30', dot: 'bg-indigo-500', activeBg: 'bg-indigo-500/20', hairline: 'rgba(99,102,241,0.55)',  tint: 'rgba(99,102,241,0.06)' },
+  pink:   { bg: 'bg-pink-500/10',   text: 'text-pink-400',   border: 'border-pink-500/30',   dot: 'bg-pink-500',   activeBg: 'bg-pink-500/20',   hairline: 'rgba(236,72,153,0.55)', tint: 'rgba(236,72,153,0.06)' },
 };
 
 const COLOR_OPTIONS: ColorKey[] = ['blue', 'green', 'purple', 'amber', 'rose', 'cyan', 'orange', 'teal', 'indigo', 'pink'];
@@ -1843,6 +1843,68 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
 // ─── ItemCard ─────────────────────────────────────────────────────────────────
 
+function getDisplayUrl(item: PortalItem, maxLen = 48): string {
+  const raw = item.type === 'web' ? (item.url || '') : (item.path || '');
+  if (!raw) return '';
+  if (raw.startsWith('/')) {
+    if (raw.length <= maxLen) return raw;
+    return raw.slice(0, 18) + '…' + raw.slice(-(maxLen - 19));
+  }
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.replace(/^www\./, '');
+    const pathPart = u.pathname === '/' ? '' : u.pathname;
+    const full = host + pathPart;
+    if (full.length <= maxLen) return full;
+    return full.slice(0, maxLen - 1) + '…';
+  } catch {
+    return raw.length > maxLen ? raw.slice(0, maxLen - 1) + '…' : raw;
+  }
+}
+
+function FaviconBadge({ item }: { item: PortalItem }) {
+  const [errored, setErrored] = useState(false);
+  const badgeStyle: React.CSSProperties = {
+    width: 32, height: 32, borderRadius: 8,
+    background: 'rgba(255,255,255,0.05)',
+    border: '1px solid rgba(255,255,255,0.08)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0, overflow: 'hidden',
+  };
+
+  if (item.type !== 'web') {
+    return (
+      <div style={badgeStyle}>
+        <Folder style={{ width: 15, height: 15, color: 'rgba(255,255,255,0.42)' }} />
+      </div>
+    );
+  }
+
+  let host = '';
+  try { host = new URL(item.url || '').hostname; } catch {}
+
+  if (host && !errored) {
+    return (
+      <div style={badgeStyle}>
+        <img
+          src={`https://www.google.com/s2/favicons?domain=${host}&sz=64`}
+          alt="" width={18} height={18}
+          style={{ display: 'block', borderRadius: 3 }}
+          onError={() => setErrored(true)}
+          referrerPolicy="no-referrer"
+        />
+      </div>
+    );
+  }
+
+  const ch = (item.name?.[0] || '?').toUpperCase();
+  return (
+    <div style={badgeStyle}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.62)' }}>{ch}</span>
+    </div>
+  );
+}
+
 interface CardProps {
   item: PortalItem;
   getCat: (id: string) => PortalCategory | undefined;
@@ -1873,87 +1935,146 @@ function ItemCard({ item, getCat, getColor, onOpen, onEdit, onDelete, onTogglePi
     }
   }
 
+  const showActions = isTouchDevice || hovered;
+
   return (
     <div
       data-help-key="portal-item-card"
-      style={{
-        padding:14, background:'var(--pm-bg,#1c1916)',
-        border:`1px solid ${hovered ? 'var(--pm-border-hover,rgba(255,240,220,0.12))' : 'var(--pm-border,rgba(255,240,220,0.07))'}`,
-        borderRadius:10, display:'flex', flexDirection:'column', gap:6,
-        minHeight:100, position:'relative', cursor:'pointer', transition:'border-color .1s',
-      }}
+      onClick={() => onOpen(item)}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      style={{
+        position: 'relative',
+        padding: '13px 15px 12px 17px',
+        background: hovered ? '#1c1f25' : '#15171c',
+        border: `1px solid ${hovered ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.07)'}`,
+        borderRadius: 12,
+        display: 'flex', flexDirection: 'column', gap: 8,
+        cursor: 'pointer',
+        transition: 'background .14s, border-color .14s',
+        overflow: 'hidden',
+      }}
     >
-      {/* Visit count badge */}
-      {item.visitCount > 0 && (
-        <span style={{position:'absolute',top:10,right:10,fontSize:10,fontFamily:"'JetBrains Mono',monospace",color:'var(--pm-text-faint,#6b6459)'}}>{item.visitCount}</span>
-      )}
-      {item.pinned && <Star className="w-3 h-3" style={{position:'absolute',top:10,right:item.visitCount>0?28:10,color:'#e8a557'}} />}
+      {/* Left hairline accent */}
+      <div style={{
+        position: 'absolute', left: 0, top: 8, bottom: 8, width: 2,
+        background: c.hairline,
+        borderRadius: 2,
+        opacity: hovered ? 0.95 : 0.7,
+        transition: 'opacity .14s',
+      }} />
 
-      {/* Header row */}
-      <div style={{display:'flex',alignItems:'center',gap:10}}>
-        <div className={`${c.bg} ${c.border}`} style={{width:28,height:28,borderRadius:7,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,border:'1px solid'}}>
-          {item.type === 'web'
-            ? <Globe className={`w-3.5 h-3.5 ${c.text}`} />
-            : <Folder className={`w-3.5 h-3.5 ${c.text}`} />
-          }
-        </div>
-        <div style={{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:13,fontWeight:600,letterSpacing:-0.2,color:'var(--pm-text,#ede7dd)'}}>
+      {/* Hover tint wash */}
+      <div style={{
+        position: 'absolute', inset: 0,
+        background: c.tint,
+        opacity: hovered ? 1 : 0,
+        transition: 'opacity .18s',
+        pointerEvents: 'none',
+      }} />
+
+      {/* Header row: favicon + title + count + ↗ */}
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+        <FaviconBadge item={item} />
+        <div style={{
+          flex: 1, minWidth: 0,
+          fontSize: 13, fontWeight: 600, letterSpacing: -0.2,
+          color: 'rgba(255,255,255,0.92)',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
           {item.name}
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+          {item.visitCount > 0 && (
+            <span style={{ fontSize: 10, fontFamily: "ui-monospace,'JetBrains Mono',monospace", color: 'rgba(255,255,255,0.28)', fontVariantNumeric: 'tabular-nums' }}>
+              {item.visitCount}
+            </span>
+          )}
+          {item.pinned && <Star style={{ width: 11, height: 11, color: '#e8a557', flexShrink: 0 }} />}
+          <span style={{
+            display: 'inline-flex', color: hovered ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.28)',
+            transition: 'color .14s, transform .14s',
+            transform: hovered ? 'translate(1px,-1px)' : 'none',
+          }}>
+            {item.type === 'web'
+              ? <ExternalLink style={{ width: 12, height: 12 }} />
+              : <FolderOpen style={{ width: 12, height: 12 }} />
+            }
+          </span>
+        </div>
       </div>
 
+      {/* Description */}
       {item.description && (
-        <div style={{fontSize:11,color:'var(--pm-text-muted,#a39a8c)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.description}</div>
+        <div style={{ position: 'relative', fontSize: 11, color: 'rgba(255,255,255,0.42)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {item.description}
+        </div>
       )}
 
-      {/* URL/path preview */}
-      <div style={{fontSize:11,color:'var(--pm-text-faint,#6b6459)',fontFamily:"'JetBrains Mono',monospace",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-        {item.type === 'web' ? item.url : item.path}
+      {/* URL/path */}
+      <div style={{
+        position: 'relative',
+        fontSize: 11, fontFamily: "ui-monospace,'JetBrains Mono',monospace",
+        color: 'rgba(255,255,255,0.42)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        letterSpacing: '-0.005em',
+      }} title={item.type === 'web' ? item.url : item.path}>
+        {getDisplayUrl(item)}
       </div>
 
-      {/* Actions */}
-      <div style={{marginTop:'auto',display:'flex',gap:4,opacity:(isTouchDevice||hovered)?1:0.5,transition:'opacity .12s'}}>
-        <button
-          onClick={() => onOpen(item)}
-          className={`${c.bg} ${c.text} ${c.border}`}
-          style={{flex:1,padding:'5px 8px',borderRadius:5,border:'1px solid',fontSize:11,fontWeight:600,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:4,fontFamily:'inherit'}}
+      {/* Footer: category dot + name | action buttons */}
+      <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <span style={{ width: 6, height: 6, borderRadius: 999, background: c.hairline, display: 'inline-block', flexShrink: 0 }} />
+          <span style={{ fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.62)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {cat?.name || ''}
+          </span>
+        </div>
+
+        {/* Action buttons — revealed on hover */}
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{ display: 'flex', gap: 3, opacity: showActions ? 1 : 0, transition: 'opacity .14s', pointerEvents: showActions ? 'auto' : 'none' }}
         >
-          {item.type === 'web' ? <ExternalLink className="w-3 h-3" /> : <FolderOpen className="w-3 h-3" />}
-          <span>{item.type === 'web' ? '열기' : '폴더'}</span>
-        </button>
-        <button
-          data-help-key="portal-pin-toggle"
-          onClick={() => onTogglePin(item.id)}
-          style={{padding:'5px 8px',borderRadius:5,background:item.pinned?'rgba(232,165,87,0.12)':'transparent',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',color:item.pinned?'#e8a557':'var(--pm-text-faint,#6b6459)',cursor:'pointer'}}
-          title={item.pinned ? '고정 해제' : '고정'}
-        >
-          <Pin className="w-3 h-3" />
-        </button>
-        <button
-          data-help-key="menu-edit"
-          onClick={() => onEdit(item)}
-          style={{padding:'5px 8px',borderRadius:5,background:'transparent',border:'1px solid var(--pm-border,rgba(255,240,220,0.07))',color:'var(--pm-text-faint,#6b6459)',cursor:'pointer'}}
-        >
-          <Pencil className="w-3 h-3" />
-        </button>
-        <button
-          data-help-key="menu-delete"
-          onClick={handleDeleteClick}
-          style={{
-            padding:'5px 8px',borderRadius:5,cursor:'pointer',
-            background: confirmDelete ? 'rgba(239,68,68,0.12)' : 'transparent',
-            border: confirmDelete ? '1px solid rgba(239,68,68,0.4)' : '1px solid var(--pm-border,rgba(255,240,220,0.07))',
-            color: confirmDelete ? '#f87171' : 'var(--pm-text-faint,#6b6459)',
-            fontSize: confirmDelete ? 10 : undefined,
-            whiteSpace: 'nowrap',
-            transition: 'all .15s',
-          }}
-          title={confirmDelete ? '한 번 더 누르면 삭제됩니다' : '삭제'}
-        >
-          {confirmDelete ? '삭제?' : <Trash2 className="w-3 h-3" />}
-        </button>
+          <button
+            data-help-key="portal-open"
+            onClick={e => { e.stopPropagation(); onOpen(item); }}
+            style={{ padding: '4px 7px', borderRadius: 5, border: '1px solid rgba(255,255,255,0.08)', background: 'transparent', color: 'rgba(255,255,255,0.42)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3, fontSize: 10, fontFamily: 'inherit' }}
+          >
+            {item.type === 'web' ? <ExternalLink style={{ width: 10, height: 10 }} /> : <FolderOpen style={{ width: 10, height: 10 }} />}
+            <span>{item.type === 'web' ? '열기' : '폴더'}</span>
+          </button>
+          <button
+            data-help-key="portal-pin-toggle"
+            onClick={e => { e.stopPropagation(); onTogglePin(item.id); }}
+            title={item.pinned ? '고정 해제' : '고정'}
+            style={{ padding: '4px 7px', borderRadius: 5, border: '1px solid rgba(255,255,255,0.08)', background: item.pinned ? 'rgba(232,165,87,0.12)' : 'transparent', color: item.pinned ? '#e8a557' : 'rgba(255,255,255,0.42)', cursor: 'pointer' }}
+          >
+            <Pin style={{ width: 10, height: 10 }} />
+          </button>
+          <button
+            data-help-key="menu-edit"
+            onClick={e => { e.stopPropagation(); onEdit(item); }}
+            style={{ padding: '4px 7px', borderRadius: 5, border: '1px solid rgba(255,255,255,0.08)', background: 'transparent', color: 'rgba(255,255,255,0.42)', cursor: 'pointer' }}
+          >
+            <Pencil style={{ width: 10, height: 10 }} />
+          </button>
+          <button
+            data-help-key="menu-delete"
+            onClick={handleDeleteClick}
+            title={confirmDelete ? '한 번 더 누르면 삭제됩니다' : '삭제'}
+            style={{
+              padding: '4px 7px', borderRadius: 5, cursor: 'pointer',
+              background: confirmDelete ? 'rgba(239,68,68,0.12)' : 'transparent',
+              border: confirmDelete ? '1px solid rgba(239,68,68,0.4)' : '1px solid rgba(255,255,255,0.08)',
+              color: confirmDelete ? '#f87171' : 'rgba(255,255,255,0.42)',
+              fontSize: confirmDelete ? 10 : undefined,
+              whiteSpace: 'nowrap', transition: 'all .15s',
+            }}
+          >
+            {confirmDelete ? '삭제?' : <Trash2 style={{ width: 10, height: 10 }} />}
+          </button>
+        </div>
       </div>
     </div>
   );
