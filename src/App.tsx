@@ -1102,14 +1102,14 @@ function App() {
   }, []);
 
   const handleCopyLog = async () => {
-    const text = appLogRef.current.join('\n');
-    if (!text) {
-      showToast('캡처된 앱 오류 없음', 'success');
-      return;
+    const text = appLogRef.current.join('\n') || '(캡처된 앱 오류 없음)';
+    try {
+      await navigator.clipboard.writeText(text);
+      setLogCopied(true);
+      setTimeout(() => setLogCopied(false), 2000);
+    } catch {
+      showToast('클립보드 복사 실패', 'error');
     }
-    await navigator.clipboard.writeText(text);
-    setLogCopied(true);
-    setTimeout(() => setLogCopied(false), 2000);
   };
 
   // 토스트 배너 표시 함수
@@ -4228,10 +4228,14 @@ function App() {
                     </button>
                   )}
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       const logText = buildLogs.join('\n');
-                      navigator.clipboard.writeText(logText);
-                      showToast('로그가 클립보드에 복사되었습니다', 'success');
+                      try {
+                        await navigator.clipboard.writeText(logText);
+                        showToast('로그가 클립보드에 복사되었습니다', 'success');
+                      } catch {
+                        showToast('클립보드 복사 실패', 'error');
+                      }
                     }}
                     className="px-3 py-1.5 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-xs rounded-lg transition-colors"
                   >
@@ -4325,10 +4329,14 @@ function App() {
                     새로고침
                   </button>
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       const logText = portLogs.join('\n');
-                      navigator.clipboard.writeText(logText);
-                      showToast('로그가 클립보드에 복사되었습니다', 'success');
+                      try {
+                        await navigator.clipboard.writeText(logText);
+                        showToast('로그가 클립보드에 복사되었습니다', 'success');
+                      } catch {
+                        showToast('클립보드 복사 실패', 'error');
+                      }
                     }}
                     className="px-3 py-1.5 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-xs rounded-lg transition-colors"
                   >
