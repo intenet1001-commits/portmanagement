@@ -24,7 +24,28 @@ async function fixDmg() {
   try {
     console.log("[FixDMG] Checking for temporary DMG files...");
 
-    // 1) temp DMG 처리 (CARGO_TARGET_DIR 경로)
+    // 1) 최근 10분 내 생성된 DMG가 이미 있으면 빌드 성공 — 모든 처리 건너뜀
+    const TEN_MIN = 10 * 60 * 1000;
+    if (existsSync(DMG_DIR)) {
+      const recentDmg = readdirSync(DMG_DIR)
+        .filter(f => f.endsWith(".dmg") && !f.startsWith("rw."))
+        .find(f => Date.now() - statSync(join(DMG_DIR, f)).mtime.getTime() < TEN_MIN);
+      if (recentDmg) {
+        console.log(`[FixDMG] ✅ Recent DMG already exists: ${recentDmg} — skipping`);
+        // stale rw.* temp 파일 정리
+        if (existsSync(MACOS_DIR)) {
+          readdirSync(MACOS_DIR)
+            .filter(f => f.startsWith("rw.") && f.endsWith(".dmg"))
+            .forEach(f => {
+              const p = join(MACOS_DIR, f);
+              try { require("node:fs").unlinkSync(p); } catch {}
+            });
+        }
+        return;
+      }
+    }
+
+    // 2) temp DMG 처리 (CARGO_TARGET_DIR 경로) — 빌드 성공했지만 DMG가 macos/ 에 임시 저장된 경우
     if (existsSync(MACOS_DIR)) {
       const files = readdirSync(MACOS_DIR);
       const tempDmgFiles = files.filter(f => f.startsWith("rw.") && f.endsWith(".dmg"));
@@ -39,19 +60,6 @@ async function fixDmg() {
         ensureDir(DMG_DIR);
         copyFileSync(tempDmgPath, finalDmgPath);
         console.log(`[FixDMG] ✅ Successfully created: ${finalDmgName}`);
-        return;
-      }
-    }
-
-    // 2) fallback: src-tauri/target/ 경로에서 최신 DMG 찾아 cargo-targets로 복사
-    // DMG_DIR에 최근 10분 내 생성된 DMG가 이미 있으면 건너뜀 (main 빌드 성공 케이스)
-    const TEN_MIN = 10 * 60 * 1000;
-    if (existsSync(DMG_DIR)) {
-      const recentDmg = readdirSync(DMG_DIR)
-        .filter(f => f.endsWith(".dmg") && !f.startsWith("rw."))
-        .find(f => Date.now() - statSync(join(DMG_DIR, f)).mtime.getTime() < TEN_MIN);
-      if (recentDmg) {
-        console.log(`[FixDMG] ✅ Recent DMG already exists: ${recentDmg} — skipping fallback`);
         return;
       }
     }

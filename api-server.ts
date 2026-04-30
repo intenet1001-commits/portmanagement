@@ -1439,12 +1439,14 @@ end try`);
         if (!existsSync(logFile)) {
           return new Response(JSON.stringify({ content: '', size: 0, exists: false }), { headers });
         }
-        const stat = Bun.file(logFile);
-        const size = stat.size;
-        // Read from offset to end
+        // Use byte-based offset (consistent with stat.size and Tauri's read_log_content)
         const file = Bun.file(logFile);
         const text = await file.text();
-        const content = offset > 0 && offset < text.length ? text.slice(offset) : text;
+        const buf = Buffer.from(text, 'utf-8');
+        const size = buf.length;
+        const content = offset > 0 && offset < buf.length
+          ? buf.slice(offset).toString('utf-8')
+          : text;
         return new Response(JSON.stringify({ content, size, exists: true, offset }), { headers });
       } catch (error: any) {
         return new Response(JSON.stringify({ error: error.message }), { status: 500, headers });
@@ -1782,9 +1784,9 @@ end try`);
 
     if (url.pathname === "/api/install-app" && req.method === "POST") {
       try {
-        // .cargo/config.toml의 target-dir 설정과 동일한 경로 (iCloud 밖)
-        const appPath = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle/macos/포트관리기.app");
-        const destPath = "/Applications/포트관리기.app";
+        // CARGO_TARGET_DIR 동적 설정 (build-macos.ts에서 $HOME/cargo-targets/portmanager로 설정)
+        const appPath = join(process.env.HOME || "", "cargo-targets/portmanager/release/bundle/macos/CS_Manager.app");
+        const destPath = "/Applications/CS_Manager.app";
 
         devLog(`[InstallApp] Installing from: ${appPath} to: ${destPath}`);
 

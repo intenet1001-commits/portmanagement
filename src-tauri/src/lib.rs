@@ -961,11 +961,13 @@ fn read_log_content(port_id: String, offset: usize, app_handle: tauri::AppHandle
         .map_err(|e| format!("Failed to read log file: {}", e))?;
 
     let size = content.len();
-    let sliced = if offset > 0 && offset < size {
-        &content[offset..]
+    // Find safe UTF-8 char boundary at or after offset to avoid panic on multi-byte chars
+    let safe_offset = if offset > 0 && offset < size {
+        (offset..=size).find(|&i| content.is_char_boundary(i)).unwrap_or(size)
     } else {
-        &content
+        0
     };
+    let sliced = if safe_offset > 0 { &content[safe_offset..] } else { &content };
 
     Ok(serde_json::json!({
         "content": sliced,
@@ -1442,9 +1444,9 @@ fn import_ports_from_file(file_path: String) -> Result<Vec<PortInfo>, String> {
 #[tauri::command]
 fn install_app_to_applications() -> Result<String, String> {
     let home = std::env::var("HOME").unwrap_or_default();
-    // .cargo/config.toml의 target-dir 설정과 동일한 경로
-    let app_path = format!("{}/cargo-targets/portmanager/release/bundle/macos/포트관리기.app", home);
-    let dest_path = "/Applications/포트관리기.app";
+    // CARGO_TARGET_DIR 동적 설정 (build-macos.ts에서 $HOME/cargo-targets/portmanager로 설정)
+    let app_path = format!("{}/cargo-targets/portmanager/release/bundle/macos/CS_Manager.app", home);
+    let dest_path = "/Applications/CS_Manager.app";
 
     // 기존 앱이 있으면 삭제
     if std::path::Path::new(dest_path).exists() {
