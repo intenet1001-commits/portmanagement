@@ -2673,18 +2673,32 @@ function App() {
       setIsLoadingPortLog(false);
 
       // Start polling for new content
+      const MAX_LOG_LINES = 500;
       portLogPollingRef.current = setInterval(async () => {
         try {
           const newData = await API.readLogContent(portId, portLogOffsetRef.current);
-          if (newData.exists && newData.content && newData.content.length > 0) {
+          if (!newData.exists) return;
+          // 파일 재생성 감지 (서버 재시작 등으로 size가 줄어든 경우)
+          if (newData.size < portLogOffsetRef.current) {
+            portLogOffsetRef.current = 0;
+            const allData = await API.readLogContent(portId, 0);
+            const lines = allData.content.split('\n').filter((l: string) => l.length > 0);
+            setPortLogs(lines.slice(-MAX_LOG_LINES));
+            portLogOffsetRef.current = allData.size;
+            return;
+          }
+          if (newData.content && newData.content.length > 0) {
             const newLines = newData.content.split('\n').filter((l: string) => l.length > 0);
             if (newLines.length > 0) {
-              setPortLogs(prev => [...prev, ...newLines]);
+              setPortLogs(prev => {
+                const combined = [...prev, ...newLines];
+                return combined.length > MAX_LOG_LINES ? combined.slice(-MAX_LOG_LINES) : combined;
+              });
               portLogOffsetRef.current = newData.size;
             }
           }
         } catch (e) {
-          // Ignore polling errors
+          // Ignore transient polling errors
         }
       }, 1000);
     } catch (error) {
@@ -4267,14 +4281,6 @@ function App() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => { API.openLog(viewingPortId!).catch(e=>showToast(`iTerm 열기 실패: ${e}`, 'error')); }}
-                  className="px-3 py-1.5 bg-[#221f1b] hover:bg-[#2a2520] text-[#ede7dd]/90 text-xs rounded-lg transition-colors flex items-center gap-1.5"
-                  title="iTerm에서 tail -f 열기"
-                >
-                  <Terminal className="w-3.5 h-3.5" />
-                  iTerm
-                </button>
                 <button
                   onClick={handleClosePortLog}
                   className="p-2 hover:bg-[#221f1b] rounded-lg transition-colors"

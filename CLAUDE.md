@@ -400,8 +400,10 @@ struct PortInfo {
 ### 로그 시스템
 - **로그 파일 위치**: `~/Library/Application Support/com.portmanager.portmanager/logs/{portId}.log`
 - **자동 리다이렉트**: 프로세스 실행 시 stdout/stderr를 로그 파일로 자동 저장
-- **실시간 보기**: Terminal에서 `tail -f` 명령으로 실시간 로그 확인
-- **사용 방법**: "로그" 버튼 클릭 → Terminal 창 자동 열림
+- **실시간 보기**: 앱 내 로그 모달에서 1초 폴링으로 실시간 표시 (외부 iTerm 버튼 없음)
+  - **파일 재생성 감지**: `newData.size < offset` 시 offset 0 리셋 → 서버 재시작 후 자동 복구
+  - **슬라이딩 윈도우**: 최근 500줄만 유지 (`slice(-500)`) — 렌더 성능 보호
+- **사용 방법**: "로그" 버튼 클릭 → 앱 내 모달 팝업
 
 ### 에러 처리
 - **중지 실패 시**: 프로세스가 없어도 에러 대신 "already stopped" 메시지 표시
