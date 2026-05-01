@@ -1070,24 +1070,43 @@ function App() {
     })();
   }, []);
 
-  // API 서버 헬스 체크 (웹 모드 전용)
+  // API 서버 헬스 체크 (웹 모드 전용) — 오프라인 시 2초, 온라인 시 30초 간격
   useEffect(() => {
     if (isTauri()) return;
+    let timerId: ReturnType<typeof setTimeout>;
+
     const check = async () => {
+      let online = false;
       try {
         const res = await Promise.race([
           fetch('/api/ports'),
           new Promise<never>((_, rej) => setTimeout(() => rej(new Error('timeout')), 2000)),
         ]) as Response;
-        setApiServerOnline(res.ok);
+        online = res.ok;
       } catch {
-        setApiServerOnline(false);
+        online = false;
       }
+      setApiServerOnline(online);
+      timerId = setTimeout(check, online ? 30_000 : 2_000);
     };
+
     check();
-    const interval = setInterval(check, 30_000);
-    return () => clearInterval(interval);
+    return () => clearTimeout(timerId);
   }, []);
+
+  // API 서버가 온라인으로 전환될 때 포트 재로드 (초기 로드 실패 복구)
+  useEffect(() => {
+    if (isTauri() || apiServerOnline !== true || hasInitiallyLoaded.current) return;
+    API.loadPorts()
+      .then(data => {
+        if (data.length > 0) {
+          setPorts(data);
+          hasInitiallyLoaded.current = true;
+          setIsLoading(false);
+        }
+      })
+      .catch(() => {});
+  }, [apiServerOnline]);
 
   // 앱 로그 캡처 (console.error / warn + 미처리 예외)
   useEffect(() => {
@@ -1526,19 +1545,20 @@ function App() {
   useEffect(() => {
     const loadPortsData = async () => {
       try {
-        // 재시도 로직: API 서버가 아직 준비되지 않은 경우 최대 3회 재시도
+        // 재시도 로직: API 서버가 아직 준비되지 않은 경우 최대 6회 재시도 (총 ~15초)
         let data: PortInfo[] | null = null;
-        for (let attempt = 0; attempt < 3; attempt++) {
+        const retryDelays = [0, 800, 2000, 3500, 5000, 7000];
+        for (let attempt = 0; attempt < retryDelays.length; attempt++) {
           try {
-            if (attempt > 0) {
-              await new Promise(r => setTimeout(r, 800 * attempt));
-              if (import.meta.env.DEV) console.log(`[App] Retrying port load (${attempt}/2)...`);
+            if (retryDelays[attempt] > 0) {
+              await new Promise(r => setTimeout(r, retryDelays[attempt]));
+              if (import.meta.env.DEV) console.log(`[App] Retrying port load (${attempt}/${retryDelays.length - 1})...`);
             }
             data = await API.loadPorts();
             break;
           } catch (err) {
             console.warn(`[App] Load attempt ${attempt + 1} failed:`, err);
-            if (attempt === 2) throw err;
+            if (attempt === retryDelays.length - 1) throw err;
           }
         }
         if (!data) throw new Error('No data after retries');
