@@ -1716,6 +1716,27 @@ function App() {
     });
   }, [ports]);
 
+  // 10초 간격 포트 상태 자동 폴링 (portsRef로 최신 ports 참조 — dependency loop 방지)
+  const portsRef = useRef<PortInfo[]>([]);
+  useEffect(() => { portsRef.current = ports; }, [ports]);
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const withPorts = portsRef.current.filter(p => p.port);
+      if (withPorts.length === 0) return;
+      const results = await Promise.all(
+        withPorts.map(async p => {
+          try { return { id: p.id, isRunning: await API.checkPortStatus(p.port!) }; }
+          catch { return { id: p.id, isRunning: false }; }
+        })
+      );
+      setPorts(prev => prev.map(p => {
+        const r = results.find(r => r.id === p.id);
+        return r ? { ...p, isRunning: r.isRunning } : p;
+      }));
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
   // 작업 루트 초기 로드
   useEffect(() => {
     API.loadWorkspaceRoots().then(data => {

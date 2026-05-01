@@ -255,14 +255,18 @@ CREATE INDEX IF NOT EXISTS idx_ports_device_id ON ports(device_id);
 ## 개발 명령어
 
 ```bash
-# 개발 서버 시작 (Vite)
+# 개발 서버 시작 (Vite + API 서버 동시 실행)
+# ⚠️ vite 직접 호출 금지 — ./node_modules/.bin/vite 사용 (PATH 문제 방지)
 bun run dev
 
-# API 서버 시작
+# API 서버만 시작 (--watch 없이 — watch 쓰면 파일 변경마다 재시작으로 헬스체크 실패)
 bun api-server.ts
 
 # 둘 다 시작
 bun run start
+
+# 권장: 실행.command로 두 서버 동시 실행 (포트 충돌 자동 정리 + 종료 핸들러 포함)
+./실행.command
 
 # Tauri 개발 모드
 bun run tauri:dev
@@ -380,6 +384,10 @@ struct PortInfo {
 - **HashMap 기반**: 앱에서 직접 실행한 프로세스는 `HashMap<String, u32>` (portId → PID)에 저장
 - **lsof 기반**: 앱 재시작 후 기존 프로세스는 `lsof -ti:포트번호`로 PID 검색
 - **상태 확인**: "새로고침" 버튼으로 모든 포트의 실제 실행 여부를 확인
+- **10초 자동 폴링**: 앱 실행 중 포트 상태를 10초 간격으로 자동 갱신 — 외부에서 켠 서버도 자동 감지
+  - `portsRef` 패턴: `useRef<PortInfo[]>`로 최신 ports 참조 → `useEffect` dependency에 `ports` 불필요 (무한 루프 방지)
+  - 폴링 `useEffect`의 dependency array는 반드시 `[]` — `ports` 넣으면 interval이 상태 변경마다 재생성됨
+  - 구현 위치: `App.tsx` — `portsRef` + `setInterval(10000)`, cleanup on unmount
 
 ### 중지 로직 (개선됨)
 - **모든 PID 검색**: `lsof -ti :포트`로 포트를 사용하는 모든 프로세스 찾기
