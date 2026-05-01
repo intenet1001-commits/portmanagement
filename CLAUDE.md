@@ -154,7 +154,7 @@ For more information, read the Bun API docs in `node_modules/bun-types/docs/**.m
 - **기기 간 포트 격리**: `sourceDeviceId` 필드로 타 기기 포트가 내 device_id로 덮어쓰이는 것 방지
   - Push 시 `sourceDeviceId`가 내 UUID인 포트만 upsert (타 기기 포트 제외)
 - 테이블 스키마 (DDL):
-  - `ports` (id, **device_id**, name, port, command_path, folder_path, terminal_command, deploy_url, github_url) — **device_id 추가됨**
+  - `ports` (id, **device_id**, name, port, command_path, folder_path, terminal_command, deploy_url, github_url, **favorite**, memo, memo_updated_at, device_name) — device_id/favorite 필수
   - `workspace_roots` (id, device_id, name, path) — 프로젝트 관리 탭 Push/Pull
   - `portal_items` (id, device_id, name, type, url, path, category, description, pinned, visit_count, last_visited, created_at)
   - `portal_categories` (id, device_id, name, color, order)

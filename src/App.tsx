@@ -1842,6 +1842,7 @@ function App() {
           folder_path: p.folderPath ?? null,
           deploy_url: p.deployUrl ?? null,
           github_url: p.githubUrl ?? null,
+          favorite: p.favorite ?? false,
           device_id: deviceId,
           device_name: deviceNameVal,
           memo: memos[p.id]?.content ?? null,

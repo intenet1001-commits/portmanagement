@@ -30,6 +30,12 @@ struct PortInfo {
     ai_name: Option<String>,
     #[serde(rename = "isRunning", default)]
     is_running: bool,
+    #[serde(default)]
+    favorite: bool,
+    #[serde(rename = "terminalCommand", default, skip_serializing_if = "Option::is_none")]
+    terminal_command: Option<String>,
+    #[serde(rename = "sourceDeviceId", default, skip_serializing_if = "Option::is_none")]
+    source_device_id: Option<String>,
 }
 
 struct AppState {
