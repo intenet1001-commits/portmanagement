@@ -3755,6 +3755,56 @@ function App() {
               <div style={{padding:'40px 0',textAlign:'center',color:'#4b4540',fontSize:12,fontFamily:monoFont}}>no projects</div>
             )}
           </div>
+
+          {/* Workspace Roots — 터미널형 */}
+          {!isDeployedWeb() && <div style={{marginTop:'auto',borderTop:'1px solid rgba(255,240,220,0.07)'}}>
+            <button
+              onClick={() => setWorkspaceRootsOpen(v => !v)}
+              style={{display:'flex',alignItems:'center',gap:6,width:'100%',padding:'8px 12px',background:'transparent',border:'none',cursor:'pointer',color:'#6b6459'}}
+            >
+              {workspaceRootsOpen
+                ? <ChevronDown style={{width:11,height:11}}/>
+                : <ChevronDown style={{width:11,height:11,transform:'rotate(-90deg)'}}/>}
+              <span style={{fontSize:10,fontFamily:monoFont,textTransform:'uppercase' as const,letterSpacing:0.5,flex:1,textAlign:'left' as const}}>작업 루트</span>
+              {workspaceRoots.length > 0 && (
+                <span style={{fontSize:9,fontFamily:monoFont,color:'#6b6459',background:'rgba(255,240,220,0.06)',padding:'1px 5px',borderRadius:3}}>
+                  {workspaceRoots.length}
+                </span>
+              )}
+            </button>
+            {workspaceRootsOpen && (
+              <div style={{paddingBottom:8}}>
+                {workspaceRoots.map((root: WorkspaceRoot) => {
+                  const projectCount = ports.filter((p: PortInfo) => p.folderPath?.startsWith(root.path)).length;
+                  return (
+                    <div key={root.id} style={{display:'flex',alignItems:'center',gap:4,padding:'3px 8px 3px 20px'}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:11,fontFamily:monoFont,color:'#c8bfb5',whiteSpace:'nowrap' as const,overflow:'hidden',textOverflow:'ellipsis'}}>{root.name}</div>
+                        <div style={{fontSize:9.5,fontFamily:monoFont,color:'#6b6459',whiteSpace:'nowrap' as const,overflow:'hidden',textOverflow:'ellipsis'}}>{root.path}</div>
+                      </div>
+                      {projectCount > 0 && (
+                        <span style={{fontSize:9,fontFamily:monoFont,color:'#6b6459',background:'rgba(255,240,220,0.06)',padding:'1px 4px',borderRadius:3,flexShrink:0}}>{projectCount}</span>
+                      )}
+                      <button
+                        onClick={() => { setActiveRootId(root.id); setShowNewProjectModal(true); }}
+                        title="새 프로젝트 폴더"
+                        style={{padding:'2px 6px',background:'rgba(232,165,87,0.1)',border:'1px solid rgba(232,165,87,0.2)',borderRadius:4,color:'#e8a557',cursor:'pointer',fontSize:10,fontFamily:'Inter Tight, system-ui, sans-serif',flexShrink:0}}
+                      >새 폴더</button>
+                      <button
+                        onClick={() => { if (confirm(`"${root.name}" 루트 폴더를 목록에서 제거하시겠습니까?`)) handleRemoveWorkspaceRoot(root.id); }}
+                        title="루트 제거"
+                        style={{padding:'2px 4px',background:'transparent',border:'none',color:'#6b6459',cursor:'pointer',display:'flex',alignItems:'center',flexShrink:0}}
+                      ><XIcon style={{width:10,height:10}}/></button>
+                    </div>
+                  );
+                })}
+                <button
+                  onClick={handleAddWorkspaceRoot}
+                  style={{display:'flex',alignItems:'center',gap:5,margin:'4px 8px 0 20px',padding:'4px 8px',background:'transparent',border:'1px dashed rgba(255,240,220,0.12)',borderRadius:5,color:'#6b6459',cursor:'pointer',fontSize:10,fontFamily:'Inter Tight, system-ui, sans-serif'}}
+                ><Plus style={{width:10,height:10}}/> 루트 추가</button>
+              </div>
+            )}
+          </div>}
         </div>
 
         {/* 우측 상세 패널 */}

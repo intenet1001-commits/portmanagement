@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1776940452603,
-  "projectRoot": "/Users/gwanli/Library/CloudStorage/GoogleDrive-intenet1@gmail.com/My Drive/portmanagement",
+  "lastScanned": 1777637313762,
+  "projectRoot": "/Users/gwanli/product_2026/portmanagement",
   "techStack": {
     "languages": [
       {
@@ -47,7 +47,7 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "npm run build",
+    "buildCommand": "bunx tsc --noEmit 2>&1 | grep -E \"App\\.tsx:[0-9]+\" | head -20",
     "testCommand": null,
     "lintCommand": null,
     "devCommand": "npm run dev",
@@ -62,9 +62,12 @@
       "tauri:dev": "tauri dev",
       "update-version": "bun update-version.ts",
       "fix-dmg": "bun fix-dmg.ts",
-      "tauri:build": "bun update-version.ts && bun run build && tauri build",
-      "tauri:build:dmg": "bun update-version.ts && bun run build && tauri build --bundles dmg; bun fix-dmg.ts",
-      "tauri:build:win": "bun build-win.ts"
+      "tauri:build": "bun build-macos.ts",
+      "tauri:build:dmg": "bun build-macos.ts --dmg",
+      "tauri:build:win": "bun build-win.ts",
+      "test:smoke": "node tests/smoke.mjs",
+      "test:smoke:vercel": "TARGET=vercel node tests/smoke.mjs",
+      "test:smoke:mobile": "VIEWPORT=mobile TARGET=vercel node tests/smoke.mjs"
     }
   },
   "conventions": {
@@ -88,43 +91,24 @@
   },
   "customNotes": [],
   "directoryMap": {
-    "dist": {
-      "path": "dist",
-      "purpose": "Distribution/build output",
-      "fileCount": 1,
-      "lastAccessed": 1776940452475,
-      "keyFiles": [
-        "index.html"
-      ]
-    },
-    "dist-portal": {
-      "path": "dist-portal",
-      "purpose": null,
-      "fileCount": 2,
-      "lastAccessed": 1776940452479,
-      "keyFiles": [
-        "portal.html",
-        "setup.html"
-      ]
-    },
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
-      "fileCount": 5,
-      "lastAccessed": 1776940452480,
+      "fileCount": 8,
+      "lastAccessed": 1777637313682,
       "keyFiles": [
+        "DOGFOOD.md",
+        "ERRORS.md",
         "PLAN.md",
         "architecture.md",
-        "domain-analysis.md",
-        "implementation-checklist.md",
-        "tdd-strategy.md"
+        "domain-analysis.md"
       ]
     },
     "src": {
       "path": "src",
       "purpose": "Source code",
       "fileCount": 10,
-      "lastAccessed": 1776940452480,
+      "lastAccessed": 1777637313682,
       "keyFiles": [
         "App.tsx",
         "ErrorBoundary.tsx",
@@ -137,7 +121,7 @@
       "path": "src-tauri",
       "purpose": null,
       "fileCount": 5,
-      "lastAccessed": 1776940452481,
+      "lastAccessed": 1777637313683,
       "keyFiles": [
         "Cargo.lock",
         "Cargo.toml",
@@ -145,56 +129,45 @@
         "tauri.conf.json"
       ]
     },
+    "supabase": {
+      "path": "supabase",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1777637313684,
+      "keyFiles": [
+        "config.toml"
+      ]
+    },
     "tests": {
       "path": "tests",
       "purpose": "Test files",
-      "fileCount": 8,
-      "lastAccessed": 1776940452482,
+      "fileCount": 9,
+      "lastAccessed": 1777637313685,
       "keyFiles": [
         "error-resilience-test.py",
         "functional-test.mjs",
         "perf-measure.mjs",
-        "title-verify-test.mjs",
-        "touch-validate.mjs"
+        "smoke.mjs",
+        "title-verify-test.mjs"
       ]
     },
     "uploaded-commands": {
       "path": "uploaded-commands",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1776940452482,
+      "lastAccessed": 1777637313685,
       "keyFiles": [
         "실행.command"
-      ]
-    },
-    "dist/assets": {
-      "path": "dist/assets",
-      "purpose": "Static assets",
-      "fileCount": 4,
-      "lastAccessed": 1776940452483,
-      "keyFiles": [
-        "index-BtOi82Qd.css",
-        "index-CMsU8Ul2.js",
-        "index-DC7fjqfC.js"
-      ]
-    },
-    "dist-portal/assets": {
-      "path": "dist-portal/assets",
-      "purpose": "Static assets",
-      "fileCount": 5,
-      "lastAccessed": 1776940452484,
-      "keyFiles": [
-        "index-CGRnj5y0.js",
-        "index-CHsWdwW2.js",
-        "lucide-react-4Tr3yTSP.js"
       ]
     },
     "src/lib": {
       "path": "src/lib",
       "purpose": "Library code",
-      "fileCount": 1,
-      "lastAccessed": 1776940452486,
+      "fileCount": 3,
+      "lastAccessed": 1777637313687,
       "keyFiles": [
+        "env.ts",
+        "supabaseClient.ts",
         "utils.ts"
       ]
     },
@@ -202,66 +175,57 @@
       "path": "src-tauri/src",
       "purpose": "Source code",
       "fileCount": 2,
-      "lastAccessed": 1776940452487,
+      "lastAccessed": 1777637313688,
       "keyFiles": [
         "lib.rs",
         "main.rs"
+      ]
+    },
+    "supabase/migrations": {
+      "path": "supabase/migrations",
+      "purpose": "Database migrations",
+      "fileCount": 1,
+      "lastAccessed": 1777637313689,
+      "keyFiles": [
+        "20260501021736_add_favorite_to_ports.sql"
       ]
     }
   },
   "hotPaths": [
     {
       "path": "src/App.tsx",
-      "accessCount": 24,
-      "lastAccessed": 1777025242155,
+      "accessCount": 45,
+      "lastAccessed": 1777642143574,
       "type": "file"
     },
     {
       "path": "api-server.ts",
-      "accessCount": 20,
-      "lastAccessed": 1777023772728,
+      "accessCount": 6,
+      "lastAccessed": 1777639226204,
       "type": "file"
     },
     {
-      "path": "src-tauri/src/lib.rs",
-      "accessCount": 3,
-      "lastAccessed": 1776988907086,
+      "path": "CLAUDE.md",
+      "accessCount": 6,
+      "lastAccessed": 1777639333250,
       "type": "file"
     },
     {
-      "path": "src-tauri/tauri.conf.json",
-      "accessCount": 3,
-      "lastAccessed": 1777025210794,
-      "type": "file"
-    },
-    {
-      "path": "src/PortalManager.tsx",
-      "accessCount": 2,
-      "lastAccessed": 1776940892386,
-      "type": "file"
-    },
-    {
-      "path": "update-version.ts",
-      "accessCount": 2,
-      "lastAccessed": 1777025211695,
-      "type": "file"
-    },
-    {
-      "path": "src/lib/env.ts",
-      "accessCount": 1,
-      "lastAccessed": 1777010326491,
-      "type": "file"
-    },
-    {
-      "path": "fix-dmg.ts",
-      "accessCount": 1,
-      "lastAccessed": 1777024976710,
+      "path": "실행.command",
+      "accessCount": 5,
+      "lastAccessed": 1777639235784,
       "type": "file"
     },
     {
       "path": "package.json",
+      "accessCount": 3,
+      "lastAccessed": 1777639197116,
+      "type": "file"
+    },
+    {
+      "path": "vite.config.ts",
       "accessCount": 1,
-      "lastAccessed": 1777025220631,
+      "lastAccessed": 1777638132273,
       "type": "file"
     }
   ],
