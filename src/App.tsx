@@ -2093,7 +2093,12 @@ function App() {
         showToast(`${item.name} 서버가 시작되었습니다!`, 'success');
         recordVisit(item.id);
         if (item.port) {
-          window.open(`http://localhost:${item.port}`, '_blank');
+          API.openInChrome(`http://localhost:${item.port}`).catch(() => {});
+          // 2초 뒤 실제 포트 상태 재확인 (서버 기동 지연 보정)
+          setTimeout(async () => {
+            const isRunning = await API.checkPortStatus(item.port!).catch(() => false);
+            setPorts(prev => prev.map(p => p.id === item.id ? { ...p, isRunning } : p));
+          }, 2000);
         }
       }
     } catch (error) {
@@ -2104,11 +2109,20 @@ function App() {
   const stopCommand = async (item: PortInfo) => {
     try {
       await API.stopCommand(item.id, item.port ?? 0);
-
       setPorts(ports.map(p =>
         p.id === item.id ? { ...p, isRunning: false } : p
       ));
       showToast(`${item.name} 서버가 중지되었습니다!`, 'success');
+      // 1.5초 뒤 실제 포트 상태 재확인 (kill 완료 전 race 방지)
+      if (item.port) {
+        setTimeout(async () => {
+          const isRunning = await API.checkPortStatus(item.port!).catch(() => false);
+          if (isRunning) {
+            setPorts(prev => prev.map(p => p.id === item.id ? { ...p, isRunning: true } : p));
+            showToast(`${item.name} 포트가 아직 사용 중입니다. 강제 재실행을 시도하세요.`, 'error');
+          }
+        }, 1500);
+      }
     } catch (error) {
       showToast('서버 중지 중 오류: ' + error, 'error');
     }
@@ -3592,7 +3606,7 @@ function App() {
                 <button onClick={e=>{e.stopPropagation(); portItem.isRunning ? stopCommand(portItem) : executeCommand(portItem);}} style={{...miniBtn,color:portItem.isRunning?'#c96a5a':'#8fb96e',borderColor:portItem.isRunning?'rgba(201,106,90,0.2)':'rgba(143,185,110,0.2)'}} title={portItem.isRunning?`포트 ${portItem.port}`:undefined}>
                   {portItem.isRunning ? '중지' : `실행(${portItem.port})`}
                 </button>
-                <button onClick={e=>{e.stopPropagation(); portItem.port && window.open(`http://localhost:${portItem.port}`,'_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
+                <button onClick={e=>{e.stopPropagation(); portItem.port && API.openInChrome(`http://localhost:${portItem.port}`).catch(()=>{});}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
                 <button onClick={e=>{e.stopPropagation(); wt.path && API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
                 <button onClick={e=>{e.stopPropagation(); forceRestartCommand(portItem);}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
                 <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>{bypassPermissions?'Claude ⚡':'Claude'}</button>
@@ -3602,7 +3616,7 @@ function App() {
                 <button onClick={e=>{e.stopPropagation(); if(wtPortEntry){isWtRunning?stopCommand(wtPortEntry):executeCommand(wtPortEntry);}else{executeCommand({...portItem,id:`${portItem.id}_wt_${wtName}`,port:wtPort,worktreePath:wt.path});}}} style={{...miniBtn,color:isWtRunning?'#c96a5a':'#8fb96e',borderColor:isWtRunning?'rgba(201,106,90,0.2)':'rgba(143,185,110,0.2)'}} title={isWtRunning?`포트 ${wtPort}`:undefined}>
                   {isWtRunning ? '중지' : `실행(${wtPort})`}
                 </button>
-                <button onClick={e=>{e.stopPropagation(); window.open(`http://localhost:${wtPort}`,'_blank');}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
+                <button onClick={e=>{e.stopPropagation(); API.openInChrome(`http://localhost:${wtPort}`).catch(()=>{});}} style={miniBtn} title="브라우저에서 열기"><Globe style={{width:9,height:9}}/></button>
                 <button onClick={e=>{e.stopPropagation(); if(wtPortEntry)forceRestartCommand(wtPortEntry);else forceRestartCommand({...portItem,id:`${portItem.id}_wt_${wtName}`,port:wtPort,worktreePath:wt.path});}} style={{...miniBtn,color:'#e8a557',borderColor:'rgba(232,165,87,0.2)'}} title="강제 재실행"><RotateCw style={{width:9,height:9}}/></button>
                 <button onClick={e=>{e.stopPropagation(); API.openFolder(wt.path).catch(()=>{});}} style={miniBtn} title="Finder에서 열기"><FolderOpen style={{width:9,height:9}}/></button>
                 <button onClick={e=>{e.stopPropagation(); wtClaudeBypass();}} style={{...miniBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}}><Zap style={{width:8,height:8,display:'inline',verticalAlign:'middle'}}/>{bypassPermissions?'Claude ⚡':'Claude'}</button>
