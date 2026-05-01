@@ -198,6 +198,7 @@ fn create_folder(folder_path: String) -> Result<String, String> {
 fn execute_command(
     port_id: String,
     command_path: String,
+    folder_path: Option<String>,
     state: State<AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -321,6 +322,14 @@ fn execute_command(
         cmd.arg(&command_path);
     } else {
         cmd.arg("-c").arg(&command_path);
+    }
+    // raw 커맨드(terminalCommand)는 folderPath를 cwd로 설정
+    if !is_file_path {
+        if let Some(ref fp) = folder_path {
+            if !fp.is_empty() {
+                cmd.current_dir(fp);
+            }
+        }
     }
     cmd
         .stdout(log_out)
@@ -2099,6 +2108,41 @@ fn set_global_shortcut(app: tauri::AppHandle, shortcut: String, old_shortcut: St
     Ok(())
 }
 
+#[tauri::command]
+fn detect_start_command(folder_path: String) -> Option<String> {
+    let path = std::path::Path::new(&folder_path);
+
+    // package.json → bun run dev / bun run start
+    let pkg_path = path.join("package.json");
+    if pkg_path.exists() {
+        if let Ok(content) = fs::read_to_string(&pkg_path) {
+            if let Ok(pkg) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(scripts) = pkg.get("scripts") {
+                    if scripts.get("dev").is_some() {
+                        return Some("bun run dev".to_string());
+                    }
+                    if scripts.get("start").is_some() {
+                        return Some("bun run start".to_string());
+                    }
+                }
+            }
+        }
+        return Some("bun run dev".to_string());
+    }
+
+    // pyproject.toml → uv run
+    if path.join("pyproject.toml").exists() {
+        return Some("uv run python main.py".to_string());
+    }
+
+    // Cargo.toml → cargo run
+    if path.join("Cargo.toml").exists() {
+        return Some("cargo run".to_string());
+    }
+
+    None
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   let window_visible = Arc::new(Mutex::new(true));
@@ -2118,6 +2162,7 @@ pub fn run() {
         load_workspace_roots,
         save_workspace_roots,
         execute_command,
+        detect_start_command,
         stop_command,
         force_restart_command,
         detect_port,

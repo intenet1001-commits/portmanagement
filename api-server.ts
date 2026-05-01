@@ -525,9 +525,32 @@ const server = Bun.serve({
       }
     }
 
+    // GET /api/detect-start-command?path=<folderPath>
+    if (url.pathname === "/api/detect-start-command" && req.method === "GET") {
+      const folderPath = url.searchParams.get('path');
+      if (!folderPath) return new Response(JSON.stringify({ error: 'Missing path' }), { status: 400, headers });
+      const pkgPath = `${folderPath}/package.json`;
+      if (existsSync(pkgPath)) {
+        try {
+          const pkg = await Bun.file(pkgPath).json();
+          const scripts = pkg.scripts || {};
+          if ('dev' in scripts)   return new Response(JSON.stringify({ command: 'bun run dev' }), { headers });
+          if ('start' in scripts) return new Response(JSON.stringify({ command: 'bun run start' }), { headers });
+        } catch {}
+        return new Response(JSON.stringify({ command: 'bun run dev' }), { headers });
+      }
+      if (existsSync(`${folderPath}/pyproject.toml`)) {
+        return new Response(JSON.stringify({ command: 'uv run python main.py' }), { headers });
+      }
+      if (existsSync(`${folderPath}/Cargo.toml`)) {
+        return new Response(JSON.stringify({ command: 'cargo run' }), { headers });
+      }
+      return new Response(JSON.stringify({ command: null }), { headers });
+    }
+
     if (url.pathname === "/api/execute-command" && req.method === "POST") {
       try {
-        const { portId, commandPath } = await req.json();
+        const { portId, commandPath, folderPath } = await req.json();
 
         devLog(`[Execute] Received request for portId: ${portId}, path: ${commandPath}`);
 
@@ -581,6 +604,7 @@ const server = Bun.serve({
 
         const proc = spawn({
           cmd,
+          cwd: (!isFilePath && folderPath) ? folderPath : undefined,
           stdout: "inherit",
           stderr: "inherit",
           stdin: "ignore",

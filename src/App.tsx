@@ -38,18 +38,28 @@ const API = {
     }
   },
 
-  async executeCommand(portId: string, commandPath: string): Promise<void> {
+  async executeCommand(portId: string, commandPath: string, folderPath?: string): Promise<void> {
     if (isTauri()) {
-      return invoke('execute_command', { portId, commandPath });
+      return invoke('execute_command', { portId, commandPath, folderPath: folderPath ?? null });
     } else {
       const response = await fetch('/api/execute-command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ portId, commandPath })
+        body: JSON.stringify({ portId, commandPath, folderPath })
       });
       const result = await response.json();
       if (!result.success) throw new Error(result.error);
     }
+  },
+
+  async detectStartCommand(folderPath: string): Promise<string | null> {
+    if (isTauri()) {
+      return invoke<string | null>('detect_start_command', { folderPath });
+    }
+    const res = await fetch(`/api/detect-start-command?path=${encodeURIComponent(folderPath)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.command ?? null;
   },
 
   async stopCommand(portId: string, port: number): Promise<void> {
@@ -2052,7 +2062,19 @@ function App() {
   }, [ports]);
 
   const executeCommand = async (item: PortInfo) => {
-    const runTarget = item.terminalCommand || item.commandPath;
+    let runTarget = item.terminalCommand || item.commandPath;
+
+    // commandPath/terminalCommand 없으면 folderPath에서 자동 감지
+    if (!runTarget && item.folderPath) {
+      try {
+        const detected = await API.detectStartCommand(item.folderPath);
+        if (detected) {
+          runTarget = detected;
+          showToast(`자동 감지: ${detected}`, 'success');
+        }
+      } catch {}
+    }
+
     if (!runTarget) {
       showToast('실행할 파일 또는 터미널 명령어가 등록되지 않았습니다.', 'error');
       return;
@@ -2061,11 +2083,10 @@ function App() {
     const html = !item.terminalCommand && isHtmlFile(item.commandPath);
     try {
       if (html) {
-        // HTML 파일은 open_folder 커맨드(open <path>) 재활용 — 기본 브라우저로 열림
         await API.openFolder(item.commandPath);
         showToast(`${item.name} 파일을 열었습니다!`, 'success');
       } else {
-        await API.executeCommand(item.id, runTarget);
+        await API.executeCommand(item.id, runTarget, item.folderPath);
         setPorts(ports.map(p =>
           p.id === item.id ? { ...p, isRunning: true } : p
         ));
