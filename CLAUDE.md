@@ -196,6 +196,9 @@ CREATE INDEX IF NOT EXISTS idx_ports_device_id ON ports(device_id);
 - .command 파일 경로에서 폴더 경로 자동 추출
 - 드래그 앤 드롭으로 .command 파일 추가 (포트에추가.command 사용)
 - **포트 데이터 자동 로드**: 앱 재시작 시 저장된 포트 목록 자동 복원
+- **폴더 경로만으로 서버 실행**: `.command` 파일 없이 `folderPath`(cwd)만으로 서버 기동 가능
+  - 실행 우선순위: `commandPath` → `terminalCommand` → 자동 감지(`folderPath`)
+  - `detect_start_command`가 `package.json`/`pyproject.toml`/`Cargo.toml` 탐색 → 실행 명령 자동 결정
 
 ### UI/UX
 - **모던 디자인**: 미국 테크 스타일의 세련된 인터페이스
@@ -228,6 +231,9 @@ CREATE INDEX IF NOT EXISTS idx_ports_device_id ON ports(device_id);
   - 수동 업데이트: `bun run update-version`
   - **⚠️ 버전 날짜 = 마지막 git 커밋 날짜** (오늘 날짜 아님) — 올바른 날짜 DMG 생성하려면 빌드 전 반드시 커밋 완료
   - **DMG 빌드 후처리**: macOS 버전 호환성 문제 시 자동으로 임시 DMG를 최종 위치로 복사
+  - **아이콘 버전 스탬프**: `update-version.ts` 실행 시 `stamp-icon.py` 자동 호출 → 앱 아이콘 우하단에 `vN` 표시
+    - 의존성: `Pillow` (`pip install Pillow`) — 없으면 스탬프 스킵 후 빌드 계속
+    - 원본 보존: `src-tauri/icons/icon.original.png` (최초 1회 자동 백업)
 - **실시간 빌드 로그**:
   - 빌드 진행 상황을 실시간으로 확인할 수 있는 모달 창
   - 색상 코딩 (성공: 초록, 에러: 빨강, 경고: 노랑)
@@ -288,6 +294,7 @@ bun run tauri:build:win
 - `GET /api/ports` - 포트 목록 조회
 - `POST /api/ports` - 포트 목록 저장
 - `POST /api/detect-port` - .command 파일 분석 (포트, 폴더 경로 추출)
+- `GET /api/detect-start-command?path=<folderPath>` - 폴더 내 매니페스트 탐색 → 실행 명령 자동 감지 (package.json → bun run dev/start, pyproject.toml → uv run, Cargo.toml → cargo run)
 - `POST /api/execute-command` - .command 파일 실행 (로그 파일로 출력 리다이렉트)
 - `POST /api/stop-command` - 실행 중인 명령 중지 (포트의 모든 PID 검색 및 종료)
 - `POST /api/force-restart-command` - 강제 재실행 (SIGKILL로 모든 프로세스 종료 후 재실행)
@@ -351,7 +358,8 @@ struct PortInfo {
 
 - `load_ports()` - 포트 데이터 로드 (Tauri app data dir)
 - `save_ports(ports)` - 포트 데이터 저장
-- `execute_command(port_id, command_path, app_handle)` - .command 파일 실행 (로그 리다이렉트)
+- `execute_command(port_id, command_path, folder_path, app_handle)` - 서버 실행 (로그 리다이렉트); `folder_path`가 cwd로 사용 — `.command` 없이 폴더 경로만으로도 기동 가능
+- `detect_start_command(folder_path)` - 폴더 내 매니페스트 탐색 → 실행 명령 반환 (package.json → bun run dev/start, pyproject.toml → uv run python main.py, Cargo.toml → cargo run)
 - `stop_command(port_id, port, state)` - 실행 중인 프로세스 중지 (모든 PID 검색 및 SIGTERM → SIGKILL)
 - `force_restart_command(port_id, port, command_path, state, app_handle)` - 강제 재실행 (SIGKILL → 500ms 대기 → 재실행)
 - `detect_port(file_path)` - 포트 번호 자동 감지
