@@ -1981,6 +1981,13 @@ fn first_worktree(worktree_path: &Option<String>) -> Option<String> {
 }
 
 #[tauri::command]
+fn get_platform() -> String {
+    if cfg!(target_os = "windows") { "windows".to_string() }
+    else if cfg!(target_os = "macos") { "macos".to_string() }
+    else { "linux".to_string() }
+}
+
+#[tauri::command]
 fn open_cmux_claude(name: String, folder_path: Option<String>, worktree_path: Option<String>, bypass: bool) -> Result<String, String> {
     if cfg!(windows) { return Err("cmux는 맥에서만 가능합니다".into()); }
 
@@ -2198,6 +2205,7 @@ pub fn run() {
         open_cmux_terminal,
         get_global_shortcut,
         set_global_shortcut,
+        get_platform,
     ])
     .plugin(tauri_plugin_dialog::init())
     .plugin(tauri_plugin_fs::init())

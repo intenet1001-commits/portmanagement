@@ -9,8 +9,12 @@ import { savePushSnapshot, fetchPushHistory, fetchSnapshotRows, type PushSnapsho
 import { isTauri, isDeployedWeb } from './lib/env';
 import { GuideOverlay } from './guide/GuideMode';
 
-// OS 감지
-const isWindows = () => typeof navigator !== 'undefined' && navigator.userAgent.toLowerCase().includes('win');
+// OS 감지 — navigator.platform('Win32')이 WebView2/Tauri 포함 가장 신뢰성 높음
+const isWindows = () => {
+  if (typeof navigator === 'undefined') return false;
+  if (navigator.platform) return navigator.platform.toLowerCase().startsWith('win');
+  return navigator.userAgent.toLowerCase().includes('win');
+};
 const execFileExt = () => isWindows() ? '.bat / .cmd / .html' : '.command / .html';
 const isHtmlFile = (path?: string) => !!path && path.toLowerCase().endsWith('.html');
 
