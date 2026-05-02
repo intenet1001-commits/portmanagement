@@ -3483,26 +3483,16 @@ function App() {
               폴더 열기
             </button>
           )}
+          {!isWindows() && (<>
           <button data-help-key="card-cmux" onClick={e=>{e.stopPropagation(); openCmuxClaude(item);}}
-            style={{
-              ...btnBase, gap:3, fontFamily:'inherit',
-              color: isWindows() ? '#6b6459' : '#c8a8f0',
-              borderColor: isWindows() ? 'rgba(255,240,220,0.07)' : 'rgba(200,168,240,0.25)',
-              opacity: isWindows() ? 0.55 : 1,
-              cursor: isWindows() ? 'not-allowed' : 'pointer',
-            }}
-            title={isWindows() ? 'cmux는 macOS 전용 — ⌄ 메뉴의 tmux 사용' : `cmux Claude${bypassPermissions?' (bypass)':''}`}
-          ><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡':'cmux'}{isWindows() && ' 🍎'}</button>
+            style={{...btnBase, gap:3, fontFamily:'inherit', color:'#c8a8f0', borderColor:'rgba(200,168,240,0.25)'}}
+            title={`cmux Claude${bypassPermissions?' (bypass)':''}`}
+          ><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡':'cmux'}</button>
           <button data-help-key="card-cmux-new" onClick={e=>{e.stopPropagation(); openCmuxClaudeNew(item);}}
-            style={{
-              ...btnBase, gap:3, fontFamily:'inherit',
-              color: isWindows() ? '#6b6459' : '#c8a8f0',
-              borderColor: isWindows() ? 'rgba(255,240,220,0.07)' : 'rgba(200,168,240,0.25)',
-              opacity: isWindows() ? 0.55 : 1,
-              cursor: isWindows() ? 'not-allowed' : 'pointer',
-            }}
-            title={isWindows() ? 'cmux는 macOS 전용 — ⌄ 메뉴의 tmux 사용' : `cmux 새창${bypassPermissions?' (bypass)':''} — 기존 워크스페이스 닫고 새로 시작`}
-          ><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡↺':'cmux ↺'}{isWindows() && ' 🍎'}</button>
+            style={{...btnBase, gap:3, fontFamily:'inherit', color:'#c8a8f0', borderColor:'rgba(200,168,240,0.25)'}}
+            title={`cmux 새창${bypassPermissions?' (bypass)':''} — 기존 워크스페이스 닫고 새로 시작`}
+          ><Zap style={{width:9,height:9}}/>{bypassPermissions?'cmux ⚡↺':'cmux ↺'}</button>
+          </>)}
           <button data-help-key="card-worktree" onClick={e=>{e.stopPropagation(); toggleWorktreePanel(item.id, item.folderPath);}} style={{...btnBase, color:expandedWorktreeIds.has(item.id)?'#e8a557':'#ede7dd', borderColor:expandedWorktreeIds.has(item.id)?'rgba(232,165,87,0.3)':'rgba(255,240,220,0.07)'}} title="워크트리 관리">
             <GitBranch style={{width:11,height:11}}/>
           </button>
@@ -3541,7 +3531,7 @@ function App() {
               {label:'강제 재실행', icon:<RotateCw style={{width:11,height:11}}/>, action:()=>forceRestartCommand(item), title:'프로세스 강제 종료 후 재실행', helpKey:'menu-force-restart'},
               {label:'폴더 열기', icon:<FolderOpen style={{width:11,height:11}}/>, action:()=>item.folderPath && API.openFolder(item.folderPath), title:'Finder에서 프로젝트 폴더 열기', helpKey:'menu-open-folder'},
               {label:'로그 보기', icon:<FileText style={{width:11,height:11}}/>, action:()=>{ handleViewPortLog(item.id, item.name); }, title:'실시간 로그 보기 (인앱)', helpKey:'menu-view-log'},
-              {label:'cmux 터미널', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxTerminal(item), title:'cmux로 폴더 열기 (Claude 없이, macOS 전용)', helpKey:'menu-cmux-terminal'},
+              ...(!isWindows() ? [{label:'cmux 터미널', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxTerminal(item), title:'cmux로 폴더 열기 (Claude 없이, macOS 전용)', helpKey:'menu-cmux-terminal'}] : []),
             ].map(({label,icon,action,title,helpKey}:{label:string;icon:React.ReactNode;action:()=>void;title?:string;helpKey:string}) => (
               <button key={label} data-help-key={helpKey} title={title} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
                 display:'flex',alignItems:'center',gap:8,padding:'6px 12px',width:'100%',
@@ -3561,8 +3551,10 @@ function App() {
               {label:'Terminal Claude', icon:<Zap style={{width:11,height:11}}/>, action:()=>openTerminalClaude(item), title:`Terminal.app으로 Claude 실행${bypassPermissions ? ' — bypass 모드' : ''}`, helpKey:'menu-terminal-claude'},
               {label:'tmux', icon:<SquareTerminal style={{width:11,height:11}}/>, action:()=>openTmuxClaude(item), title:`tmux 세션으로 Claude 실행 (Mac·Windows)${bypassPermissions ? ' — bypass 모드' : ''}`, helpKey:'menu-tmux'},
               {label:'tmux ↺ 새창', icon:<SquareTerminal style={{width:11,height:11}}/>, action:()=>openTmuxClaudeNew(item), title:`기존 tmux 세션 삭제 후 새창으로 시작${bypassPermissions ? ' — bypass 모드' : ''}`, helpKey:'menu-tmux-new'},
+              ...(!isWindows() ? [
               {label:'cmux (Mac 전용)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxClaude(item), title:`cmux 앱으로 Claude 실행 (macOS 전용)${bypassPermissions ? ' — bypass 모드' : ''}`, helpKey:'menu-cmux-mac'},
               {label:'cmux ↺ 새창 (Mac 전용)', icon:<Terminal style={{width:11,height:11}}/>, action:()=>openCmuxClaudeNew(item), title:`cmux 새 워크스페이스를 프로젝트 경로로 열고 Claude 실행${bypassPermissions ? ' — bypass 모드' : ''}`, helpKey:'menu-cmux-mac-new'},
+              ] : []),
             ].map(({label,icon,action,title,helpKey}) => (
               <button key={label} data-help-key={helpKey} title={title} onClick={e=>{e.stopPropagation(); action(); setV3MenuOpenId(null);}} style={{
                 display:'flex',alignItems:'center',gap:8,padding:'6px 12px',width:'100%',
@@ -3883,6 +3875,7 @@ function App() {
               <div style={{width:'100%',fontSize:10,color:'rgba(200,168,240,0.5)',fontWeight:600,letterSpacing:0.5,textTransform:'uppercase' as const,marginBottom:2}}>
                 Claude {bypassPermissions?'⚡bypass':''}
               </div>
+              {!isWindows() && (<>
               <button onClick={() => openCmuxClaude(sel)} style={{...rowBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title="cmux 앱으로 Claude 실행 (macOS)">
                 <Terminal style={{width:11,height:11}}/>cmux
               </button>
@@ -3892,6 +3885,7 @@ function App() {
               <button onClick={() => openCmuxTerminal(sel)} style={rowBtn} title="cmux 터미널 (Claude 없이)">
                 <Terminal style={{width:11,height:11}}/>cmux 터미널
               </button>
+              </>)}
               <button onClick={() => openTerminalClaude(sel)} style={{...rowBtn,color:'#c8a8f0',borderColor:'rgba(200,168,240,0.25)'}} title="Terminal.app으로 Claude 실행">
                 <Zap style={{width:11,height:11}}/>Terminal Claude
               </button>
@@ -5177,25 +5171,37 @@ function App() {
                 </h1>
                 <span data-help-key="header-project-count" style={{fontSize:12,color:'#a39a8c'}}>{v3Ports.length} projects</span>
                 <div style={{flex:1}} />
+                {!isWindows() && (
                 <button data-help-key="header-cmux-root" onClick={openCmuxTerminalAtRoot} title="cmux 터미널로 작업 루트 열기 (macOS 전용)" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
                   <SquareTerminal style={{width:13,height:13}} />
                   cmux
                 </button>
+                )}
                 {!isTauri() && !isDeployedWeb() && (
                   isWindows() ? (
-                    <button data-help-key="header-build-windows" onClick={handleBuildWindows} disabled={isBuilding} title="Windows .exe 빌드 (NSIS)" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
-                      <Monitor style={{width:13,height:13}} className={isBuilding && buildType==='windows' ? 'animate-spin' : ''} />
-                    </button>
+                    <>
+                      <button data-help-key="header-build-windows" onClick={handleBuildWindows} disabled={isBuilding} title="Windows 빌드 (.exe)" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
+                        <Monitor style={{width:13,height:13}} className={isBuilding && buildType==='windows' ? 'animate-spin' : ''} />
+                        Win 빌드
+                      </button>
+                      <button onClick={() => API.openBuildFolder().catch(()=>{})} title="빌드 폴더 열기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
+                        <FolderOpen style={{width:13,height:13}} />
+                        폴더 열기
+                      </button>
+                    </>
                   ) : (
                     <>
-                      <button data-help-key="header-build-app" onClick={handleBuildApp} disabled={isBuilding} title="앱 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                      <button data-help-key="header-build-app" onClick={handleBuildApp} disabled={isBuilding} title="앱 빌드 (.app)" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
                         <Terminal style={{width:13,height:13}} className={isBuilding && buildType==='app' ? 'animate-spin' : ''} />
+                        앱 빌드
                       </button>
-                      <button data-help-key="header-build-dmg" onClick={handleBuildDmg} disabled={isBuilding} title="DMG 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                      <button data-help-key="header-build-dmg" onClick={handleBuildDmg} disabled={isBuilding} title="DMG 빌드" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
                         <Package style={{width:13,height:13}} className={isBuilding && buildType==='dmg' ? 'animate-spin' : ''} />
+                        DMG
                       </button>
-                      <button data-help-key="header-open-build-folder" onClick={() => API.openBuildFolder().catch(e => showToast('폴더 열기 실패: ' + e.message, 'error'))} title="DMG 빌드 폴더 열기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center'}}>
+                      <button onClick={() => API.openBuildFolder().catch(()=>{})} title="빌드 폴더 열기" style={{padding:'5px 8px',background:'transparent',border:'1px solid rgba(255,240,220,0.07)',borderRadius:5,color:'#a39a8c',cursor:'pointer',display:'flex',alignItems:'center',gap:3,fontSize:11,fontFamily:'Inter Tight, system-ui, sans-serif'}}>
                         <FolderOpen style={{width:13,height:13}} />
+                        폴더 열기
                       </button>
                     </>
                   )
