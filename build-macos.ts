@@ -29,6 +29,9 @@ console.log(`[build-macos] Build type: ${isDmg ? "DMG only" : "full (.app + DMG)
 // 1. 버전 업데이트
 await $`bun update-version.ts`;
 
+// 업데이트된 버전 번호 읽기
+const { buildNumber: newVersion } = await Bun.file("build-number.json").json() as { buildNumber: number };
+
 // 2. Frontend 빌드
 await $`bun run build`;
 
@@ -43,6 +46,20 @@ if (isDmg) {
   }
 } else {
   await $`tauri build`;
+}
+
+// 4. 버전 파일 git commit (push는 수동)
+const gitAdd = await $`git add build-number.json src-tauri/tauri.conf.json src-tauri/icons/`.nothrow();
+if (gitAdd.exitCode === 0) {
+  const gitCommit = await $`git commit -m "chore: bump to v${newVersion}"`.nothrow();
+  if (gitCommit.exitCode === 0) {
+    console.log(`\n📦 버전 v${newVersion} commit 완료 — git push로 GitHub에 반영하세요`);
+  } else {
+    // 변경사항 없으면 commit 불필요 (이미 커밋된 상태)
+    console.log(`\n📦 버전 파일 변경 없음 (이미 commit됨)`);
+  }
+} else {
+  console.warn(`\n⚠️ git add 실패 — 수동으로 커밋하세요`);
 }
 
 console.log(`\n✅ macOS 빌드 완료`);

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1777637313762,
+  "lastScanned": 1777739767048,
   "projectRoot": "/Users/gwanli/product_2026/portmanagement",
   "techStack": {
     "languages": [
@@ -47,14 +47,14 @@
     "runtime": null
   },
   "build": {
-    "buildCommand": "bunx tsc --noEmit 2>&1 | grep -E \"App\\.tsx:[0-9]+\" | head -20",
+    "buildCommand": "npm run build",
     "testCommand": null,
     "lintCommand": null,
     "devCommand": "npm run dev",
     "scripts": {
-      "dev": "bun --watch api-server.ts & vite",
-      "api": "bun --watch api-server.ts",
-      "start": "bun --watch api-server.ts & vite",
+      "dev": "bun api-server.ts & ./node_modules/.bin/vite",
+      "api": "bun api-server.ts",
+      "start": "bun api-server.ts & ./node_modules/.bin/vite",
       "build": "vite build",
       "build:portal": "vite build --config vite.portal.config.ts",
       "preview": "vite preview",
@@ -91,11 +91,20 @@
   },
   "customNotes": [],
   "directoryMap": {
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 1,
+      "lastAccessed": 1777739766977,
+      "keyFiles": [
+        "index.html"
+      ]
+    },
     "docs": {
       "path": "docs",
       "purpose": "Documentation",
       "fileCount": 8,
-      "lastAccessed": 1777637313682,
+      "lastAccessed": 1777739767019,
       "keyFiles": [
         "DOGFOOD.md",
         "ERRORS.md",
@@ -108,7 +117,7 @@
       "path": "src",
       "purpose": "Source code",
       "fileCount": 10,
-      "lastAccessed": 1777637313682,
+      "lastAccessed": 1777739767020,
       "keyFiles": [
         "App.tsx",
         "ErrorBoundary.tsx",
@@ -121,7 +130,7 @@
       "path": "src-tauri",
       "purpose": null,
       "fileCount": 5,
-      "lastAccessed": 1777637313683,
+      "lastAccessed": 1777739767022,
       "keyFiles": [
         "Cargo.lock",
         "Cargo.toml",
@@ -133,7 +142,7 @@
       "path": "supabase",
       "purpose": null,
       "fileCount": 2,
-      "lastAccessed": 1777637313684,
+      "lastAccessed": 1777739767023,
       "keyFiles": [
         "config.toml"
       ]
@@ -142,7 +151,7 @@
       "path": "tests",
       "purpose": "Test files",
       "fileCount": 9,
-      "lastAccessed": 1777637313685,
+      "lastAccessed": 1777739767024,
       "keyFiles": [
         "error-resilience-test.py",
         "functional-test.mjs",
@@ -155,16 +164,27 @@
       "path": "uploaded-commands",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1777637313685,
+      "lastAccessed": 1777739767028,
       "keyFiles": [
         "실행.command"
+      ]
+    },
+    "dist/assets": {
+      "path": "dist/assets",
+      "purpose": "Static assets",
+      "fileCount": 5,
+      "lastAccessed": 1777739767030,
+      "keyFiles": [
+        "index-B-DCJXLh.js",
+        "index-BLuaKDoR.css",
+        "index-CHIUCKr0.js"
       ]
     },
     "src/lib": {
       "path": "src/lib",
       "purpose": "Library code",
       "fileCount": 3,
-      "lastAccessed": 1777637313687,
+      "lastAccessed": 1777739767031,
       "keyFiles": [
         "env.ts",
         "supabaseClient.ts",
@@ -175,7 +195,7 @@
       "path": "src-tauri/src",
       "purpose": "Source code",
       "fileCount": 2,
-      "lastAccessed": 1777637313688,
+      "lastAccessed": 1777739767031,
       "keyFiles": [
         "lib.rs",
         "main.rs"
@@ -185,7 +205,7 @@
       "path": "supabase/migrations",
       "purpose": "Database migrations",
       "fileCount": 1,
-      "lastAccessed": 1777637313689,
+      "lastAccessed": 1777739767032,
       "keyFiles": [
         "20260501021736_add_favorite_to_ports.sql"
       ]
