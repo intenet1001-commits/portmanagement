@@ -1608,7 +1608,7 @@ function App() {
           if (portalData?.supabaseUrl && portalData?.supabaseAnonKey) {
             try {
               const supabase = getSupabaseClient(portalData.supabaseUrl, portalData.supabaseAnonKey);
-              let portsQuery = supabase.from('ports').select('*');
+              let portsQuery = supabase.from('portmgr_ports').select('*');
               if (portalData.deviceId) portsQuery = portsQuery.eq('device_id', portalData.deviceId);
               let { data: remoteData, error } = await withTimeout(portsQuery, 10_000);
               if (!error && remoteData && remoteData.length > 0) {
@@ -1646,7 +1646,7 @@ function App() {
               const deviceId = portalData.deviceId;
               if (deviceId) {
                 const { data: rootData } = await supabase
-                  .from('workspace_roots').select('*').eq('device_id', deviceId);
+                  .from('portmgr_workspace_roots').select('*').eq('device_id', deviceId);
                 if (rootData && rootData.length > 0) {
                   const restoredRoots: WorkspaceRoot[] = rootData
                     .filter((r: any) => !r.path?.startsWith('__device__'))
@@ -1903,10 +1903,10 @@ function App() {
           memo: memos[p.id]?.content ?? null,
           memo_updated_at: memos[p.id]?.updatedAt ?? null,
         }));
-        let upsertErr = (await supabase.from('ports').upsert(rows, { onConflict: 'id' })).error;
+        let upsertErr = (await supabase.from('portmgr_ports').upsert(rows, { onConflict: 'id' })).error;
         if (upsertErr?.message?.includes('device_id') || upsertErr?.message?.includes('device_name')) {
           const rowsWithout = rows.map(({ device_id, device_name, ...rest }: any) => rest);
-          upsertErr = (await supabase.from('ports').upsert(rowsWithout, { onConflict: 'id' })).error;
+          upsertErr = (await supabase.from('portmgr_ports').upsert(rowsWithout, { onConflict: 'id' })).error;
         }
         if (upsertErr) throw new Error(upsertErr.message);
         // Fix P2: delete remote rows whose IDs are no longer in local list
@@ -1914,12 +1914,12 @@ function App() {
         // Step 4: scope stale-delete to this device only to avoid clobbering other devices
         if (autopullSucceeded.current) {
           const localIds = ownedPorts.map(p => p.id);
-          let remoteQuery = supabase.from('ports').select('id');
+          let remoteQuery = supabase.from('portmgr_ports').select('id');
           if (deviceId) remoteQuery = remoteQuery.eq('device_id', deviceId);
           const { data: remoteRows } = await remoteQuery;
           const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
           if (staleIds.length > 0) {
-            await supabase.from('ports').delete().in('id', staleIds);
+            await supabase.from('portmgr_ports').delete().in('id', staleIds);
           }
         }
       } catch (e) {
@@ -2349,7 +2349,7 @@ function App() {
       const pullDeviceId = portalData?.viewingDeviceId || portalData?.deviceId || null;
       const isOtherDevice = portalData?.viewingDeviceId && portalData.viewingDeviceId !== portalData?.deviceId;
 
-      let portsQuery = supabase.from('ports').select('*');
+      let portsQuery = supabase.from('portmgr_ports').select('*');
       if (pullDeviceId) portsQuery = portsQuery.eq('device_id', pullDeviceId);
       let { data, error } = await withTimeout(portsQuery, 30_000);
 
@@ -2395,9 +2395,9 @@ function App() {
       // 다른 기기 Pull 시 작업루트는 건드리지 않음 (경로가 기기마다 다름)
       if (pullDeviceId && !isOtherDevice) {
         let { data: rootData } = await supabase
-          .from('workspace_roots').select('*').eq('device_id', pullDeviceId);
+          .from('portmgr_workspace_roots').select('*').eq('device_id', pullDeviceId);
         if (!rootData || rootData.length === 0) {
-          const fallback = await supabase.from('workspace_roots').select('*');
+          const fallback = await supabase.from('portmgr_workspace_roots').select('*');
           if (fallback.data && fallback.data.length > 0) rootData = fallback.data;
         }
         if (rootData && rootData.length > 0) {
@@ -2435,7 +2435,7 @@ function App() {
     setPortsHistoryLoading(true);
     setShowPortsHistory(true);
     const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
-    const list = await fetchPushHistory(supabase, 'ports', cfg.deviceId ?? null);
+    const list = await fetchPushHistory(supabase, 'portmgr_ports', cfg.deviceId ?? null);
     setPortsHistoryList(list);
     setPortsHistoryLoading(false);
   }
@@ -2448,13 +2448,13 @@ function App() {
       const supabase = getSupabaseClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
       const rows = await fetchSnapshotRows(supabase, snapshotId) as any[];
       if (rows.length === 0) { showToast('스냅샷이 비어있습니다', 'error'); return; }
-      const { error: uErr } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+      const { error: uErr } = await supabase.from('portmgr_ports').upsert(rows, { onConflict: 'id' });
       if (uErr) throw new Error(uErr.message);
       const snapshotIds = new Set(rows.map(r => r.id));
       const deviceId = cfg.deviceId ?? null;
-      const { data: current } = await supabase.from('ports').select('id').eq('device_id', deviceId);
+      const { data: current } = await supabase.from('portmgr_ports').select('id').eq('device_id', deviceId);
       const toDelete = (current ?? []).filter((r: any) => !snapshotIds.has(r.id)).map((r: any) => r.id);
-      if (toDelete.length > 0) await supabase.from('ports').delete().in('id', toDelete);
+      if (toDelete.length > 0) await supabase.from('portmgr_ports').delete().in('id', toDelete);
       await handleRestoreFromSupabase();
       showToast('스냅샷으로 복원 완료 ✓', 'success');
       setShowPortsHistory(false);
@@ -2509,19 +2509,19 @@ function App() {
         memo: memos[p.id]?.content ?? null,
         memo_updated_at: memos[p.id]?.updatedAt ?? null,
       }));
-      await savePushSnapshot(supabase, 'ports', deviceId, deviceNameVal, rows);
-      let { error } = await supabase.from('ports').upsert(rows, { onConflict: 'id' });
+      await savePushSnapshot(supabase, 'portmgr_ports', deviceId, deviceNameVal, rows);
+      let { error } = await supabase.from('portmgr_ports').upsert(rows, { onConflict: 'id' });
       if (error?.message?.includes('device_id') || error?.message?.includes('device_name')) {
         // device_id/device_name column not yet migrated — retry without it
         const rowsWithout = rows.map(({ device_id, device_name, ...rest }: any) => rest);
-        const { error: e2 } = await supabase.from('ports').upsert(rowsWithout, { onConflict: 'id' });
+        const { error: e2 } = await supabase.from('portmgr_ports').upsert(rowsWithout, { onConflict: 'id' });
         error = e2 ?? null;
         if (!e2) showToast('⚠ device_id 컬럼 없음 — 초기설정 가이드의 AI 프롬프트로 마이그레이션 후 재Push 권장', 'error');
       }
       if (error) throw new Error(error.message);
       // Register this device in devices table (non-blocking)
       if (deviceId) {
-        supabase.from('devices').upsert(
+        supabase.from('portmgr_devices').upsert(
           { id: deviceId, name: deviceNameVal, last_push_at: new Date().toISOString() },
           { onConflict: 'id' }
         ).then(() => {}).catch(() => {});
@@ -2531,12 +2531,12 @@ function App() {
       // Step 4: scope stale-delete to this device only to avoid clobbering other devices
       if (autopullSucceeded.current) {
         const localIds = ownedPorts.map(p => p.id);
-        let remoteQuery = supabase.from('ports').select('id');
+        let remoteQuery = supabase.from('portmgr_ports').select('id');
         if (deviceId) remoteQuery = remoteQuery.eq('device_id', deviceId);
         const { data: remoteRows } = await remoteQuery;
         const staleIds = (remoteRows ?? []).map((r: any) => r.id).filter((id: string) => !localIds.includes(id));
         if (staleIds.length > 0) {
-          await supabase.from('ports').delete().in('id', staleIds);
+          await supabase.from('portmgr_ports').delete().in('id', staleIds);
         }
       }
 
@@ -2559,14 +2559,14 @@ function App() {
         return items;
       });
       if (autoItems.length > 0) {
-        await supabase.from('portal_items').upsert(autoItems, { onConflict: 'id' });
+        await supabase.from('portmgr_portal_items').upsert(autoItems, { onConflict: 'id' });
       }
       // URL이 없어진 포트의 stale auto portal_items 삭제
       const activeAutoIds = new Set(autoItems.map((x: any) => x.id));
       const allAutoIds = ownedPorts.flatMap(p => [`auto:deploy:${p.id}`, `auto:github:${p.id}`]);
       const staleAutoIds = allAutoIds.filter(id => !activeAutoIds.has(id));
       if (staleAutoIds.length > 0) {
-        await supabase.from('portal_items').delete().in('id', staleAutoIds);
+        await supabase.from('portmgr_portal_items').delete().in('id', staleAutoIds);
       }
 
       // workspace_roots 업로드
@@ -2580,7 +2580,7 @@ function App() {
           rootRows.push({ id: `__device__${deviceId}`, device_id: deviceId, name: deviceNameVal, path: `__device__${deviceId}` });
         }
         if (rootRows.length > 0) {
-          const { error: rootError } = await supabase.from('workspace_roots').upsert(rootRows, { onConflict: 'id' });
+          const { error: rootError } = await supabase.from('portmgr_workspace_roots').upsert(rootRows, { onConflict: 'id' });
           if (rootError) {
             rootsMsg = ` (작업루트 업로드 실패: ${rootError.message})`;
           } else if (workspaceRoots.length > 0) {

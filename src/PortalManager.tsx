@@ -775,7 +775,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       if (!loaded.deviceName && resolvedUrl && resolvedKey && loaded.deviceId) {
         try {
           const sb = getSupabaseClient(resolvedUrl, resolvedKey);
-          const { data: dev } = await sb.from('devices').select('name').eq('id', loaded.deviceId).maybeSingle();
+          const { data: dev } = await sb.from('portmgr_devices').select('name').eq('id', loaded.deviceId).maybeSingle();
           if (dev?.name) {
             loaded.deviceName = dev.name;
             needsPersist = true;
@@ -852,8 +852,8 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
         const catRows = next.categories.map(c => ({
           id: c.id, device_id: '__shared__', name: c.name, color: c.color, order: c.order,
         }));
-        await supabase.from('portal_items').upsert(itemRows, { onConflict: 'id' });
-        await supabase.from('portal_categories').upsert(catRows, { onConflict: 'id' });
+        await supabase.from('portmgr_portal_items').upsert(itemRows, { onConflict: 'id' });
+        await supabase.from('portmgr_portal_categories').upsert(catRows, { onConflict: 'id' });
       }
     } catch (e) {
       showToast('저장 실패: ' + e, 'error');
@@ -1053,7 +1053,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     setPortalHistoryLoading(true);
     setShowPortalHistory(true);
     const supabase = getSupabaseClient(sbUrl, sbKey);
-    const list = await fetchPushHistory(supabase, 'portal_items', '__shared__');
+    const list = await fetchPushHistory(supabase, 'portmgr_portal_items', '__shared__');
     setPortalHistoryList(list);
     setPortalHistoryLoading(false);
   }
@@ -1066,15 +1066,15 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       const supabase = getSupabaseClient(sbUrl, sbKey);
       const rows = await fetchSnapshotRows(supabase, snapshotId) as any[];
       if (rows.length === 0) { showToast('스냅샷이 비어있습니다', 'error'); return; }
-      const { error: uErr } = await supabase.from('portal_items').upsert(rows, { onConflict: 'id' });
+      const { error: uErr } = await supabase.from('portmgr_portal_items').upsert(rows, { onConflict: 'id' });
       if (uErr) throw new Error(uErr.message);
       const snapshotIds = new Set(rows.map(r => r.id));
       // 공유 북마크(__shared__)만 정리 — 기기별 항목은 건드리지 않음
       const { data: current } = await supabase
-        .from('portal_items').select('id')
+        .from('portmgr_portal_items').select('id')
         .eq('device_id', '__shared__');
       const toDelete = (current ?? []).filter((r: any) => !snapshotIds.has(r.id)).map((r: any) => r.id);
-      if (toDelete.length > 0) await supabase.from('portal_items').delete().in('id', toDelete);
+      if (toDelete.length > 0) await supabase.from('portmgr_portal_items').delete().in('id', toDelete);
       await pullFromSupabase({ skipConfirm: true });
       showToast('스냅샷으로 복원 완료 ✓', 'success');
       setShowPortalHistory(false);
@@ -1126,10 +1126,10 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       }));
 
       // 북마크 스냅샷은 기기 무관 공유 — '__shared__' sentinel로 저장
-      await savePushSnapshot(supabase, 'portal_items', '__shared__', '(공유)', itemRows);
+      await savePushSnapshot(supabase, 'portmgr_portal_items', '__shared__', '(공유)', itemRows);
       const [itemsRes, catsRes] = await Promise.all([
-        supabase.from('portal_items').upsert(itemRows, { onConflict: 'id' }),
-        supabase.from('portal_categories').upsert(catRows, { onConflict: 'id' }),
+        supabase.from('portmgr_portal_items').upsert(itemRows, { onConflict: 'id' }),
+        supabase.from('portmgr_portal_categories').upsert(catRows, { onConflict: 'id' }),
       ]);
 
       if (itemsRes.error) throw new Error(itemsRes.error.message);
@@ -1138,7 +1138,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       // Register this device in devices table (non-blocking)
       // 사용자가 방금 입력한 deviceName(useState)을 data.deviceName(stale closure)보다 우선
       const finalDeviceName = (deviceName?.trim()) || data.deviceName || null;
-      supabase.from('devices').upsert(
+      supabase.from('portmgr_devices').upsert(
         { id: deviceId, name: finalDeviceName, last_push_at: new Date().toISOString() },
         { onConflict: 'id' }
       ).then(() => {}).catch(() => {});
@@ -1171,8 +1171,8 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
       const ownDeviceId = data.deviceId ?? getOrCreateDeviceId();
       const targetDeviceId = viewingDeviceId || ownDeviceId;
       const [itemsRes, catsRes] = await Promise.all([
-        supabase.from('portal_items').select('*').or(`device_id.eq.${targetDeviceId},device_id.eq.__shared__`),
-        supabase.from('portal_categories').select('*').eq('device_id', '__shared__'),
+        supabase.from('portmgr_portal_items').select('*').or(`device_id.eq.${targetDeviceId},device_id.eq.__shared__`),
+        supabase.from('portmgr_portal_categories').select('*').eq('device_id', '__shared__'),
       ]);
       if (itemsRes.error) throw new Error(itemsRes.error.message);
       if (catsRes.error) throw new Error(catsRes.error.message);
@@ -1232,7 +1232,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       // 1순위: ports 테이블 (device_name 컬럼 있으면 사용)
       const { data: portsRows, error: portsErr } = await supabase
-        .from('ports').select('device_id, device_name, folder_path').not('device_id', 'is', null);
+        .from('portmgr_ports').select('device_id, device_name, folder_path').not('device_id', 'is', null);
       if (!portsErr && portsRows) {
         for (const r of portsRows) {
           if (!r.device_id || r.device_id === '__shared__') continue;
@@ -1250,7 +1250,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       // 2순위: workspace_roots — sentinel 행(__device__)에서 기기명, 없으면 path에서 사용자명 추출
       const { data: rootRows } = await supabase
-        .from('workspace_roots').select('device_id, name, path').not('device_id', 'is', null);
+        .from('portmgr_workspace_roots').select('device_id, name, path').not('device_id', 'is', null);
       for (const r of rootRows ?? []) {
         if (!r.device_id || r.device_id === '__shared__') continue;
         seen.add(r.device_id);
@@ -1265,7 +1265,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       // 3순위: portal_items folder 타입
       const { data: folderRows } = await supabase
-        .from('portal_items').select('device_id, path').eq('type', 'folder').not('device_id', 'is', null);
+        .from('portmgr_portal_items').select('device_id, path').eq('type', 'folder').not('device_id', 'is', null);
       for (const r of folderRows ?? []) {
         if (!r.device_id || r.device_id === '__shared__') continue;
         seen.add(r.device_id);
@@ -1277,7 +1277,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
 
       // devices 테이블이 있으면 그것을 기준으로 필터링 (삭제된 기기 제외)
       const { data: deviceRows } = await supabase
-        .from('devices').select('id, name');
+        .from('portmgr_devices').select('id, name');
       const registeredIds = deviceRows && deviceRows.length > 0
         ? new Set(deviceRows.map((r: { id: string }) => r.id))
         : null;
@@ -1327,7 +1327,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
     setDeletingDeviceId(id);
     try {
       const sb = getSupabaseClient(sbUrl, sbKey);
-      const { error } = await sb.from('devices').delete().eq('id', id);
+      const { error } = await sb.from('portmgr_devices').delete().eq('id', id);
       if (error) throw error;
       setKnownDevices(prev => prev.filter(d => d.device_id !== id));
       setViewingDeviceId('');
@@ -1771,7 +1771,7 @@ export default function PortalManager({ showToast, openSettings, onSettingsClose
               if (!resolvedName && sbUrl && sbKey) {
                 try {
                   const sb = getSupabaseClient(sbUrl, sbKey);
-                  const { data: dev } = await sb.from('devices').select('name').eq('id', newId).maybeSingle();
+                  const { data: dev } = await sb.from('portmgr_devices').select('name').eq('id', newId).maybeSingle();
                   if (dev?.name) resolvedName = dev.name;
                 } catch { /* ignore */ }
               }

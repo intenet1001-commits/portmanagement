@@ -19,7 +19,7 @@ export async function savePushSnapshot(
   rows: unknown[]
 ): Promise<void> {
   try {
-    await supabase.from('push_snapshots').insert({
+    await supabase.from('portmgr_push_snapshots').insert({
       table_name: tableName,
       device_id: deviceId,
       device_name: deviceName,
@@ -28,14 +28,14 @@ export async function savePushSnapshot(
     });
     // Prune oldest beyond MAX_SNAPSHOTS
     const { data: all } = await supabase
-      .from('push_snapshots')
+      .from('portmgr_push_snapshots')
       .select('id')
       .eq('table_name', tableName)
       .eq('device_id', deviceId ?? '')
       .order('created_at', { ascending: false });
     const toDelete = (all ?? []).slice(MAX_SNAPSHOTS).map((r: any) => r.id);
     if (toDelete.length > 0) {
-      await supabase.from('push_snapshots').delete().in('id', toDelete);
+      await supabase.from('portmgr_push_snapshots').delete().in('id', toDelete);
     }
   } catch {
     // non-blocking — snapshot failure must not block push
@@ -48,7 +48,7 @@ export async function fetchPushHistory(
   deviceId: string | null
 ): Promise<PushSnapshot[]> {
   const { data } = await supabase
-    .from('push_snapshots')
+    .from('portmgr_push_snapshots')
     .select('id, created_at, table_name, device_id, device_name, row_count')
     .eq('table_name', tableName)
     .eq('device_id', deviceId ?? '')
@@ -62,7 +62,7 @@ export async function fetchSnapshotRows(
   snapshotId: string
 ): Promise<unknown[]> {
   const { data } = await supabase
-    .from('push_snapshots')
+    .from('portmgr_push_snapshots')
     .select('snapshot')
     .eq('id', snapshotId)
     .single();

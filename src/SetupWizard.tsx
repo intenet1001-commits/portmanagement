@@ -298,7 +298,7 @@ function FirstSetupWizard({ onComplete, onBack }: { onComplete: SetupWizardProps
     setTesting(true); setTestResult('idle');
     try {
       const { createClient } = await import('@supabase/supabase-js');
-      const { error } = await createClient(supabaseUrl, supabaseAnonKey).from('ports').select('id').limit(1);
+      const { error } = await createClient(supabaseUrl, supabaseAnonKey).from('portmgr_ports').select('id').limit(1);
       setTestResult(error ? 'fail' : 'ok');
     } catch { setTestResult('fail'); } finally { setTesting(false); }
   }
@@ -626,7 +626,7 @@ function AdditionalDeviceWizard({ onComplete, onBack }: { onComplete: SetupWizar
     setTesting(true); setTestResult('idle');
     try {
       const { createClient } = await import('@supabase/supabase-js');
-      const { error } = await createClient(u, k).from('ports').select('id').limit(1);
+      const { error } = await createClient(u, k).from('portmgr_ports').select('id').limit(1);
       setTestResult(error ? 'fail' : 'ok');
     } catch { setTestResult('fail'); } finally { setTesting(false); }
   }

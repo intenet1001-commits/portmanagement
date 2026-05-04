@@ -173,7 +173,7 @@ function PortsView({ deviceId, creds, showToast, onSwitchDevice }: {
     if (!deviceId) return;
     setLoading(true);
     try {
-      const { data, error } = await sb().from('ports').select('*').eq('device_id', deviceId).order('name');
+      const { data, error } = await sb().from('portmgr_ports').select('*').eq('device_id', deviceId).order('name');
       if (error) throw error;
       setPorts(data ?? []);
     } catch (e: unknown) {
@@ -288,7 +288,7 @@ function DeviceManagerModal({ devices, creds, onClose, onUpdate }: {
     setSaving(true);
     try {
       const sb = createClient(creds.url, creds.key);
-      const { error } = await sb.from('devices').update({ name: editName.trim() }).eq('id', id);
+      const { error } = await sb.from('portmgr_devices').update({ name: editName.trim() }).eq('id', id);
       if (error) throw error;
       onUpdate(devices.map(d => d.id === id ? { ...d, name: editName.trim() } : d));
       setEditingId(null);
@@ -304,7 +304,7 @@ function DeviceManagerModal({ devices, creds, onClose, onUpdate }: {
     setDeletingId(id);
     try {
       const sb = createClient(creds.url, creds.key);
-      const { error } = await sb.from('devices').delete().eq('id', id);
+      const { error } = await sb.from('portmgr_devices').delete().eq('id', id);
       if (error) throw error;
       onUpdate(devices.filter(d => d.id !== id));
     } catch (e) {
@@ -456,14 +456,14 @@ function App() {
       const seenIds = new Set<string>();
 
       // 1) devices 테이블 (이름 우선)
-      const { data: devRows } = await sb.from('devices').select('*').order('last_push_at', { ascending: false });
+      const { data: devRows } = await sb.from('portmgr_devices').select('*').order('last_push_at', { ascending: false });
       for (const d of devRows ?? []) {
         seenIds.add(d.id);
         if (d.name) nameMap.set(d.id, d.name);
       }
 
       // 2) workspace_roots __device__ sentinel → 기기명 (가장 신뢰할 수 있는 소스)
-      const { data: rootRows } = await sb.from('workspace_roots').select('device_id, name, path').not('device_id', 'is', null);
+      const { data: rootRows } = await sb.from('portmgr_workspace_roots').select('device_id, name, path').not('device_id', 'is', null);
       for (const r of rootRows ?? []) {
         if (!r.device_id || r.device_id === '__shared__') continue;
         seenIds.add(r.device_id);
@@ -473,7 +473,7 @@ function App() {
       }
 
       // 3) ports 테이블 device_name 컬럼
-      const { data: portRows } = await sb.from('ports').select('device_id, device_name').not('device_id', 'is', null);
+      const { data: portRows } = await sb.from('portmgr_ports').select('device_id, device_name').not('device_id', 'is', null);
       for (const r of portRows ?? []) {
         if (!r.device_id) continue;
         seenIds.add(r.device_id);
@@ -481,7 +481,7 @@ function App() {
       }
 
       // 4) portal_items folder 타입 → 경로에서 사용자명 추출 (최후 fallback)
-      const { data: folderRows } = await sb.from('portal_items').select('device_id, path').eq('type', 'folder').not('device_id', 'is', null);
+      const { data: folderRows } = await sb.from('portmgr_portal_items').select('device_id, path').eq('type', 'folder').not('device_id', 'is', null);
       for (const r of folderRows ?? []) {
         if (!r.device_id || r.device_id === '__shared__') continue;
         seenIds.add(r.device_id);
@@ -542,7 +542,7 @@ function App() {
     try {
       const newId = crypto.randomUUID();
       const sb = createClient(creds.url, creds.key);
-      const { error } = await sb.from('devices').insert({ id: newId, name: registerName.trim() });
+      const { error } = await sb.from('portmgr_devices').insert({ id: newId, name: registerName.trim() });
       if (error) throw error;
       const newDev: DeviceRow = { id: newId, name: registerName.trim(), last_push_at: new Date().toISOString() };
       setDevices(prev => [newDev, ...prev]);
@@ -585,7 +585,7 @@ function App() {
     setPortsHistoryLoading(true);
     try {
       const sb = createClient(creds.url, creds.key);
-      const list = await fetchPushHistory(sb, 'ports', selectedDeviceId);
+      const list = await fetchPushHistory(sb, 'portmgr_ports', selectedDeviceId);
       setPortsHistoryList(list);
     } catch (e) {
       showToast('히스토리 로드 실패: ' + String(e), 'error');
